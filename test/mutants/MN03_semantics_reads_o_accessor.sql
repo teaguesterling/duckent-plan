@@ -1,8 +1,28 @@
--- test/mutants/MN03_match_reads_size_slot.control.sql
--- THIS IS THE CONTROL: the same copy with NO planted edit, so applying it is a no-op
--- CREATE OR REPLACE of the macro the mutant copies. test/run_mutants.py --verify applies
--- it and requires the mutant's expect_fail suites to PASS, which is what makes the kill
--- evidence about the EDIT rather than about the copy having drifted from the source.
+-- test/mutants/MN03_semantics_reads_o_accessor.sql
+-- A SEMANTICS-path decision reads an O accessor. Copied from sql/07_match.sql with the
+-- has_element flag changed to be true ALSO when the tree declares no SIZE, so the compiler picks
+-- its sibling and positional form by consulting tree_catalog.slots -- which O columns happen to be
+-- declared -- instead of by what the S group says.
+--
+-- The claim is doctrine 2, "semantics consult declarations, never state", in its sharper reading:
+-- the matcher reads the PROJECTION, which supplies _size, _parent and _children whether they were
+-- declared or derived, and may not consult WHICH of them was declared. The projection is the whole
+-- interface, and this mutant reaches around it.
+--
+-- WHY NO RESULT DIFFERENTIAL CAN SEE THIS. The two forms it chooses between are the element-aware
+-- one and the O(1) pre/size one, and on a conforming tree they answer identically BY CONSTRUCTION:
+-- _element is true on every row of a tree that declares no ELEMENT, so "the nearest element
+-- sibling" and "the row at _pre + _size + 1" are the same row. Every key-comparison record in
+-- test/sql/42_second_differential.test therefore passes under this mutant, and so does every
+-- selector in the corpus. What moves is the compiled TEXT, and only for a tree with no ELEMENT --
+-- with ELEMENT declared both trees already take the element-aware path, so there is nothing to
+-- differ. That is why 42 carries an ELEMENT-less pair of trees and compares
+-- tree_explain(...).sql between them: the plan records are the only thing standing between this
+-- mutation and a green suite.
+--
+-- The mutant is also a module-boundary probe, which is M3's own gate ("Auto-generated conformance
+-- assertions; module-boundary mutant"): it is not a wrong answer, it is a wrong DEPENDENCY, and it
+-- is caught because the suite asserts the dependency rather than only the result.
 -- vvv GENERATED BELOW by test/mutants/regen.py from sql/07_match.sql -- do not edit by hand vvv
 -- Regenerate with: python3 test/mutants/regen.py   (--check verifies, writes nothing)
 -- The compiler is a fold over the IR: every node's text is built from its children's, so the
@@ -27,7 +47,9 @@ WITH t AS (
          -- whether any row can be a non-element: only then must the sibling and positional
          -- fragments scan for the nearest element neighbour instead of using the O(1) pre/size form
          EXISTS (SELECT 1 FROM tree_catalog.slots s WHERE s.database_name = current_database() AND s.schema_name = sch AND s.tree_name = nm AND s.slot = 'ELEMENT')
-           OR (semantic).element IS NOT NULL AS has_element,
+           OR (semantic).element IS NOT NULL
+           -- the mutation: whether SIZE is DECLARED picks the compiled form
+           OR NOT EXISTS (SELECT 1 FROM tree_catalog.slots s WHERE s.database_name = current_database() AND s.schema_name = sch AND s.tree_name = nm AND s.slot = 'SIZE') AS has_element,
          EXISTS (SELECT 1 FROM tree_catalog.slots s WHERE s.database_name = current_database() AND s.schema_name = sch AND s.tree_name = nm AND s.slot = 'ATTR_MAP')
            OR (semantic).attr_map IS NOT NULL AS has_map,
          -- The projection's non-canonical columns, recorded at create time: which bare names an

@@ -191,98 +191,83 @@ SELECT (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
 ----
 true
 
-# --------------------------------------------------------------------------------------
-# the module boundary: matching never reads the O group
-# --------------------------------------------------------------------------------------
+# ---------------------------------------------------------------------------------
+# The compiled plan, not just the answer
+# ---------------------------------------------------------------------------------
+#
+# A third and fourth tree, the same source and S group as the pair above MINUS
+# ELEMENT, so the sibling and positional fragments take the O(1) pre/size form. One
+# declares SIZE, PARENT and CHILDREN; one derives all three. The compiled SQL must be
+# identical apart from the tree's own name: the matcher reads the PROJECTION, which
+# supplies those columns either way, and may not consult which of them was declared.
+# A compiler that did could still answer every record above correctly.
 
 statement ok
-CREATE OR REPLACE TEMP TABLE __boundary(sid VARCHAR, leg VARCHAR, sql_text VARCHAR);
+CALL tree_ddl_create('main', 'app_declared_plain', tree_spec(tree_shape(
+  root := 'file_path', "order" := 'node_id', level := 'depth',
+  size := 'descendant_count', parent := 'parent_id', children := 'children_count',
+  semantic := tree_semantic(type := 'type', id := 'name', classes := 'css_classes')),
+  source := 'read_parquet(''test/data/app.parquet'')'));
 
 statement ok
-INSERT INTO __boundary SELECT 'c01', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{type: 'function_definition'}]));
+CALL tree_ddl_create('main', 'app_derived_plain', tree_spec(tree_shape(
+  root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type', id := 'name', classes := 'css_classes')),
+  source := 'read_parquet(''test/data/app.parquet'')'));
 
-statement ok
-INSERT INTO __boundary SELECT 'c01', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{type: 'function_definition'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c02', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{class: 'fn'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c02', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{class: 'fn'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c03', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{id: 'greet', class: 'fn'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c03', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{id: 'greet', class: 'fn'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c04', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{type: 'function_definition'}, {comb: 'child', type: 'block'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c04', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{type: 'function_definition'}, {comb: 'child', type: 'block'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c05', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{type: 'function_definition'}, {comb: 'desc', type: 'string'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c05', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{type: 'function_definition'}, {comb: 'desc', type: 'string'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c06', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{class: 'fn', "not": [{type: 'string'}]}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c06', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{class: 'fn', "not": [{type: 'string'}]}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c07', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{class: 'fn', has: [{type: 'string'}]}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c07', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{class: 'fn', has: [{type: 'string'}]}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c08', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{type: 'function_definition'}, {comb: 'next', type: 'function_definition'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c08', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{type: 'function_definition'}, {comb: 'next', type: 'function_definition'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c13', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{class: 'fn', "not": [{type: 'block', has: [{type: 'string'}]}]}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c13', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{class: 'fn', "not": [{type: 'block', has: [{type: 'string'}]}]}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c14', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{type: 'block'}, {comb: 'child', type: 'expression_statement', pseudo: 'first-child'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c14', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{type: 'block'}, {comb: 'child', type: 'expression_statement', pseudo: 'first-child'}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c15', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{class: 'def', "not": [{comb: 'self', class: 'fn'}]}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c15', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{class: 'def', "not": [{comb: 'self', class: 'fn'}]}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c17', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{class: 'fn', "not": [{comb: 'self', pseudo: 'nope'}]}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c17', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{class: 'fn', "not": [{comb: 'self', pseudo: 'nope'}]}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c18', 'declared', tree_compile_match('main', 'app_declared', tree_steps([{class: 'fn', has: [{comb: 'child', type: 'block', attr: 'params = 0'}]}]));
-
-statement ok
-INSERT INTO __boundary SELECT 'c18', 'derived', tree_compile_match('main', 'app_derived', tree_steps([{class: 'fn', has: [{comb: 'child', type: 'block', attr: 'params = 0'}]}]));
-
-query III
-SELECT count(*),
-       count(*) FILTER (WHERE d.sql_text NOT LIKE '%app_declared%'),
-       count(*) FILTER (WHERE replace(d.sql_text, 'app_declared', 'app_derived')
-                              IS DISTINCT FROM v.sql_text)
-  FROM __boundary d JOIN __boundary v USING (sid)
- WHERE d.leg = 'declared' AND v.leg = 'derived';
+# plan, no ELEMENT:  function_definition + function_definition
+query I
+SELECT replace((tree_explain('main', 'app_declared_plain', 'function_definition + function_definition', language := 'css')).sql, 'app_declared_plain', 'T')
+     = replace((tree_explain('main', 'app_derived_plain', 'function_definition + function_definition', language := 'css')).sql, 'app_derived_plain', 'T');
 ----
-13	0	0
+true
+
+# plan, with ELEMENT:  function_definition + function_definition
+query I
+SELECT replace((tree_explain('main', 'app_declared', 'function_definition + function_definition', language := 'css')).sql, 'app_declared', 'T')
+     = replace((tree_explain('main', 'app_derived', 'function_definition + function_definition', language := 'css')).sql, 'app_derived', 'T');
+----
+true
+
+# plan, no ELEMENT:  block > expression_statement:first-child
+query I
+SELECT replace((tree_explain('main', 'app_declared_plain', 'block > expression_statement:first-child', language := 'css')).sql, 'app_declared_plain', 'T')
+     = replace((tree_explain('main', 'app_derived_plain', 'block > expression_statement:first-child', language := 'css')).sql, 'app_derived_plain', 'T');
+----
+true
+
+# plan, with ELEMENT:  block > expression_statement:first-child
+query I
+SELECT replace((tree_explain('main', 'app_declared', 'block > expression_statement:first-child', language := 'css')).sql, 'app_declared', 'T')
+     = replace((tree_explain('main', 'app_derived', 'block > expression_statement:first-child', language := 'css')).sql, 'app_derived', 'T');
+----
+true
+
+# plan, no ELEMENT:  block > expression_statement:last-child
+query I
+SELECT replace((tree_explain('main', 'app_declared_plain', 'block > expression_statement:last-child', language := 'css')).sql, 'app_declared_plain', 'T')
+     = replace((tree_explain('main', 'app_derived_plain', 'block > expression_statement:last-child', language := 'css')).sql, 'app_derived_plain', 'T');
+----
+true
+
+# plan, with ELEMENT:  block > expression_statement:last-child
+query I
+SELECT replace((tree_explain('main', 'app_declared', 'block > expression_statement:last-child', language := 'css')).sql, 'app_declared', 'T')
+     = replace((tree_explain('main', 'app_derived', 'block > expression_statement:last-child', language := 'css')).sql, 'app_derived', 'T');
+----
+true
+
+# plan, no ELEMENT:  .fn:has(string)
+query I
+SELECT replace((tree_explain('main', 'app_declared_plain', '.fn:has(string)', language := 'css')).sql, 'app_declared_plain', 'T')
+     = replace((tree_explain('main', 'app_derived_plain', '.fn:has(string)', language := 'css')).sql, 'app_derived_plain', 'T');
+----
+true
+
+# plan, with ELEMENT:  .fn:has(string)
+query I
+SELECT replace((tree_explain('main', 'app_declared', '.fn:has(string)', language := 'css')).sql, 'app_declared', 'T')
+     = replace((tree_explain('main', 'app_derived', '.fn:has(string)', language := 'css')).sql, 'app_derived', 'T');
+----
+true
 

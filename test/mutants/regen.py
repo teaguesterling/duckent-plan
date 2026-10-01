@@ -41,6 +41,13 @@ SPEC = {
     "MN14": ("sql/07_match.sql", ["tree_sql_subtree", "tree_sql_children", "tree_sql_siblings"], []),
     "MN15": ("sql/04_dml.sql", ["tree_sql_p13_pred"], []),
 
+    "MN03": ("sql/07_match.sql", ["tree_compile_match"], [
+        ("           OR (semantic).element IS NOT NULL AS has_element,",
+         "           OR (semantic).element IS NOT NULL\n"
+         "           -- the mutation: whether SIZE is DECLARED picks the compiled form\n"
+         "           OR NOT EXISTS (SELECT 1 FROM tree_catalog.slots s WHERE s.database_name = current_database()"
+         " AND s.schema_name = sch AND s.tree_name = nm AND s.slot = 'SIZE') AS has_element,", 1)]),
+
     "MN04": ("sql/02_projection.sql", ["tree_compile_projection"], [
         ("CAST(a.__size_raw AS BIGINT) AS _size",
          "CAST(a.__size_raw AS BIGINT) + 1 AS _size", 1)]),
@@ -135,30 +142,6 @@ SPEC = {
         ("CAST(row_number() OVER (PARTITION BY _root ORDER BY __order) - 1 AS BIGINT) AS _pre FROM __r",
          "CAST(__order AS BIGINT) AS _pre FROM __r  -- the mutation: the ORDER value, not its rank",
          1)]),
-
-    # M3 Task 9. MN03's id was retired in Task 6 and is re-planted here as the MODULE-BOUNDARY
-    # mutant: a semantics-path function reading an O accessor. The compiler asks tree_catalog.slots
-    # whether SIZE is DECLARED and respells the subtree arithmetic when it is not.
-    #
-    # `+ 0` is deliberate. The mutation has to be arithmetically INERT, or the suites that compare
-    # answers would catch it and the kill would say nothing about the boundary -- which is the whole
-    # point of the id. A form that moved rows is already covered: that is MN04. Verified by hand
-    # before planting: under this edit 42's boundary record is the ONLY record in the repo that
-    # fails, and every answer-comparing record in 42, 40, 41 and 31 still passes.
-    "MN03": ("sql/07_match.sql", ["tree_compile_match"], [
-        ("  SELECT CASE WHEN g.steps IS NULL THEN NULL"
-         " ELSE tree_sql_chain(g.steps, NULL, cfg.elem) END AS from_sql,",
-         "  -- the mutation: the compiler reads an O accessor -- whether SIZE is declared for this\n"
-         "  -- tree -- and respells the subtree arithmetic when it is not. Matching must not consult\n"
-         "  -- the O group at all; that it still returns the right rows is what makes this invisible\n"
-         "  -- to every record that compares answers.\n"
-         "  SELECT CASE WHEN g.steps IS NULL THEN NULL\n"
-         "              WHEN EXISTS (SELECT 1 FROM tree_catalog.slots s\n"
-         "                           WHERE s.database_name = current_database() AND s.schema_name = sch\n"
-         "                             AND s.tree_name = nm AND s.slot = 'SIZE')\n"
-         "                THEN tree_sql_chain(g.steps, NULL, cfg.elem)\n"
-         "              ELSE replace(tree_sql_chain(g.steps, NULL, cfg.elem),\n"
-         "                           '._size', '._size + 0') END AS from_sql,", 1)]),
 
     "MN19": ("sql/07_match.sql", ["tree_sql_clause"], [
         ("WHEN 'where'  THEN 'EXISTS (SELECT 1 FROM (SELECT unnest(' || alias"

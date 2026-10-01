@@ -358,41 +358,40 @@ def write_42_second_differential(hand):
         head = "# %s  %s  %s" % (r["id"], r["css"], " ".join(r["tags"]))
         out += _same_keys_record(head, _css_keys("app_declared", r["css"]),
                                  _css_keys("app_derived", r["css"]))
-    # THE MODULE BOUNDARY (M3 design §3.5: matching never reads tree_state or the O slot rows of
-    # tree_catalog.slots). Everything above compares ANSWERS, and answers cannot carry this claim:
-    # a compiler that looked up whether SIZE is declared and emitted an equivalent-but-differently
-    # spelled form would move no row, so every record above would still pass while the boundary
-    # was gone. This record compares the COMPILED TEXT. For each app selector, the SQL compiled
-    # against the declared tree -- with that tree's own name substituted -- must be byte-identical
-    # to the SQL compiled against the derived one, so the only thing the O group may change is the
-    # projection the match reads, never the matching.
+
+    # ---- the boundary: the compiled PLAN may not depend on the O group either ----------------
     #
-    # The IR literals are used rather than the css spellings because tree_compile_match is not a
-    # call test/run.py rewrites -- only tree_match(...) is -- so a css string here would reach the
-    # SQL front-end and need sitting_duck. The IR is what the runner hands the compiler anyway.
+    # Everything above compares ANSWERS. A compiler that read the O group to pick its form could
+    # pass all of it, because the projection supplies _size/_parent/_children either way and the
+    # two forms agree on a conforming tree. MN03 is exactly that mutant, and these are the records
+    # that kill it.
     #
-    # One call per statement: two tree_compile_match calls in a single projection make the binder
-    # report `UNNEST() for correlated expressions is not supported yet`.
-    out.append("# " + "-" * 86 + "\n# the module boundary: matching never reads the O group\n# "
-               + "-" * 86 + "\n\n")
-    out.append("statement ok\nCREATE OR REPLACE TEMP TABLE "
-               "__boundary(sid VARCHAR, leg VARCHAR, sql_text VARCHAR);\n\n")
-    for r in rows:
-        for leg, tree in (("declared", "app_declared"), ("derived", "app_derived")):
-            out.append("statement ok\nINSERT INTO __boundary SELECT '%s', '%s', "
-                       "tree_compile_match('main', '%s', %s);\n\n"
-                       % (r["id"], leg, tree, r["treeql"]))
-    # Two guards against the record passing for the wrong reason. count(*) pins the pair count, so
-    # an empty join or a renamed corpus id cannot satisfy a bare "no differences" claim. The second
-    # column pins that the substitution is not a no-op: if the compiled SQL stopped naming its tree
-    # at all, both sides would be trivially equal and the record would prove nothing.
-    out.append("query III\nSELECT count(*),\n"
-               "       count(*) FILTER (WHERE d.sql_text NOT LIKE '%%app_declared%%'),\n"
-               "       count(*) FILTER (WHERE replace(d.sql_text, 'app_declared', 'app_derived')\n"
-               "                              IS DISTINCT FROM v.sql_text)\n"
-               "  FROM __boundary d JOIN __boundary v USING (sid)\n"
-               " WHERE d.leg = 'declared' AND v.leg = 'derived';\n----\n%d\t0\t0\n\n"
-               % len(rows))
+    # A SECOND, ELEMENT-less pair is needed. With ELEMENT declared, the sibling and positional
+    # fragments take the element-aware path on both trees, so a mutation that flips which path is
+    # chosen changes nothing to compare. Dropping ELEMENT puts them on the O(1) pre/size
+    # arithmetic, where the choice is observable in the text.
+    out += ["# ---------------------------------------------------------------------------------\n"
+            "# The compiled plan, not just the answer\n"
+            "# ---------------------------------------------------------------------------------\n"
+            "#\n"
+            "# A third and fourth tree, the same source and S group as the pair above MINUS\n"
+            "# ELEMENT, so the sibling and positional fragments take the O(1) pre/size form. One\n"
+            "# declares SIZE, PARENT and CHILDREN; one derives all three. The compiled SQL must be\n"
+            "# identical apart from the tree's own name: the matcher reads the PROJECTION, which\n"
+            "# supplies those columns either way, and may not consult which of them was declared.\n"
+            "# A compiler that did could still answer every record above correctly.\n\n",
+            _app_ddl("app_declared_plain",
+                     ["size := 'descendant_count'", "parent := 'parent_id'",
+                      "children := 'children_count'"], "type := 'type', id := 'name', classes := 'css_classes'"),
+            _app_ddl("app_derived_plain", [], "type := 'type', id := 'name', classes := 'css_classes'")]
+    for css in ("function_definition + function_definition",
+                "block > expression_statement:first-child",
+                "block > expression_statement:last-child",
+                ".fn:has(string)"):
+        out += _same_plan_record("# plan, no ELEMENT:  %s" % css, css,
+                                 "app_declared_plain", "app_derived_plain")
+        out += _same_plan_record("# plan, with ELEMENT:  %s" % css, css,
+                                 "app_declared", "app_derived")
     return _write(os.path.join(SQL, "42_second_differential.test"), out)
 
 
@@ -585,6 +584,29 @@ def _same_keys_record(head, left, right):
     """One record: two key lists are equal. A selector that matches nothing on either side makes
     this NULL rather than true, so an empty match fails instead of passing vacuously."""
     return ["%s\nquery I\nSELECT %s\n     = %s;\n----\ntrue\n\n" % (head, left, right)]
+
+
+def _same_plan_record(head, css, left_tree, right_tree):
+    """One record: two trees compile a css selector to the SAME SQL, modulo their own names.
+
+    The key-comparison records above ask whether two trees ANSWER alike. This asks whether they
+    are PLANNED alike, which is a stronger and different claim: a compiler that consulted the O
+    group -- which columns happen to be declared -- rather than the projection could still answer
+    correctly on a conforming tree and be caught only here. The projection always supplies _size,
+    _parent and _children, derived when they are not declared, so the matcher has nothing to
+    consult; this record is what says so.
+
+    Normalising: the tree's own name appears in the compiled text twice, in the projection object
+    and in _match_tree, so each side has its name replaced by 'T'. That is sound only while
+    neither name is a substring of the other, which is asserted rather than assumed.
+    """
+    assert left_tree not in right_tree and right_tree not in left_tree, (left_tree, right_tree)
+
+    def plan(tree):
+        return ("replace((tree_explain('main', '%s', '%s', language := 'css')).sql, '%s', 'T')"
+                % (tree, sql_text(css), tree))
+    return ["%s\nquery I\nSELECT %s\n     = %s;\n----\ntrue\n\n"
+            % (head, plan(left_tree), plan(right_tree))]
 
 
 def _p22_records(cid, tree, treeql, css, tags):

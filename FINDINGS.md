@@ -486,25 +486,39 @@ MN03 paragraph below is kept because it is about 40 and 41's blindness to a symm
 which is a fact about those suites rather than about the retired mutant.)*
 
 *(2026-10-05, M3 Task 9: MN03 is now PLANTED, as the module-boundary mutant M3's gate names, and
-the count is 20. The edit is in `tree_compile_match`: the compiler asks `tree_catalog.slots`
-whether SIZE is DECLARED and respells the subtree arithmetic when it is not. The respelling is
-`+ 0` -- arithmetically inert on purpose, because a mutation that moved rows would be caught by
-the answer-comparing suites and its kill would say nothing about the boundary. That mutation
-already exists and is MN04.*
+the count is 20. The edit is one line of `tree_compile_match`: `has_element` -- the flag that picks
+between the element-scan sibling form and the O(1) `_pre + _size + 1` form -- gains a disjunct
+asking `tree_catalog.slots` whether SIZE is DECLARED. The compiler then chooses its compiled form
+by which O columns happen to be declared rather than by what the S group says. It is not a wrong
+answer; it is a wrong DEPENDENCY. The matcher reads the PROJECTION, which supplies `_size`,
+`_parent` and `_children` whether they were declared or derived, so it has nothing to consult.*
 
-*Measured, not asserted, after the F14/MN21 precedent recorded below: the whole suite run under
-the mutant is **1 failure in 25 files, 1451 assertions** -- 42's new module-boundary record, and
-nothing else. 40, 41, 41b, 31, 32, 33, 34, 37, 38, 43, 44, 45 and every ANSWER-comparing record in
-42 itself pass. 4 of the 13 app selectors compile differently, which are the ones whose SQL
-references `_size` at all: the descendant step, the two nested `:has` forms and the next-sibling
-combinator. The other 9 are single-step or PARENT-only and cannot discriminate -- worth stating,
-because it is the reason the record aggregates over the corpus instead of pinning one selector.*
+*No result differential can see it, by construction: the two forms agree on a conforming tree,
+because `_element` is true on every row of a tree that declares no ELEMENT, so "the nearest element
+sibling" and "the row at `_pre + _size + 1`" are the same row. Only the compiled TEXT moves -- and
+only for an ELEMENT-less tree, because with ELEMENT declared both trees already take the
+element-aware path and there is nothing to differ. That is why 42 carries a THIRD and FOURTH tree,
+`app_declared_plain` and `app_derived_plain`: the existing pair declares ELEMENT, so the O(1)
+sibling and positional fragments are never compiled in it at all. Measured on `main` before the
+pair existed: the next-sibling fragment on `app_declared` matches `_element` and does NOT match
+`_size + 1`.*
 
-*The record compares compiled TEXT, which is the only thing that can carry the claim: a compiler
-that branched on the O group and emitted an equivalent form would move no row. It carries two
-non-vacuity guards -- the pair count, so an empty join or a renamed corpus id cannot satisfy a
-bare "no differences" claim, and a count of declared compiles that do NOT name their tree, so that
-if the compiled SQL ever stopped naming it the two sides would not become trivially equal.)*
+*Measured, not asserted, after the F14/MN21 precedent recorded below: under the mutant 42 is the
+only file that fails and 23 pass, and within 42 exactly THREE records fail -- three of the four
+ELEMENT-less plan records, not four. The `.fn:has(string)` one does not move, because the
+descendant relation does not branch on the element flag at all. That record is a guard against
+other mutations of the plan rather than a discriminator for this one, and the manifest keeps it on
+that footing instead of counting it as part of the kill.*
+
+*A note on how this landed, because the manifest is supposed to record what a mutant does rather
+than what one hopes it does, and the same applies to how it got there. MN03 was implemented twice.
+The version above is the earlier one (2026-10-01), which sat unmerged on a local branch. A second
+implementation was written and merged first (#24) without that branch being checked: it planted an
+arithmetically inert `+ 0` respelling of the subtree arithmetic and compared compiled text across
+the ELEMENT-declaring pair only. It was killed by its own record, but it could not have seen a
+boundary violation in the sibling or positional fragments, which is where one is most likely --
+those are the fragments that legitimately branch. #26 replaced it with this one. One id, one
+meaning.)*
 
 | mutant | §9 says | actually killed by | why the difference |
 |---|---|---|---|
