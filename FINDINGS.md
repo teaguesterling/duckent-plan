@@ -361,6 +361,57 @@ was right (the old form read no `_size`). Materialized trees are unaffected, and
 refuses a bad `_size` at ingest for both. Recorded here rather than fixed: re-checking per query
 is a cost decision the O layer's design should make, not a review follow-up.
 
+## Inbound: duck_block_utils v3.5.0 and Task 13's document shape (2026-10-03)
+
+Reported by the duck_block_utils build (a peer session, second-hand — recorded as an input to be
+decided, not as a settled ruling), and relevant to **Task 13**, which is not started:
+
+- `duck_block_type_names()` now enumerates `document` (44 names). It did not for two weeks: the
+  type was declared, validated, repair-exempted and writer-dropped, but absent from the
+  enumeration, so a consumer building a type-to-node-type map by reading that function got a map
+  with no root in it.
+- **Level 0 is an optional explicit document root** (`kind='block'`, `element_type='document'`),
+  several roots are permitted in one relation, and a root carries no content. The reported ruling
+  is that the 1-based `level` is *intentional* and that prepending a level-0 root is the supported
+  way to conform — **rather than declaring `level - 1`**.
+- `ATTR_ID = "id"` is the document fragment locator, unique within its document and semantic in
+  location and value. `ATTR_NAME = "name"` is provenance, not an address. If duckent grows an
+  `#id` selector, `attributes['id']` is what it should resolve against.
+- `SPEC_VERSION` is unchanged at 1.4, so nothing forces a re-vendor.
+
+### What is verified here, and what is not
+
+| claim | checked | result |
+|---|---|---|
+| `duck_block_type_names()` returns 44 including `document` | yes | **no — 43 names, no `document`** |
+| the fixture's levels are 1-based | yes | yes, 1–4 over 172 rows |
+| the fixture carries a `document` root | yes | **no** |
+| the level-0-root ruling is Teague's | no | second-hand, needs confirming |
+
+**The installed extension predates `e00db698`.** `LOAD duck_block_utils` succeeds and returns 43
+type names without `document`, so this machine has the older build and Task 13 cannot be written
+against a `document` root until it is updated. `test/data/readme_blocks.parquet` was generated from
+that build (`read_markdown_blocks('README.md')`) and has no root row.
+
+### The decision Task 13 now needs
+
+The plan's Task 13 takes the other road, explicitly: it declares `level := 'level - 1'`, says "No
+ROOT: one document is one forest, and its top-level blocks are anonymous trees that are ordered
+siblings of each other", and Task 4's offset-hint message was written to *recommend* `level - 1`
+("if the source's levels are 1-based, declare LEVEL as 'level - 1'"). Those are two different
+shapes, not two spellings of one:
+
+- **`level - 1`** — a document is a FOREST of anonymous top-level trees. Works against the current
+  fixture today. No ROOT slot.
+- **explicit `document` root** — a document is ONE tree with one root. Needs the newer extension,
+  a regenerated fixture, and changes what the suite's sibling records mean, because the top-level
+  blocks become children of a root rather than roots themselves.
+
+The second also interacts with R0: a relation holding several rooted documents needs ROOT to tell
+them apart, where the forest reading needs none. Left open deliberately — it is a design call, and
+the plan's text and the hint message both point the other way, so it should not be changed by
+inference from a relayed message.
+
 ## M2 differential adjudications
 
 The corpus import (`test/import_astcss_eval.py`) runs all 108 accepted astcss-eval pairs against
