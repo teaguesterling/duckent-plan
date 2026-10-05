@@ -434,6 +434,27 @@ plants the same edit on the restructured line; the mutant count is 18. The reaso
 MN03 paragraph below is kept because it is about 40 and 41's blindness to a symmetric change,
 which is a fact about those suites rather than about the retired mutant.)*
 
+*(2026-10-05, M3 Task 9: MN03 is now PLANTED, as the module-boundary mutant M3's gate names, and
+the count is 20. The edit is in `tree_compile_match`: the compiler asks `tree_catalog.slots`
+whether SIZE is DECLARED and respells the subtree arithmetic when it is not. The respelling is
+`+ 0` -- arithmetically inert on purpose, because a mutation that moved rows would be caught by
+the answer-comparing suites and its kill would say nothing about the boundary. That mutation
+already exists and is MN04.*
+
+*Measured, not asserted, after the F14/MN21 precedent recorded below: the whole suite run under
+the mutant is **1 failure in 25 files, 1451 assertions** -- 42's new module-boundary record, and
+nothing else. 40, 41, 41b, 31, 32, 33, 34, 37, 38, 43, 44, 45 and every ANSWER-comparing record in
+42 itself pass. 4 of the 13 app selectors compile differently, which are the ones whose SQL
+references `_size` at all: the descendant step, the two nested `:has` forms and the next-sibling
+combinator. The other 9 are single-step or PARENT-only and cannot discriminate -- worth stating,
+because it is the reason the record aggregates over the corpus instead of pinning one selector.*
+
+*The record compares compiled TEXT, which is the only thing that can carry the claim: a compiler
+that branched on the O group and emitted an equivalent form would move no row. It carries two
+non-vacuity guards -- the pair count, so an empty join or a renamed corpus id cannot satisfy a
+bare "no differences" claim, and a count of declared compiles that do NOT name their tree, so that
+if the compiled SQL ever stopped naming it the two sides would not become trivially equal.)*
+
 | mutant | §9 says | actually killed by | why the difference |
 |---|---|---|---|
 | MN03 *(retired, M3 Task 6)* | 42 | **42 only** | 40 and 41 PASS, although both declare SIZE — see below |

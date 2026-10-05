@@ -315,6 +315,8 @@ def write_42_second_differential(hand):
            "# The selectors are the `app` rows of test/corpus/selectors.tsv, plus the one written\n",
            "# below for SIZE. astcss-eval's rows all target scripts/py_variety, so none of them is\n",
            "# templated here.\n#\n",
+           "# The file closes with the MODULE BOUNDARY record, which compares compiled SQL rather\n",
+           "# than answers: no selector may compile differently against the two trees.\n#\n",
            GENERATED, "\n",
            "# The two trees. Same source, same S group; only the O group differs.\n\n",
            _app_ddl("app_declared",
@@ -356,6 +358,41 @@ def write_42_second_differential(hand):
         head = "# %s  %s  %s" % (r["id"], r["css"], " ".join(r["tags"]))
         out += _same_keys_record(head, _css_keys("app_declared", r["css"]),
                                  _css_keys("app_derived", r["css"]))
+    # THE MODULE BOUNDARY (M3 design §3.5: matching never reads tree_state or the O slot rows of
+    # tree_catalog.slots). Everything above compares ANSWERS, and answers cannot carry this claim:
+    # a compiler that looked up whether SIZE is declared and emitted an equivalent-but-differently
+    # spelled form would move no row, so every record above would still pass while the boundary
+    # was gone. This record compares the COMPILED TEXT. For each app selector, the SQL compiled
+    # against the declared tree -- with that tree's own name substituted -- must be byte-identical
+    # to the SQL compiled against the derived one, so the only thing the O group may change is the
+    # projection the match reads, never the matching.
+    #
+    # The IR literals are used rather than the css spellings because tree_compile_match is not a
+    # call test/run.py rewrites -- only tree_match(...) is -- so a css string here would reach the
+    # SQL front-end and need sitting_duck. The IR is what the runner hands the compiler anyway.
+    #
+    # One call per statement: two tree_compile_match calls in a single projection make the binder
+    # report `UNNEST() for correlated expressions is not supported yet`.
+    out.append("# " + "-" * 86 + "\n# the module boundary: matching never reads the O group\n# "
+               + "-" * 86 + "\n\n")
+    out.append("statement ok\nCREATE OR REPLACE TEMP TABLE "
+               "__boundary(sid VARCHAR, leg VARCHAR, sql_text VARCHAR);\n\n")
+    for r in rows:
+        for leg, tree in (("declared", "app_declared"), ("derived", "app_derived")):
+            out.append("statement ok\nINSERT INTO __boundary SELECT '%s', '%s', "
+                       "tree_compile_match('main', '%s', %s);\n\n"
+                       % (r["id"], leg, tree, r["treeql"]))
+    # Two guards against the record passing for the wrong reason. count(*) pins the pair count, so
+    # an empty join or a renamed corpus id cannot satisfy a bare "no differences" claim. The second
+    # column pins that the substitution is not a no-op: if the compiled SQL stopped naming its tree
+    # at all, both sides would be trivially equal and the record would prove nothing.
+    out.append("query III\nSELECT count(*),\n"
+               "       count(*) FILTER (WHERE d.sql_text NOT LIKE '%%app_declared%%'),\n"
+               "       count(*) FILTER (WHERE replace(d.sql_text, 'app_declared', 'app_derived')\n"
+               "                              IS DISTINCT FROM v.sql_text)\n"
+               "  FROM __boundary d JOIN __boundary v USING (sid)\n"
+               " WHERE d.leg = 'declared' AND v.leg = 'derived';\n----\n%d\t0\t0\n\n"
+               % len(rows))
     return _write(os.path.join(SQL, "42_second_differential.test"), out)
 
 
