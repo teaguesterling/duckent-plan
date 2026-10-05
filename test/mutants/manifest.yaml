@@ -45,12 +45,24 @@
   what: derive parent as nearest prior row at the same level, not level - 1
   expect_fail: [test/sql/10_projection.test, test/sql/20_derivations.test]
   also_kills: parent join without root equality (no id reserved; see FINDINGS)
-# MN03 was RETIRED by M3 Task 6. Its edit was a textual one on the `__s` line of
+# MN03's ORIGINAL mutant was retired by M3 Task 6: its edit was a textual one on the `__s` line of
 # tree_compile_projection, and that line was restructured into tree_sql_size_join(), so regen.py
-# could no longer find the text to plant. The id is NOT reused for the same claim: M3 Task 9
-# re-plants MN03 as a DIFFERENT mutant (a semantics-path function reading an O accessor, in
-# sql/07_match.sql). Its CLAIM -- that a declared SIZE override must not silently disagree with
-# the derivation -- is carried by MN04 below as of M3 Task 7, against the restructured line.
+# could no longer find the text to plant. The id was NOT reused for the same claim -- that a
+# declared SIZE override must not silently disagree with the derivation is carried by MN04 below as
+# of M3 Task 7. M3 Task 9 re-plants MN03 as the MODULE-BOUNDARY mutant, below, which is the mutant
+# M3's gate names.
+- id: MN03
+  file: MN03_match_reads_size_slot.sql
+  what: the match compiler reads an O accessor -- whether SIZE is DECLARED -- and respells the
+    subtree arithmetic when it is not
+  expect_fail: [test/sql/42_second_differential.test]
+  also_kills: >-
+    NOTHING else, and that is the claim. The respelling is arithmetically inert (`+ 0`), so it moves
+    no row -- 40, 41, 41b, 31, 32, 33, 34, 37, 38, 43, 44 and every ANSWER-comparing record in 42
+    itself all PASS under it. Only 42's module-boundary record, which compares the compiled TEXT of
+    the declared tree against the derived one, can see that the compiler branched on the O group at
+    all. A mutant whose wrongness shows up in answers is MN04, not this one; this id exists to prove
+    the boundary is tested rather than merely reviewed (M3 design section 3.5).
 - id: MN04
   file: MN04_size_override_plus_one.sql
   what: a declared SIZE override returns size + 1; conformance must refuse it as corruption

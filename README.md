@@ -90,9 +90,9 @@ Four blocks, taught in dependency order (R, S, O, W). Rearranged, the initials s
 | M4 | Pseudo-class dispatch, profiles, introspection, docs | Cheatsheet generated from catalog queries |
 
 Planted mutants are listed in the handover document and tracked in `test/mutants/manifest.yaml`.
-All must die before a milestone closes. Nineteen are planted today and all nineteen die; the
-remaining ids are deferred or reserved — the W block, the O-layer one that arrives with M3, the
-retired host-escape number, and one that waits on the selector-language work. A surviving mutant
+All must die before a milestone closes. Twenty are planted today and all twenty die; the
+remaining ids are deferred or reserved — the W block, the retired host-escape number, and one that
+waits on the selector-language work. A surviving mutant
 is fixed by a test, never by a manifest edit, and a manifest states what a mutant does rather
 than what one hopes it does.
 

@@ -136,6 +136,30 @@ SPEC = {
          "CAST(__order AS BIGINT) AS _pre FROM __r  -- the mutation: the ORDER value, not its rank",
          1)]),
 
+    # M3 Task 9. MN03's id was retired in Task 6 and is re-planted here as the MODULE-BOUNDARY
+    # mutant: a semantics-path function reading an O accessor. The compiler asks tree_catalog.slots
+    # whether SIZE is DECLARED and respells the subtree arithmetic when it is not.
+    #
+    # `+ 0` is deliberate. The mutation has to be arithmetically INERT, or the suites that compare
+    # answers would catch it and the kill would say nothing about the boundary -- which is the whole
+    # point of the id. A form that moved rows is already covered: that is MN04. Verified by hand
+    # before planting: under this edit 42's boundary record is the ONLY record in the repo that
+    # fails, and every answer-comparing record in 42, 40, 41 and 31 still passes.
+    "MN03": ("sql/07_match.sql", ["tree_compile_match"], [
+        ("  SELECT CASE WHEN g.steps IS NULL THEN NULL"
+         " ELSE tree_sql_chain(g.steps, NULL, cfg.elem) END AS from_sql,",
+         "  -- the mutation: the compiler reads an O accessor -- whether SIZE is declared for this\n"
+         "  -- tree -- and respells the subtree arithmetic when it is not. Matching must not consult\n"
+         "  -- the O group at all; that it still returns the right rows is what makes this invisible\n"
+         "  -- to every record that compares answers.\n"
+         "  SELECT CASE WHEN g.steps IS NULL THEN NULL\n"
+         "              WHEN EXISTS (SELECT 1 FROM tree_catalog.slots s\n"
+         "                           WHERE s.database_name = current_database() AND s.schema_name = sch\n"
+         "                             AND s.tree_name = nm AND s.slot = 'SIZE')\n"
+         "                THEN tree_sql_chain(g.steps, NULL, cfg.elem)\n"
+         "              ELSE replace(tree_sql_chain(g.steps, NULL, cfg.elem),\n"
+         "                           '._size', '._size + 0') END AS from_sql,", 1)]),
+
     "MN19": ("sql/07_match.sql", ["tree_sql_clause"], [
         ("WHEN 'where'  THEN 'EXISTS (SELECT 1 FROM (SELECT unnest(' || alias"
          " || ', recursive := false)) __w WHERE ' || value || ')'",
