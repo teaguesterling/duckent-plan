@@ -369,3 +369,66 @@ SELECT (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
 ----
 [app.py:8, app.py:32]	NULL
 
+# --------------------------------------------------------------------------------------
+# (d) ABSENT: a value that is not there, spelled '' or NULL
+# --------------------------------------------------------------------------------------
+
+statement ok
+CALL tree_ddl_create('main', 'rep_absent_empty', tree_spec(tree_shape(
+  root := 'file_path', "order" := 'node_id', level := 'depth',
+  size := 'descendant_count',
+  semantic := tree_semantic(type := 'type')),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+
+statement ok
+CALL tree_ddl_create('main', 'rep_absent_null', tree_spec(tree_shape(
+  root := 'file_path', "order" := 'node_id', level := 'depth',
+  size := 'descendant_count',
+  semantic := tree_semantic(type := 'type')),
+  source := '(SELECT * REPLACE (nullif(name, '''') AS name) FROM read_parquet(''test/data/app.parquet''))'));
+
+# the negated operator
+query I
+SELECT (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
+        FROM tree_match('main', 'rep_absent_empty', tree_steps([{attr: 'name != ''greet'''}])))
+     = (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
+        FROM tree_match('main', 'rep_absent_null', tree_steps([{attr: 'name != ''greet'''}])));
+----
+true
+
+# <>, the same relation spelled the other way
+query I
+SELECT (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
+        FROM tree_match('main', 'rep_absent_empty', tree_steps([{attr: 'name <> ''greet'''}])))
+     = (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
+        FROM tree_match('main', 'rep_absent_null', tree_steps([{attr: 'name <> ''greet'''}])));
+----
+true
+
+# NOT LIKE, the third negated spelling
+query I
+SELECT (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
+        FROM tree_match('main', 'rep_absent_empty', tree_steps([{attr: 'name NOT LIKE ''gre%'''}])))
+     = (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
+        FROM tree_match('main', 'rep_absent_null', tree_steps([{attr: 'name NOT LIKE ''gre%'''}])));
+----
+true
+
+# the positive comparison -- a control, which was already safe
+query I
+SELECT (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
+        FROM tree_match('main', 'rep_absent_empty', tree_steps([{attr: 'name = ''greet'''}])))
+     = (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
+        FROM tree_match('main', 'rep_absent_null', tree_steps([{attr: 'name = ''greet'''}])));
+----
+true
+
+# the css-native negation -- unaffected either way, and what the operator must match
+query I
+SELECT (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
+        FROM tree_match('main', 'rep_absent_empty', tree_steps([{"not": [{comb: 'self', attr: 'name = ''greet'''}]}])))
+     = (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
+        FROM tree_match('main', 'rep_absent_null', tree_steps([{"not": [{comb: 'self', attr: 'name = ''greet'''}]}])));
+----
+true
+

@@ -199,6 +199,27 @@ CREATE OR REPLACE MACRO tree_sql_cmp_cast_type(t) AS
 --   * anything else -- a type the artifact does not record, or a column that is neither text nor
 --     a number -- takes TRY_CAST, the reading that cannot abort. Same rule, and same reason, as
 --     the ATTR MAP branch below.
+-- A NEGATED attribute operator has to collapse the other way. The attribute tier is
+-- NULL-DEFINITE -- an unknown comparison is false, not unknown -- and applying that straight to
+-- `!=` drops a row whose value is NULL, while `:not([a=v])` keeps it. One question, two answers,
+-- and which one you got depended on whether the vocabulary spells absent as '' or as NULL.
+-- Measured on app.parquet: `[name!='greet']` returned 50 rows against 12 for the same tree with
+-- `nullif(name, '')` applied, while the css-native spelling stayed at 50 either way. P23 says a
+-- representation cannot move a result, so the operator is what gives.
+--
+-- A negated operator therefore compiles as the NEGATION of its positive form under the same
+-- collapse -- NOT COALESCE(a = v, false) -- which keeps NULL-definiteness and makes the two
+-- spellings agree. Ordering operators are left alone: `<` against an absent value is genuinely
+-- unknown, css has no ordering comparison to agree with, and false is the honest answer.
+--
+-- Attribute tier only. The `[WHERE]` host escape is full SQL and keeps SQL's three-valued logic,
+-- which is the entire point of an escape (31_match.test:487 pins a `<>` there).
+CREATE OR REPLACE MACRO tree_sql_attr_neg_prefix(op) AS
+  CASE WHEN upper(trim(op)) IN ('!=', '<>', 'NOT LIKE') THEN 'NOT ' ELSE '' END;
+CREATE OR REPLACE MACRO tree_sql_attr_positive_op(op) AS
+  CASE upper(trim(op)) WHEN '!=' THEN '=' WHEN '<>' THEN '=' WHEN 'NOT LIKE' THEN 'LIKE'
+                       ELSE op END;
+
 CREATE OR REPLACE MACRO tree_sql_attr_col_cmp(alias, col, ctype, op, arg) AS
   CASE WHEN tree_sql_literal_type(arg) IS NULL
          THEN alias || '.' || tree_sql_ident(col) || ' ' || op || ' ' || arg
@@ -246,15 +267,15 @@ CREATE OR REPLACE MACRO tree_sql_clause(kind, value, op, arg, alias, attr_cols, 
         WHEN list_contains(tree_canonical_columns(), lower(COALESCE(value, '')))
           THEN tree_err('tree_match: attribute ' || value || ' is a canonical column, not an attribute; use a WHERE clause')
         WHEN len(list_filter(attr_cols, lambda c: lower((c).name) = lower(value))) > 0
-          THEN 'COALESCE(' || tree_sql_attr_col_cmp(alias,
+          THEN tree_sql_attr_neg_prefix(op) || 'COALESCE(' || tree_sql_attr_col_cmp(alias,
                  (list_filter(attr_cols, lambda c: lower((c).name) = lower(value))[1]).name,
                  (list_filter(attr_cols, lambda c: lower((c).name) = lower(value))[1])."type",
-                 op, arg) || ', false)'
+                 tree_sql_attr_positive_op(op), arg) || ', false)'
         WHEN has_map
-          THEN 'COALESCE(' || CASE WHEN tree_sql_literal_type(arg) IS NULL
+          THEN tree_sql_attr_neg_prefix(op) || 'COALESCE(' || CASE WHEN tree_sql_literal_type(arg) IS NULL
                                    THEN alias || '._attr_map[' || tree_sql_lit(value) || ']'
                                    ELSE 'TRY_CAST(' || alias || '._attr_map[' || tree_sql_lit(value) || '] AS ' || tree_sql_cmp_cast_type(tree_sql_literal_type(arg)) || ')' END
-               || ' ' || op || ' ' || arg || ', false)'
+               || ' ' || tree_sql_attr_positive_op(op) || ' ' || arg || ', false)'
         ELSE tree_err('tree_match: attribute ' || COALESCE(value, '<NULL>') || ' is neither a projected column nor served by ATTR MAP') END
     -- One level only: recursive := true flattens _root's struct into its component columns, so
     -- _root itself stops being addressable and falls through to an enclosing step alias
