@@ -90,6 +90,20 @@ checked AS (
       WHEN storage IS NULL OR storage NOT IN ('materialized', 'projection') THEN tree_err('tree_ddl_create: storage must be materialized or projection')
       WHEN NOT level_basis AND (shape).key IS NULL THEN tree_err('tree_ddl_create: PARENT basis requires KEY (the column PARENT refers to)')
       WHEN NOT level_basis AND NOT (tree_sql_is_ident((shape).key) AND tree_sql_is_ident((shape).parent)) THEN tree_err('tree_ddl_create: PARENT basis needs KEY and PARENT to be plain column names')
+      -- SIBLING_ORDER belongs to the PARENT basis and to nothing else. The level basis derives the
+      -- sibling order from ORDER by construction (_pre is the rank of ORDER within the root), and
+      -- the level-basis arm of tree_compile_projection never reads (shape).sibling_order -- it is
+      -- spliced only into the recursive walk of the parent-basis arm, where it is what makes the
+      -- DFS numbering deterministic. So a SIBLING_ORDER here is not an unused refinement, it is a
+      -- SECOND, CONTRADICTING ordering that the catalog recorded as in force while :first-child,
+      -- :last-child and the sibling combinators went on answering by ORDER -- and, because nothing
+      -- ever compiled the expression, it was recorded even when it named no column at all.
+      -- Refused rather than honoured: honouring it would mean a level-basis tree whose _pre and
+      -- whose sibling order disagree, and every O(1) form downstream of _pre assumes they cannot.
+      -- Asks the BASIS, never the LEVEL slot: LEVEL and PARENT together is still the level basis,
+      -- and so is a shape that declares neither (R2 defaults to LEVEL 0).
+      WHEN level_basis AND (shape).sibling_order IS NOT NULL
+        THEN tree_err('tree_ddl_create: LEVEL basis does not take SIBLING_ORDER (ORDER already is the sibling order there); declare it on a PARENT basis, whose DFS numbering it makes deterministic')
       WHEN NOT abstract AND storage = 'projection' AND level_basis AND (shape)."order" IS NULL THEN tree_err('tree_ddl_create: ORDER is required for projection-mode trees (the source is not frozen)')
       WHEN NOT abstract AND order_source = 'frozen' AND NOT current_setting('preserve_insertion_order') THEN tree_err('tree_ddl_create: ORDER is required because preserve_insertion_order is off')
       -- both halves of the S ladder: the prefix check reads the group as written (a prefix that
