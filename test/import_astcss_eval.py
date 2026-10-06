@@ -395,6 +395,19 @@ def write_42_second_differential(hand):
     return _write(os.path.join(SQL, "42_second_differential.test"), out)
 
 
+def _attr_ir(text, negated_group=False):
+    """An attribute step as IR, from the predicate as a person would write it.
+
+    `text` carries its own single quotes around any literal (`name = 'greet'`); SQL needs those
+    doubled inside the surrounding string, which is what this does -- by hand the quote runs are
+    four and five deep and get miscounted.
+    """
+    doubled = text.replace("'", "''")
+    if negated_group:
+        return "[{\"not\": [{comb: 'self', attr: '%s'}]}]" % doubled
+    return "[{attr: '%s'}]" % doubled
+
+
 def write_43_representation(hand):
     """test/sql/43_representation.test -- P23: how a semantic is *represented* is not part of it.
 
@@ -480,6 +493,33 @@ def write_43_representation(hand):
             "query II\nSELECT %s,\n       %s;\n----\n%s\n\n"
             % (_css_keys("rep_elem_col", ELEM_DIVERGES),
                _css_keys("rep_elem_expr", ELEM_DIVERGES), ELEM_DIVERGES_EXPECTED)]
+    # (d) The three swaps above change how a PRESENT semantic is spelled. This one changes how an
+    # ABSENT one is, which P23 covers just as much: sitting_duck writes '' for a row with no name
+    # and another producer would write NULL, and that choice belongs to the vocabulary rather than
+    # to the answer. A POSITIVE comparison is safe either way -- neither '' nor NULL equals
+    # 'greet'. The NEGATED operators are the ones that move, because the attribute tier is
+    # NULL-definite: COALESCE(name != 'greet', false) drops a row whose name is NULL, while
+    # :not([name='greet']) keeps it. Measured on app.parquet before the fix: 50 rows against 12,
+    # with the css-native spelling unaffected at 50 both ways. The last record is that spelling --
+    # the reading the operator has to agree with, and what keeps this section from asserting
+    # whatever the compiler happens to do.
+    out += ["# " + "-" * 86 + "\n# (d) ABSENT: a value that is not there, spelled '' or NULL\n# "
+            + "-" * 86 + "\n\n",
+            _app_ddl("rep_absent_empty", SIZE_ONLY, "type := 'type'"),
+            _app_ddl("rep_absent_null", SIZE_ONLY, "type := 'type'",
+                     source="(SELECT * REPLACE (nullif(name, '''') AS name) "
+                            "FROM read_parquet(''test/data/app.parquet''))")]
+    for head, ir in (
+            ("# the negated operator", _attr_ir("name != 'greet'")),
+            ("# <>, the same relation spelled the other way", _attr_ir("name <> 'greet'")),
+            ("# NOT LIKE, the third negated spelling", _attr_ir("name NOT LIKE 'gre%'")),
+            ("# the positive comparison -- a control, which was already safe",
+             _attr_ir("name = 'greet'")),
+            ("# the css-native negation -- unaffected either way, and what the operator must match",
+             _attr_ir("name = 'greet'", negated_group=True))):
+        out += _same_keys_record(head,
+                                 _treeql_keys("rep_absent_empty", "tree_steps(%s)" % ir),
+                                 _treeql_keys("rep_absent_null", "tree_steps(%s)" % ir))
     return _write(os.path.join(SQL, "43_representation.test"), out)
 
 

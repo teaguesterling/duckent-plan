@@ -50,14 +50,14 @@ CREATE OR REPLACE MACRO tree_sql_clause(kind, value, op, arg, alias, attr_cols, 
         WHEN list_contains(tree_canonical_columns(), lower(COALESCE(value, '')))
           THEN tree_err('tree_match: attribute ' || value || ' is a canonical column, not an attribute; use a WHERE clause')
         WHEN len(list_filter(attr_cols, lambda c: lower((c).name) = lower(value))) > 0
-          THEN 'COALESCE(' || tree_sql_attr_col_cmp(alias,
+          THEN tree_sql_attr_neg_prefix(op) || 'COALESCE(' || tree_sql_attr_col_cmp(alias,
                  (list_filter(attr_cols, lambda c: lower((c).name) = lower(value))[1]).name,
                  (list_filter(attr_cols, lambda c: lower((c).name) = lower(value))[1])."type",
-                 op, arg) || ', false)'
+                 tree_sql_attr_positive_op(op), arg) || ', false)'
         -- the mutation: no TRY_CAST on the map value; the literal is cast to VARCHAR instead
         WHEN has_map
-          THEN 'COALESCE(' || alias || '._attr_map[' || tree_sql_lit(value) || ']'
-               || ' ' || op || ' ' || CASE WHEN tree_sql_literal_type(arg) IS NULL THEN arg
+          THEN tree_sql_attr_neg_prefix(op) || 'COALESCE(' || alias || '._attr_map[' || tree_sql_lit(value) || ']'
+               || ' ' || tree_sql_attr_positive_op(op) || ' ' || CASE WHEN tree_sql_literal_type(arg) IS NULL THEN arg
                                            ELSE 'CAST(' || arg || ' AS VARCHAR)' END || ', false)'
         ELSE tree_err('tree_match: attribute ' || COALESCE(value, '<NULL>') || ' is neither a projected column nor served by ATTR MAP') END
     -- One level only: recursive := true flattens _root's struct into its component columns, so

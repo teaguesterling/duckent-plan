@@ -105,15 +105,14 @@ SPEC = {
 
     "MN13": ("sql/07_match.sql", ["tree_sql_clause"], [
         ("        WHEN has_map\n"
-         "          THEN 'COALESCE(' || CASE WHEN tree_sql_literal_type(arg) IS NULL\n"
+         "          THEN tree_sql_attr_neg_prefix(op) || 'COALESCE(' || CASE WHEN tree_sql_literal_type(arg) IS NULL\n"
          "                                   THEN alias || '._attr_map[' || tree_sql_lit(value) || ']'\n"
-         "                                   ELSE 'TRY_CAST(' || alias || '._attr_map[' || tree_sql_lit(value)"
-         " || '] AS ' || tree_sql_cmp_cast_type(tree_sql_literal_type(arg)) || ')' END\n"
-         "               || ' ' || op || ' ' || arg || ', false)'\n",
+         "                                   ELSE 'TRY_CAST(' || alias || '._attr_map[' || tree_sql_lit(value) || '] AS ' || tree_sql_cmp_cast_type(tree_sql_literal_type(arg)) || ')' END\n"
+         "               || ' ' || tree_sql_attr_positive_op(op) || ' ' || arg || ', false)'\n",
          "        -- the mutation: no TRY_CAST on the map value; the literal is cast to VARCHAR instead\n"
          "        WHEN has_map\n"
-         "          THEN 'COALESCE(' || alias || '._attr_map[' || tree_sql_lit(value) || ']'\n"
-         "               || ' ' || op || ' ' || CASE WHEN tree_sql_literal_type(arg) IS NULL THEN arg\n"
+         "          THEN tree_sql_attr_neg_prefix(op) || 'COALESCE(' || alias || '._attr_map[' || tree_sql_lit(value) || ']'\n"
+         "               || ' ' || tree_sql_attr_positive_op(op) || ' ' || CASE WHEN tree_sql_literal_type(arg) IS NULL THEN arg\n"
          "                                           ELSE 'CAST(' || arg || ' AS VARCHAR)' END || ', false)'\n", 1)]),
 
     "MN17": ("sql/04_dml.sql", ["tree_compile_delete"], [
