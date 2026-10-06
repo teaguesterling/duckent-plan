@@ -161,7 +161,7 @@ built AS (
    -- under it between any two queries, so a create-time refusal would be a promise the storage
    -- mode cannot keep. tree_check RECORDS the same comparison for those trees instead (§3.4).
    CASE WHEN abstract OR storage <> 'materialized' THEN NULL
-        ELSE tree_compile_o_conformance(shape, '(' || proj_sql || ')', sch || '.' || nm, tree_sql_o_order_col(shape, attr_text)) END AS s_conform,
+        ELSE tree_compile_o_conformance(shape, '(' || proj_sql || ')', sch || '.' || nm, tree_sql_o_order_col(shape, attr_text), attr_text) END AS s_conform,
    CASE WHEN abstract OR storage <> 'materialized' THEN NULL ELSE 'CREATE TABLE ' || tbl_name || ' AS ' || proj_sql END AS s_table,
    CASE WHEN abstract THEN NULL WHEN storage = 'materialized' THEN 'CREATE OR REPLACE MACRO ' || proj_name || '() AS TABLE SELECT * FROM ' || tbl_name
         ELSE 'CREATE OR REPLACE MACRO ' || proj_name || '() AS TABLE ' || proj_sql END AS s_macro,
