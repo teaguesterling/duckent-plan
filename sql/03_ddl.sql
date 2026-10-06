@@ -272,17 +272,21 @@ CREATE OR REPLACE MACRO tree_compile_drop(sch, nm) AS (
     'COMMIT'] END);
 
 -- Replace the SEMANTIC group and rebuild the projection (and storage, when materialized).
--- Alter changes S only, never data. Three guards keep it from being a back door: the S
+-- Alter changes S only, never the row SET. Four guards keep it from being a back door: the S
 -- validation ladder is the same fragment create uses (so a closed tree stays closed and the
 -- `_` prefix stays reserved); a materialized tree whose partitions no longer all come from
 -- source_sql refuses outright, because rebuilding with CREATE OR REPLACE TABLE would drop
--- what tree_insert added (C1); and any other drift between the source and the stored
+-- what tree_insert added (C1); any other drift between the source and the stored
 -- partitions -- a root the source gained, or a root whose row count changed -- refuses too,
--- because the rebuild would silently ingest or discard rows as a side effect of an S change.
+-- because the rebuild would silently ingest or discard rows as a side effect of an S change;
+-- and the frozen-order guard refuses a rebuild that would re-freeze an arbitrary scan order,
+-- which the drift checks cannot see because they compare row COUNTS. That last one is why this
+-- says "the row set" rather than "data": in an order_source = 'frozen' tree the ORDER is the
+-- tree, and a rebuild reorders without changing a single count.
 -- The same P13 and shadow checks create runs are emitted before the table is rebuilt.
 CREATE OR REPLACE MACRO tree_compile_alter(sch, nm, semantic) AS (
 WITH t AS (
-  SELECT current_database() AS db, tr.storage, tr.source_sql, tr.is_abstract,
+  SELECT current_database() AS db, tr.storage, tr.source_sql, tr.is_abstract, tr.order_source,
          tree_shape_from_catalog(current_database(), sch, nm) AS old_shape
   FROM tree_catalog.trees tr WHERE tr.database_name = current_database() AND tr.schema_name = sch AND tr.tree_name = nm
 ),
@@ -336,6 +340,13 @@ SELECT CASE WHEN semantic IS NULL THEN tree_err('tree_ddl_alter: semantic is NUL
   -- branch that fires AND makes its message NULL, and error(NULL) is NULL in 1.5.5.
   WHEN NOT EXISTS (SELECT 1 FROM t) THEN tree_err('tree_ddl_alter: tree ' || COALESCE(sch, '<NULL>') || '.' || COALESCE(nm, '<NULL>') || ' not found') ELSE
   (SELECT list_filter(['BEGIN TRANSACTION',
+   -- First, as in insert and replace: an `order_source = 'frozen'` tree takes _pre from the
+   -- source's scan order, and alter REBUILDS the stored table from that source, so with
+   -- preserve_insertion_order off it would freeze an arbitrary order into _pre and so into
+   -- _parent, _size and every positional answer. The drift checks below cannot stand in for
+   -- this -- they compare per-root row COUNTS, which a reshuffle leaves alone. Create refuses
+   -- the shape and both ingest verbs refuse the data; this is the same guard, same message.
+   tree_sql_frozen_guard(order_source, 'tree_ddl_alter'),
    -- ahead of the two drift checks as well as of the shadow and P13 ones: all four evaluate
    -- proj_sql, and a tied ORDER under a declared PARENT multiplies its rows, which would be
    -- reported as a drifted row count rather than as the malformed ORDER it is

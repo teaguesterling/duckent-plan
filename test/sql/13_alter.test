@@ -186,3 +186,57 @@ statement error
 FROM tree_match('main', 'wasty', tree_steps([{type: 'module'}]));
 ----
 has no SEMANTIC group
+
+# ALTER REBUILDS THE STORED TABLE, so it owes the frozen-order guard create and both ingest verbs
+# enforce. A level-basis tree with no ORDER declared has order_source = 'frozen': _pre is the
+# source's scan order (row_number() OVER () in tree_compile_projection). While
+# preserve_insertion_order is off that order is arbitrary, and alter's CREATE OR REPLACE TABLE
+# would freeze an arbitrary one into _pre -- and so into _parent, _size and every positional
+# answer. Alter's two drift checks do not see it: they compare per-root row COUNTS, which a
+# reshuffle leaves alone. Create refuses the shape (11_ddl) and tree_insert/tree_replace refuse
+# the ingest (12_dml, via tree_sql_frozen_guard, whose comment says "Create refuses this; so must
+# ingest"); alter rebuilt the rows and refused nothing.
+statement ok
+CALL tree_ddl_create('main', 'fz', tree_spec(tree_shape(root := 'file_path', level := 'depth'), source := 'src'));
+
+query I
+SELECT order_source FROM tree_catalog_trees() WHERE tree_name = 'fz';
+----
+frozen
+
+statement ok
+SET preserve_insertion_order = false;
+
+# the same shape create-side, for the comparison this record is about: create names itself
+statement error
+CALL tree_ddl_create('main', 'fz2', tree_spec(tree_shape(root := 'file_path', level := 'depth'), source := 'src'));
+----
+tree_ddl_create: ORDER is required because preserve_insertion_order is off
+
+# ...and alter refuses the rebuild with the same sentence in its own name. The whole message is
+# asserted, verb included, not merely a non-zero exit: a refusal that named some other setting --
+# or that came from the drift checks -- would pass a looser record while leaving this hole open.
+statement error
+CALL tree_ddl_alter('main', 'fz', tree_semantic(type := 'type'));
+----
+tree_ddl_alter: ORDER is required because preserve_insertion_order is off
+
+statement ok
+SET preserve_insertion_order = true;
+
+# the refusal left the tree as create made it: no TYPE slot, flag untouched
+query II
+SELECT has_semantic, (SELECT string_agg(slot, ',' ORDER BY slot) FROM tree_catalog_slots() WHERE tree_name = 'fz' AND block = 'S')
+FROM tree_catalog_trees() WHERE tree_name = 'fz';
+----
+false	ATTR
+
+# and with the setting back on the same alter goes through, exactly as ingest does in 12_dml
+statement ok
+CALL tree_ddl_alter('main', 'fz', tree_semantic(type := 'type'));
+
+query II
+SELECT has_semantic, (SELECT count(*) FROM tree_project('main', 'fz'))
+FROM tree_catalog_trees() WHERE tree_name = 'fz';
+----
+true	54
