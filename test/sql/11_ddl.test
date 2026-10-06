@@ -106,6 +106,49 @@ SELECT count(*), max(_level), max(_size) FROM tree_project('main', 'flat_default
 ----
 54	0	0
 
+# PSEUDO_ARGS declares the arguments every shared-tier (sel_) pseudo-class is bound with, so it
+# asserts that there ARE shared-tier pseudo-classes. With no sel_ macro in scope it binds none --
+# and tree_semantic_declares counted it as an S group regardless, so has_semantic went true and the
+# S-less refusal in tree_match stopped firing: a TYPE clause then compiled against TYPE's 'node'
+# default and returned zero rows where a refusal was owed. That is verbatim the failure the comment
+# on tree_semantic_declares says the flag exists to prevent. The EXPLICIT spelling of the same
+# intent -- pseudo := [{prefix: 'sel_', args: ...}] -- was already refused by
+# tree_sql_check_prefixes; only the implicit tier bypassed it.
+statement error
+CALL tree_ddl_create('main', 'pa_unbound', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', semantic := tree_semantic(pseudo_args := 'depth')), source := 'read_parquet(''test/data/app.parquet'')'));
+----
+PSEUDO_ARGS binds no macro
+
+# With a shared-tier macro in scope the same declaration is accepted and binds it, so the refusal
+# above is about binding nothing rather than about PSEUDO_ARGS itself.
+statement ok
+CREATE MACRO sel_leafy(n) AS n = 0;
+
+statement ok
+CALL tree_ddl_create('main', 'pa_bound', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', semantic := tree_semantic(pseudo_args := 'descendant_count')), source := 'read_parquet(''test/data/app.parquet'')'));
+
+query II
+SELECT count(*), list((p).name) FROM (SELECT unnest(bound) AS p FROM (SELECT list({name: name}) AS bound FROM tree_catalog.pseudo_classes WHERE tree_name = 'pa_bound'));
+----
+1	[leafy]
+
+# A BARE prefix macro has an empty remainder, so tree_expand_pseudo deliberately leaves it unbound
+# -- "not an error, just not a nameable pseudo-class". The check has to agree with that, or a tree
+# whose only sel_ macro is the bare one would pass while binding nothing.
+statement ok
+DROP MACRO sel_leafy;
+
+statement ok
+CREATE MACRO sel_(n) AS n = 0;
+
+statement error
+CALL tree_ddl_create('main', 'pa_bare', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', semantic := tree_semantic(pseudo_args := 'depth')), source := 'read_parquet(''test/data/app.parquet'')'));
+----
+PSEUDO_ARGS binds no macro
+
+statement ok
+DROP MACRO sel_;
+
 # parent basis requires KEY
 statement error
 CALL tree_ddl_create('main', 'bad5', tree_spec(tree_shape(parent := 'manager_email'), source := 'read_csv(''test/data/employees.csv'')'));
