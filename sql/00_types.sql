@@ -217,9 +217,29 @@ CREATE OR REPLACE MACRO tree_sql_check_prefixes(sem, verb) AS (
                                         lambda p: (p).prefix IS NOT NULL AND (p).name IS NULL)) AS p),
        m AS (SELECT DISTINCT function_name FROM duckdb_functions() WHERE function_type = 'macro'),
        bad AS (SELECT min((px.p).prefix) AS pre FROM px
-               WHERE NOT EXISTS (SELECT 1 FROM m WHERE starts_with(m.function_name, (px.p).prefix)))
+               WHERE NOT EXISTS (SELECT 1 FROM m WHERE starts_with(m.function_name, (px.p).prefix))),
+       -- The IMPLICIT shared tier needs the same check. PSEUDO_ARGS switches on every macro under
+       -- tree_shared_pseudo_prefix(), so it makes exactly the claim an explicit prefix entry makes
+       -- -- that there are pseudo-classes to bind -- and it was the one spelling that bypassed
+       -- this. Unchecked, it bound none while tree_semantic_declares still counted it as an S
+       -- group, so has_semantic went true and tree_match's S-less refusal stopped firing: a TYPE
+       -- clause compiled against TYPE's 'node' default and returned zero rows where a refusal was
+       -- owed, which is the failure the comment on tree_semantic_declares names.
+       --
+       -- The emptiness rule is tree_expand_pseudo's, not a new one: its `shared` arm requires a
+       -- non-empty remainder, because a BARE prefix macro is "not an error, just not a nameable
+       -- pseudo-class". So a tree whose only sel_ macro is the bare one binds nothing and must be
+       -- refused too -- the check agrees with the expansion rather than approximating it.
+       shared_bad AS (SELECT (sem).pseudo_args IS NOT NULL
+                        AND NOT EXISTS (SELECT 1 FROM m
+                                        WHERE starts_with(m.function_name, tree_shared_pseudo_prefix())
+                                          AND substr(m.function_name,
+                                                     length(tree_shared_pseudo_prefix()) + 1) <> '') AS unbound)
   SELECT CASE WHEN (SELECT pre FROM bad) IS NOT NULL
               THEN tree_err(verb || ': PSEUDO prefix ' || (SELECT pre FROM bad) || ' binds no macro')
+              WHEN (SELECT unbound FROM shared_bad)
+              THEN tree_err(verb || ': PSEUDO_ARGS binds no macro: no '
+                            || tree_shared_pseudo_prefix() || '* macro is in scope')
               ELSE true END);
 
 -- Structural companion to the ATTR-alias regex above: the regex only sees an explicit
