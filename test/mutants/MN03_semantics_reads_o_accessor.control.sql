@@ -1,4 +1,8 @@
--- test/mutants/MN03_match_reads_size_slot.sql
+-- test/mutants/MN03_semantics_reads_o_accessor.control.sql
+-- THIS IS THE CONTROL: the same copy with NO planted edit, so applying it is a no-op
+-- CREATE OR REPLACE of the macro the mutant copies. test/run_mutants.py --verify applies
+-- it and requires the mutant's expect_fail suites to PASS, which is what makes the kill
+-- evidence about the EDIT rather than about the copy having drifted from the source.
 -- vvv GENERATED BELOW by test/mutants/regen.py from sql/07_match.sql -- do not edit by hand vvv
 -- Regenerate with: python3 test/mutants/regen.py   (--check verifies, writes nothing)
 -- The compiler is a fold over the IR: every node's text is built from its children's, so the
@@ -282,17 +286,7 @@ out AS (
   -- list() over no rows is NULL, and a selector with no steps is chk's to refuse in its own
   -- words: chk and this CTE are not ordered against each other, so tree_sql_chain's empty-group
   -- refusal must not get there first. Aggregating without GROUP BY keeps the one row either way.
-  -- the mutation: the compiler reads an O accessor -- whether SIZE is declared for this
-  -- tree -- and respells the subtree arithmetic when it is not. Matching must not consult
-  -- the O group at all; that it still returns the right rows is what makes this invisible
-  -- to every record that compares answers.
-  SELECT CASE WHEN g.steps IS NULL THEN NULL
-              WHEN EXISTS (SELECT 1 FROM tree_catalog.slots s
-                           WHERE s.database_name = current_database() AND s.schema_name = sch
-                             AND s.tree_name = nm AND s.slot = 'SIZE')
-                THEN tree_sql_chain(g.steps, NULL, cfg.elem)
-              ELSE replace(tree_sql_chain(g.steps, NULL, cfg.elem),
-                           '._size', '._size + 0') END AS from_sql,
+  SELECT CASE WHEN g.steps IS NULL THEN NULL ELSE tree_sql_chain(g.steps, NULL, cfg.elem) END AS from_sql,
          g.subject, g.captures, cfg.lang, cfg.p AS proj_rel
   FROM top0 g CROSS JOIN cfg)
 SELECT CASE WHEN NOT (SELECT ok FROM chk) OR NOT (SELECT bool_and(ok) FROM n) THEN NULL ELSE

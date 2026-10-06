@@ -47,22 +47,31 @@
   also_kills: parent join without root equality (no id reserved; see FINDINGS)
 # MN03's ORIGINAL mutant was retired by M3 Task 6: its edit was a textual one on the `__s` line of
 # tree_compile_projection, and that line was restructured into tree_sql_size_join(), so regen.py
-# could no longer find the text to plant. The id was NOT reused for the same claim -- that a
-# declared SIZE override must not silently disagree with the derivation is carried by MN04 below as
-# of M3 Task 7. M3 Task 9 re-plants MN03 as the MODULE-BOUNDARY mutant, below, which is the mutant
-# M3's gate names.
+# could no longer find the text to plant. The id is NOT reused for the same claim: M3 Task 9
+# re-plants MN03 as a DIFFERENT mutant (a semantics-path function reading an O accessor, in
+# sql/07_match.sql). Its CLAIM -- that a declared SIZE override must not silently disagree with
+# the derivation -- is carried by MN04 below as of M3 Task 7, against the restructured line.
 - id: MN03
-  file: MN03_match_reads_size_slot.sql
-  what: the match compiler reads an O accessor -- whether SIZE is DECLARED -- and respells the
-    subtree arithmetic when it is not
+  file: MN03_semantics_reads_o_accessor.sql
+  what: a semantics-path function reads an O accessor -- the compiler picks its sibling form by
+    whether SIZE is declared
   expect_fail: [test/sql/42_second_differential.test]
-  also_kills: >-
-    NOTHING else, and that is the claim. The respelling is arithmetically inert (`+ 0`), so it moves
-    no row -- 40, 41, 41b, 31, 32, 33, 34, 37, 38, 43, 44 and every ANSWER-comparing record in 42
-    itself all PASS under it. Only 42's module-boundary record, which compares the compiled TEXT of
-    the declared tree against the derived one, can see that the compiler branched on the O group at
-    all. A mutant whose wrongness shows up in answers is MN04, not this one; this id exists to prove
-    the boundary is tested rather than merely reviewed (M3 design section 3.5).
+  also_kills: nothing; results cannot see it by construction. The two forms this mutant chooses
+    between answer identically on a conforming tree -- _element is true on every row of a tree
+    that declares no ELEMENT, so "the nearest element sibling" and "the row at _pre + _size + 1"
+    are the same row. Only the compiled TEXT moves, and only for an ELEMENT-less tree, which is
+    why 42 carries an ELEMENT-less pair and compares tree_explain(...).sql across it. Measured by
+    running the whole suite under the mutant -- 42 is the only file that fails, 23 pass, and
+    within 42 exactly three records fail. THREE of the four ELEMENT-less plan records, not
+    four -- the `.fn:has(string)` one does not move, because the descendant relation does not
+    branch on the element flag at all. That record is a guard against other mutations of the
+    plan, not a discriminator for this one, and it is kept on that footing rather than
+    counted as part of this kill.
+  # The id is MN03's original claim restored. M2 used MN03 for the declared-SIZE-plus-one mutation;
+  # M3 Task 6 retired that copy (it embedded tree_compile_projection and the edit no longer
+  # applied) and Task 7 re-planted the claim as MN04. This is the module-boundary mutant M3's gate
+  # asks for: not a wrong answer, a wrong DEPENDENCY.
+
 - id: MN04
   file: MN04_size_override_plus_one.sql
   what: a declared SIZE override returns size + 1; conformance must refuse it as corruption
