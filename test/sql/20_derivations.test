@@ -260,6 +260,37 @@ CALL tree_ddl_create('main', 'duproot', tree_spec(tree_shape(root := 'forest', k
 ----
 KEY 2 appears 2 times in root {'forest': b} of tree main.duproot
 
+# A KEY on a LEVEL-basis tree is checked too, which it was not. tree_compile_create NULLed
+# key_expr whenever the basis was level -- deliberately, because key_expr gates the REACH check as
+# well, and reachability walks PARENT, so it has no meaning without one. But it gated the
+# UNIQUENESS check with it, while the slot list registered KEY regardless: the catalog claimed a
+# KEY that nothing had verified, and the same declaration was enforced on a parent basis and
+# trusted on a level one. The two checks are now gated separately -- reach on the basis, uniqueness
+# on the declaration.
+statement ok
+CREATE TABLE lvlkeydup AS SELECT * FROM (VALUES ('a', 0, 0, 'k1'), ('a', 1, 1, 'k2'), ('a', 2, 1, 'k2')) v(rt, ord, lvl, k);
+
+statement error
+CALL tree_ddl_create('main', 'lvldup', tree_spec(tree_shape(root := 'rt', "order" := 'ord', level := 'lvl', key := 'k'), source := 'lvlkeydup'));
+----
+KEY k2 appears 2 times in root {'rt': a} of tree main.lvldup
+
+# and a unique one is accepted, so the record above is not passing because level-basis KEY is
+# refused outright
+statement ok
+CREATE TABLE lvlkeyok AS SELECT * FROM (VALUES ('a', 0, 0, 'k1'), ('a', 1, 1, 'k2'), ('a', 2, 1, 'k3')) v(rt, ord, lvl, k);
+
+statement ok
+CALL tree_ddl_create('main', 'lvlok', tree_spec(tree_shape(root := 'rt', "order" := 'ord', level := 'lvl', key := 'k'), source := 'lvlkeyok'));
+
+# the REACH check stays gated to the parent basis. lvlkeyok's rows have no PARENT to walk, so a
+# reach check over them would have nothing to reach FROM and would refuse a well-formed tree --
+# which is why key_expr was NULLed in the first place, and why only uniqueness was ungated.
+query I
+SELECT count(*) FROM tree_project('main', 'lvlok');
+----
+3
+
 statement ok
 CREATE TABLE orphanroot AS SELECT 'a' AS forest, * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 'b', * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 'b', 99, 'lost', 77;
 

@@ -56,7 +56,13 @@ derived AS (
     -- checks are NULL-gated on it, so the level basis passes NULL here rather than each call site
     -- re-deciding which basis this is. A level-basis tree may still DECLARE a KEY, so this asks
     -- the basis, not whether a KEY exists.
+    -- key_expr gates the REACH check, which walks PARENT, so it is meaningless without one and
+    -- stays NULL on a level basis. UNIQUENESS is a property of the DECLARATION, not of the basis:
+    -- it was gated with the reach check, so a level-basis tree's declared KEY was recorded in the
+    -- slot list below and never verified, while the same declaration was enforced on a parent
+    -- basis. Two claims, two gates.
     CASE WHEN level_basis THEN NULL ELSE (shape).key END AS key_expr,
+    (shape).key AS key_unique_expr,
     COALESCE((shape).semantic.attr, CASE WHEN abstract THEN '' ELSE '*' END) AS attr_text,
     -- Whether the tree has an S GROUP, which is what tree_match reads to decide whether an S
     -- clause (TYPE, ID, CLASS, ATTR, PSEUDO) may be asked for at all. The question -- does this
@@ -129,7 +135,7 @@ built AS (
    -- The parent basis's two, in this order and both ahead of everything that evaluates proj_sql:
    -- a repeated KEY multiplies or collapses the walk, so the reach check run first would report
    -- that as unreachable rows and name the wrong defect.
-   CASE WHEN abstract THEN NULL ELSE tree_compile_key_check(key_expr, (shape).root, source, sch || '.' || nm) END AS s_key,
+   CASE WHEN abstract THEN NULL ELSE tree_compile_key_check(key_unique_expr, (shape).root, source, sch || '.' || nm) END AS s_key,
    CASE WHEN abstract THEN NULL ELSE tree_compile_reach_check(key_expr, (shape).root, source, '(' || proj_sql || ')', sch || '.' || nm, attr_text) END AS s_reach,
    CASE WHEN abstract THEN NULL ELSE tree_sql_shadow_check('(' || proj_sql || ')', 'tree_ddl_create') END AS s_shadow,
    CASE WHEN abstract THEN NULL ELSE tree_compile_p13('(' || proj_sql || ')', sch || '.' || nm, (shape).root IS NOT NULL, (shape).level) END AS s_p13,
