@@ -163,6 +163,19 @@ statement ok
 CALL tree_ddl_create('main', 'ne', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
   semantic := tree_semantic(type := 'type')), source := 'read_parquet(''test/data/app.parquet'')'));
 
+# The other side of the __sib emission rule (31_match carries the negative): `elem` DOES declare
+# ELEMENT, so its sibling and positional fragments take the element SCAN, which reads the window --
+# and the CTE is therefore emitted. A bare type step on the same tree still does not get it.
+query I
+SELECT contains(tree_compile_match('main', 'elem', tree_steps([{type: 'block'}, {comb: 'next', type: 'block'}])), '__sib');
+----
+true
+
+query I
+SELECT contains(tree_compile_match('main', 'elem', tree_steps([{type: 'block'}])), '__sib');
+----
+false
+
 statement ok
 CALL tree_ddl_create('main', 'el', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
   semantic := tree_semantic(type := 'type', element := 'true')), source := 'read_parquet(''test/data/app.parquet'')'));

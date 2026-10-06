@@ -87,6 +87,31 @@ FROM tree_match('main', 'mapped', tree_steps([{attr: 'lines > 10'}])) SELECT typ
 ----
 module
 
+# __sib is two window functions over the whole projection, and tree_sql_nav_ctes emitted it for
+# EVERY compiled match. It is now emitted only when the body references it.
+#
+# On a tree that declares no ELEMENT -- like `app` -- NOTHING references it: the sibling and
+# positional fragments take the O(1) pre/size arithmetic, and the __sib scan is the path they take
+# only when a row might not be an element. So for these trees the window was computed on every
+# query and read by none of them. 33_navigation carries the positive case, on a tree that declares
+# ELEMENT and so does take the scan.
+#
+# The condition is read off the GENERATED TEXT rather than re-derived from the IR, which is the
+# point: a fragment that reads __sib gets the CTE by saying so, with no list of "fragments that
+# need the window" to keep in step. One that referenced it from outside the chain would fail to
+# bind, loudly, rather than read a window that is not there.
+query I
+SELECT contains(tree_compile_match('main', 'app', tree_steps([{type: 'function_definition'}])), '__sib');
+----
+false
+
+# a SIBLING step on the same tree, which is the fragment that would read the window if the tree
+# declared ELEMENT -- still no CTE, because on this tree it takes the arithmetic
+query I
+SELECT contains(tree_compile_match('main', 'app', tree_steps([{type: 'function_definition'}, {comb: 'next', type: 'function_definition'}])), '__sib');
+----
+false
+
 # a node kind the clause compiler has no predicate for would compile to nothing, silently
 # widening the match, so it refuses. No constructor builds one, hence the literal IR.
 statement error
@@ -538,7 +563,7 @@ cannot add attribute columns
 query I
 SELECT (tree_explain('main', 'app', tree_steps([{type: 'function_definition', "as": 'f'}, {comb: 'child', type: 'block'}]))).sql;
 ----
-WITH __proj AS (SELECT * FROM tree_catalog."proj_4_main_app"()), __sib AS (SELECT _root, _pre, first_value(CASE WHEN _element THEN _pre END IGNORE NULLS) OVER (PARTITION BY _root, _parent ORDER BY _pre ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) AS __next_el, last_value(CASE WHEN _element THEN _pre END IGNORE NULLS) OVER (PARTITION BY _root, _parent ORDER BY _pre ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS __prev_el FROM __proj) SELECT s3.* EXCLUDE (_root, _pre, _level, _parent, _size, _children, _next, _type, _id, _classes, _attr_map, _element, _pseudo), f AS f, 'main.app' AS _match_tree, 'treeql' AS _match_language, 0 AS _match_unknown_pseudos FROM __proj f JOIN __proj s3 ON s3._root = f._root AND s3._parent = f._pre AND (s3._type = 'block') WHERE f._type = 'function_definition'
+WITH __proj AS (SELECT * FROM tree_catalog."proj_4_main_app"()) SELECT s3.* EXCLUDE (_root, _pre, _level, _parent, _size, _children, _next, _type, _id, _classes, _attr_map, _element, _pseudo), f AS f, 'main.app' AS _match_tree, 'treeql' AS _match_language, 0 AS _match_unknown_pseudos FROM __proj f JOIN __proj s3 ON s3._root = f._root AND s3._parent = f._pre AND (s3._type = 'block') WHERE f._type = 'function_definition'
 
 # Provenance: _match_language records the language the selector was WRITTEN in, which only the
 # caller knows. It is not read from tree_catalog.settings -- that row governs how the runner
