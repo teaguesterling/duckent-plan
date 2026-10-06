@@ -150,7 +150,13 @@ derived AS (
     -- checks are NULL-gated on it, so the level basis passes NULL here rather than each call site
     -- re-deciding which basis this is. A level-basis tree may still DECLARE a KEY, so this asks
     -- the basis, not whether a KEY exists.
+    -- key_expr gates the REACH check, which walks PARENT, so it is meaningless without one and
+    -- stays NULL on a level basis. UNIQUENESS is a property of the DECLARATION, not of the basis:
+    -- it was gated with the reach check, so a level-basis tree's declared KEY was recorded in the
+    -- slot list below and never verified, while the same declaration was enforced on a parent
+    -- basis. Two claims, two gates.
     CASE WHEN level_basis THEN NULL ELSE (shape).key END AS key_expr,
+    (shape).key AS key_unique_expr,
     COALESCE((shape).semantic.attr, CASE WHEN abstract THEN '' ELSE '*' END) AS attr_text,
     -- Whether the tree has an S GROUP, which is what tree_match reads to decide whether an S
     -- clause (TYPE, ID, CLASS, ATTR, PSEUDO) may be asked for at all. The question -- does this
@@ -237,7 +243,7 @@ built AS (
    -- The parent basis's two, in this order and both ahead of everything that evaluates proj_sql:
    -- a repeated KEY multiplies or collapses the walk, so the reach check run first would report
    -- that as unreachable rows and name the wrong defect.
-   CASE WHEN abstract THEN NULL ELSE tree_compile_key_check(key_expr, (shape).root, source, sch || '.' || nm) END AS s_key,
+   CASE WHEN abstract THEN NULL ELSE tree_compile_key_check(key_unique_expr, (shape).root, source, sch || '.' || nm) END AS s_key,
    CASE WHEN abstract THEN NULL ELSE tree_compile_reach_check(key_expr, (shape).root, source, '(' || proj_sql || ')', sch || '.' || nm, attr_text) END AS s_reach,
    CASE WHEN abstract THEN NULL ELSE tree_sql_shadow_check('(' || proj_sql || ')', 'tree_ddl_create') END AS s_shadow,
    CASE WHEN abstract THEN NULL ELSE tree_compile_p13('(' || proj_sql || ')', sch || '.' || nm, (shape).root IS NOT NULL, (shape).level) END AS s_p13,
@@ -312,9 +318,11 @@ n AS (
     {root: (old_shape).root, "order": (old_shape)."order", key: (old_shape).key, level: (old_shape).level, parent: (old_shape).parent, sibling_order: (old_shape).sibling_order,
      size: (old_shape).size, children: (old_shape).children, next: (old_shape).next, semantic: sem}::TREE_SHAPE AS shape,
     COALESCE((sem).attr, (old_shape).semantic.attr, CASE WHEN is_abstract THEN '' ELSE '*' END) AS attr_text,
-    -- see create's key_expr: NULL in the level basis, which NULL-gates both parent-basis checks.
+    -- see create's key_expr: NULL in the level basis, which NULL-gates the reach check. Uniqueness
+    -- is gated on the declaration instead, so altering a tree re-verifies a KEY on either basis.
     -- Alter never touches R, so the basis is the one the stored shape already carries.
     CASE WHEN (old_shape).level IS NOT NULL OR (old_shape).parent IS NULL THEN NULL ELSE (old_shape).key END AS key_expr,
+    (old_shape).key AS key_unique_expr,
     -- Whether the tree has an S GROUP after this alter, which is what tree_match reads to decide
     -- whether an S clause may be asked for. The same predicate create reads (tree_semantic_declares,
     -- sql/00_types.sql), asked of THIS ALTER'S semantic and nothing else.
@@ -356,7 +364,7 @@ SELECT CASE WHEN semantic IS NULL THEN tree_err('tree_ddl_alter: semantic is NUL
    CASE WHEN is_abstract THEN NULL ELSE tree_compile_order_check((old_shape)."order", (old_shape).root, source_sql, sch || '.' || nm) END,
    -- ahead of the drift checks for the same reason the order check is: both evaluate proj_sql, and
    -- a source whose KEY repeats walks to the wrong number of rows, which would be reported as drift
-   CASE WHEN is_abstract THEN NULL ELSE tree_compile_key_check(key_expr, (old_shape).root, source_sql, sch || '.' || nm) END,
+   CASE WHEN is_abstract THEN NULL ELSE tree_compile_key_check(key_unique_expr, (old_shape).root, source_sql, sch || '.' || nm) END,
    CASE WHEN is_abstract THEN NULL ELSE tree_compile_reach_check(key_expr, (old_shape).root, source_sql, '(' || proj_sql || ')', sch || '.' || nm, attr_text) END,
    CASE WHEN is_abstract OR storage <> 'materialized' THEN NULL ELSE
    'SELECT CASE WHEN count(*) > 0 THEN error(''tree_ddl_alter: tree ' || replace(sch || '.' || nm, '''', '''''')
