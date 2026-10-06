@@ -595,6 +595,40 @@ CALL tree_ddl_create('main', 'corrupt_next_last', tree_spec(tree_shape(root := '
 ----
 NEXT disagrees with its derived default at root {'file_path': app.py}, ORDER 53 (position 53): declared 10, derived 54
 
+# A declared NEXT that NAMES NO ROW is the case the arm above cannot see. The projection's
+# COALESCE makes an unresolvable NEXT the derived default, so `_next IS DISTINCT FROM __dnext` is
+# false: the tree was accepted AND tree_check recorded assert_o_next = 'ok' -- a positive verdict
+# for a declaration nothing had compared.
+#
+# "Unresolved" is NOT itself the violation, and that is the whole difficulty. with_next above
+# declares next_pos = node_id + descendant_count + 1, and SEVEN of its rows declare 54, which names
+# no row -- the root's last row and every ancestor whose subtree ends with it -- and all seven are
+# correct. What makes it false is unresolved AND the DERIVATION naming a real row: the declaration
+# says nothing follows while the structure says row N does. Where neither names a row they agree,
+# and 'ok' is honest.
+#
+# Position 1, not 0: node 0 declares 54 and derives 54, which is past the root's last _pre (53), so
+# node 0 is in the honest residue. Node 1 is the first whose derived successor is a real row.
+statement ok
+CREATE TABLE next_nowhere AS SELECT * REPLACE (999 AS next_pos) FROM with_next;
+
+statement error
+CALL tree_ddl_create('main', 'next_nowhere', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', next := 'next_pos'), source := 'next_nowhere'));
+----
+NEXT disagrees with its derived default at root {'file_path': app.py}, ORDER 1 (position 1): declared names no row (999), derived 6
+
+# A declared NEXT of NULL on a row that DOES have a structural successor is the same violation.
+# SIZE and CHILDREN both refuse a NULL override -- plain CAST, no COALESCE, measured -- so a
+# declared O column is total, and NEXT accepting one was the inconsistency rather than a per-row
+# opt-out. If duckent ever means NULL as "no override on this row", this is the record to change.
+statement ok
+CREATE TABLE next_null AS SELECT * REPLACE (CASE WHEN node_id = 9 THEN NULL ELSE next_pos END AS next_pos) FROM with_next;
+
+statement error
+CALL tree_ddl_create('main', 'next_null', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', next := 'next_pos'), source := 'next_null'));
+----
+ORDER 9 (position 9): declared names no row (NULL), derived 13
+
 # none of the refused creates left a catalog row, a macro or a partition behind
 query III
 SELECT (SELECT count(*) FROM tree_catalog_trees() WHERE tree_name LIKE 'corrupt%'),

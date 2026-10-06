@@ -164,6 +164,21 @@ CREATE OR REPLACE MACRO tree_sql_declares_o(shape) AS
 CREATE OR REPLACE MACRO tree_sql_o_order_col(shape, attr_text) AS
   CASE WHEN attr_text = '*' AND tree_sql_is_ident((shape)."order") THEN (shape)."order" END;
 
+-- The column a declared NEXT's value is written in: ORDER space on a level basis, KEY space on a
+-- parent basis. Mirrors the join the projection makes to resolve it (02_projection.sql).
+CREATE OR REPLACE MACRO tree_sql_o_next_id_col(shape) AS
+  CASE WHEN (shape).level IS NOT NULL OR (shape).parent IS NULL
+       THEN (shape)."order" ELSE (shape).key END;
+
+-- Whether the RAW declared NEXT can be read back, on exactly the terms tree_sql_o_order_col uses:
+-- ATTR must be open for the source columns to be in rel_sql at all, and both expressions must be
+-- plain identifiers to be read from it. A level-basis tree with no ORDER resolves against __seq,
+-- which is not a source column, and is excluded by the same ident test.
+CREATE OR REPLACE MACRO tree_sql_o_next_readable(shape, attr_text) AS
+  attr_text = '*' AND (shape).next IS NOT NULL
+    AND tree_sql_is_ident((shape).next)
+    AND tree_sql_is_ident(COALESCE(tree_sql_o_next_id_col(shape), ''));
+
 -- Built once and used by all four arms: the ORDER value as text, or the literal NULL when there
 -- is no column to read it from. Spelling it in one place keeps the arms from drifting -- the
 -- EXCLUDE list in sql/02_projection.sql is the standing example of what "built twice" costs.
@@ -195,7 +210,7 @@ CREATE OR REPLACE MACRO tree_sql_o_ord_expr(order_col) AS
 -- Bounding it by the root's max _pre and then skipping the rows where it came out NULL would
 -- leave the LAST ROW of every root unchecked, and that row is a row like any other: 11_ddl
 -- carries the record where it declares a NEXT naming a real earlier row.
-CREATE OR REPLACE MACRO tree_sql_o_bad_cte(shape, rel_sql, order_col) AS
+CREATE OR REPLACE MACRO tree_sql_o_bad_cte(shape, rel_sql, order_col, attr_text) AS
   'WITH __r AS (SELECT _root, _pre, _level FROM ' || rel_sql || '), '
   || '__rn AS (SELECT * FROM __r), '
   || tree_sql_parent_join()
@@ -221,7 +236,32 @@ CREATE OR REPLACE MACRO tree_sql_o_bad_cte(shape, rel_sql, order_col) AS
        CASE WHEN (shape).next IS NOT NULL THEN
          'SELECT ''NEXT'' AS slot, x._root::VARCHAR AS k, x._pre AS pos, ' || tree_sql_o_ord_expr(order_col)
          || ' AS ord, x._next::VARCHAR AS declared, d.__dnext::VARCHAR AS derived FROM ' || rel_sql
-         || ' x JOIN __d d ON d._root = x._root AND d._pre = x._pre WHERE x._next IS DISTINCT FROM d.__dnext' END
+         || ' x JOIN __d d ON d._root = x._root AND d._pre = x._pre WHERE x._next IS DISTINCT FROM d.__dnext' END,
+       -- The arm above cannot see a declared NEXT that NAMES NO ROW: the projection's COALESCE
+       -- makes it the derived default, so the comparison is the default against itself. That left
+       -- tree_check publishing assert_o_next = 'ok' for a declaration nothing had compared.
+       --
+       -- Unresolved is not itself false. with_next declares node_id + descendant_count + 1, and
+       -- seven of its rows -- the root's last row and every ancestor ending with it -- name no row
+       -- and are correct. The violation is unresolved AND the derivation naming a real row
+       -- (__dnext <= the root's max _pre): the declaration says nothing follows, the structure says
+       -- row N does. Where neither names a row they agree and 'ok' is honest, which leaves a
+       -- residue this does not close -- the same residue assert_o_parent carries on ROOT rows.
+       --
+       -- The raw value comes from rel_sql itself, which carries the source columns whenever ATTR is
+       -- open; no projection column changes and _next keeps its value and shape. A NULL declared
+       -- NEXT is caught by the same predicate, because `=` never matches it -- the strict reading,
+       -- consistent with SIZE and CHILDREN, which refuse a NULL override outright.
+       CASE WHEN tree_sql_o_next_readable(shape, attr_text) THEN
+         'SELECT ''NEXT'' AS slot, x._root::VARCHAR AS k, x._pre AS pos, ' || tree_sql_o_ord_expr(order_col)
+         || ' AS ord, ''names no row ('' || COALESCE(x.' || tree_sql_ident((shape).next)
+         || '::VARCHAR, ''NULL'') || '')'' AS declared, d.__dnext::VARCHAR AS derived FROM ' || rel_sql
+         || ' x JOIN __d d ON d._root = x._root AND d._pre = x._pre'
+         || ' JOIN __mx m ON m._root = x._root'
+         || ' LEFT JOIN (SELECT _root AS __yr, ' || tree_sql_ident(tree_sql_o_next_id_col(shape))
+         || ' AS __nid FROM ' || rel_sql || ') y ON y.__yr = x._root AND y.__nid = x.'
+         || tree_sql_ident((shape).next)
+         || ' WHERE y.__nid IS NULL AND d.__dnext <= m.__mp' END
      ], lambda q: q IS NOT NULL), 'string_agg', ' UNION ALL ')
   || ') ';
 
@@ -237,9 +277,9 @@ CREATE OR REPLACE MACRO tree_sql_o_bad_cte(shape, rel_sql, order_col) AS
 -- content was correct by accident rather than by construction. This is the same defect class as
 -- the arg_max pairings in tree_compile_order_check and tree_compile_key_check, and it is closed
 -- the same way -- structurally, so the mismatch is unrepresentable rather than merely unlikely.
-CREATE OR REPLACE MACRO tree_compile_o_conformance(shape, rel_sql, label, order_col) AS
+CREATE OR REPLACE MACRO tree_compile_o_conformance(shape, rel_sql, label, order_col, attr_text) AS
   CASE WHEN NOT tree_sql_declares_o(shape) THEN NULL ELSE
-    tree_sql_o_bad_cte(shape, rel_sql, order_col)
+    tree_sql_o_bad_cte(shape, rel_sql, order_col, attr_text)
     || 'SELECT tree_err(''O conformance violated in tree ' || replace(label, '''', '''''') || ': '' || slot'
     || ' || '' disagrees with its derived default at root '' || COALESCE(k, ''<NULL>'')'
     || ' || COALESCE('', ORDER '' || ord, '''') || '' (position '' || pos || ''): declared '' || COALESCE(declared, ''NULL'')'
@@ -332,7 +372,7 @@ CREATE OR REPLACE MACRO tree_compile_insert(sch, nm, source) AS (
     -- that rather than as a disagreeing SIZE downstream of it. Ingest needs its own copy of this
     -- check because create only ever saw the source it was GIVEN: without it the fast path is
     -- corruptible by the back door, one unexamined partition at a time.
-    tree_compile_o_conformance(x.shape, '__duckent_new', sch || '.' || nm, tree_sql_o_order_col(x.shape, x.attr)),
+    tree_compile_o_conformance(x.shape, '__duckent_new', sch || '.' || nm, tree_sql_o_order_col(x.shape, x.attr), x.attr),
     -- BY NAME: the projection's column order follows the source's select list, which need
     -- not match the stored table's, and a positional INSERT misfiles same-typed columns
     'INSERT INTO ' || x.tbl || ' BY NAME SELECT * FROM __duckent_new',
@@ -357,7 +397,7 @@ CREATE OR REPLACE MACRO tree_compile_replace(sch, nm, source) AS (
     tree_compile_p13('__duckent_new', sch || '.' || nm, x.has_root, (x.shape).level),
     -- and the same conformance check insert runs, for the same reason: replace rewrites whole
     -- partitions from a source create never saw
-    tree_compile_o_conformance(x.shape, '__duckent_new', sch || '.' || nm, tree_sql_o_order_col(x.shape, x.attr)),
+    tree_compile_o_conformance(x.shape, '__duckent_new', sch || '.' || nm, tree_sql_o_order_col(x.shape, x.attr), x.attr),
     'CREATE TEMP TABLE __duckent_epochs AS SELECT root_key, epoch FROM tree_state.partitions WHERE database_name = ' || tree_sql_lit(x.db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm) || ' AND root_key IN (SELECT DISTINCT _root::VARCHAR FROM __duckent_new)',
     'DELETE FROM ' || x.tbl || ' WHERE _root::VARCHAR IN (SELECT root_key FROM __duckent_epochs)',
     'DELETE FROM tree_state.partitions WHERE database_name = ' || tree_sql_lit(x.db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm) || ' AND root_key IN (SELECT root_key FROM __duckent_epochs)',
@@ -411,7 +451,7 @@ CREATE OR REPLACE MACRO tree_compile_check(sch, nm) AS (
   -- fragment tree_compile_o_conformance raises on, so what tree_check RECORDS and what ingest
   -- REFUSES are one question asked twice rather than two questions that might disagree. NULL
   -- when the shape declares no O slot, which makes every statement built from it NULL.
-  b AS (SELECT x, tree_sql_o_bad_cte(x.shape, x.rel, tree_sql_o_order_col(x.shape, x.attr)) AS cte FROM c)
+  b AS (SELECT x, tree_sql_o_bad_cte(x.shape, x.rel, tree_sql_o_order_col(x.shape, x.attr), x.attr) AS cte FROM c)
   -- see tree_compile_delete on why the context is read in a predicate
   SELECT CASE WHEN x IS NULL THEN tree_err('tree_check: internal: no DML context') ELSE
    list_filter(list_concat(list_concat(['BEGIN TRANSACTION',
