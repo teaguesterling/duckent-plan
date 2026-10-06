@@ -146,6 +146,63 @@ CALL tree_ddl_create('main', 'bad13', tree_spec(tree_shape(key := 'lower(email)'
 ----
 plain column names
 
+# SIBLING_ORDER is a PARENT-basis slot and nothing else. On a level basis ORDER *is* the sibling
+# order by construction -- _pre is the rank of ORDER within the root, so siblings are ordered by
+# ORDER whatever else is declared -- and the level-basis arm of the projection compiler never
+# reads (shape).sibling_order (sql/02_projection.sql splices it at :138 and :142, both inside the
+# parent-basis arm). A second, different declaration is therefore a CONTRADICTION rather than a
+# refinement, and what the catalog used to do with it was record it as in force while the query
+# path answered by ORDER: rows (ord,lvl,sib) = (1,0,0),(2,1,2),(3,1,1) with sibling_order := 'sib'
+# registered SIBLING_ORDER=sib and then answered :first-child with ord 1 and 2, while the
+# declaration puts ord=3 first among the two children. It also accepted a sibling_order naming a
+# column that does not exist, because nothing ever compiled it. Refused on this basis instead.
+statement error
+CALL tree_ddl_create('main', 'bad17', tree_spec(tree_shape("order" := 'node_id', level := 'depth', sibling_order := 'name'), source := 'read_parquet(''test/data/app.parquet'')'));
+----
+LEVEL basis does not take SIBLING_ORDER
+
+# ...and a column that does not exist is refused by the same rung rather than being recorded
+statement error
+CALL tree_ddl_create('main', 'bad18', tree_spec(tree_shape("order" := 'node_id', level := 'depth', sibling_order := 'no_such_col'), source := 'read_parquet(''test/data/app.parquet'')'));
+----
+LEVEL basis does not take SIBLING_ORDER
+
+# the shape that declares NEITHER LEVEL NOR PARENT takes the level basis too (R2 defaults to
+# LEVEL 0), so it is refused on the same grounds -- the basis is asked, never the LEVEL slot
+statement error
+CALL tree_ddl_create('main', 'bad19', tree_spec(tree_shape("order" := 'node_id', sibling_order := 'name'), source := 'read_parquet(''test/data/app.parquet'')'));
+----
+LEVEL basis does not take SIBLING_ORDER
+
+# LEVEL *and* PARENT together is the level basis (LEVEL wins, sql/03_ddl.sql level_basis), which
+# is the case a refusal written against the LEVEL slot alone would have let through from the
+# other side: PARENT is declared, so a check reading "no PARENT" would pass it
+statement error
+CALL tree_ddl_create('main', 'bad20', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', parent := 'parent_id', sibling_order := 'name'), source := 'read_parquet(''test/data/app.parquet'')'));
+----
+LEVEL basis does not take SIBLING_ORDER
+
+# none of the four left a catalog row, a slot or a macro behind
+query III
+SELECT (SELECT count(*) FROM tree_catalog_trees() WHERE tree_name IN ('bad17', 'bad18', 'bad19', 'bad20')),
+       (SELECT count(*) FROM tree_catalog_slots() WHERE tree_name IN ('bad17', 'bad18', 'bad19', 'bad20')),
+       (SELECT count(*) FROM duckdb_functions() WHERE list_contains(list_transform(['bad17', 'bad18', 'bad19', 'bad20'], lambda x: tree_sql_object_name('proj', 'main', x)), tree_sql_ident(function_name)));
+----
+0	0	0
+
+# The refusal is basis-conditional, not blanket: the PARENT basis genuinely needs SIBLING_ORDER --
+# it is what makes the DFS numbering of the encoder deterministic -- so there it is still accepted,
+# recorded as an R slot, and it is what lifts the profile off 'sibling_free'.
+statement ok
+CALL tree_ddl_create('main', 'sib_ok', tree_spec(tree_shape(key := 'email', parent := 'manager_email', sibling_order := 'hire_date'), source := 'read_csv(''test/data/employees.csv'')'));
+
+query IIII
+SELECT basis, profile, (SELECT block FROM tree_catalog_slots() s WHERE s.tree_name = 'sib_ok' AND slot = 'SIBLING_ORDER'),
+       (SELECT expression FROM tree_catalog_slots() s WHERE s.tree_name = 'sib_ok' AND slot = 'SIBLING_ORDER')
+FROM tree_catalog_trees() WHERE tree_name = 'sib_ok';
+----
+parent	full	R	hire_date
+
 # ATTR alias colliding with the canonical prefix refused
 statement error
 CALL tree_ddl_create('main', 'bad7', tree_spec(tree_shape("order" := 'node_id', level := 'depth', semantic := tree_semantic(attr := 'name AS _pre')), source := 'read_parquet(''test/data/app.parquet'')'));
