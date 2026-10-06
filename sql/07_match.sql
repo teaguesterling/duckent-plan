@@ -74,8 +74,22 @@ CREATE OR REPLACE MACRO tree_sql_sib_body(rel) AS
 
 -- What a compiled MATCH opens with: the projection as __proj, because several step aliases range
 -- over it, and the window read from __proj rather than from the projection a second time.
-CREATE OR REPLACE MACRO tree_sql_nav_ctes(proj_rel) AS
-  'WITH __proj AS (SELECT * FROM ' || proj_rel || '), ' || tree_sql_sib_body('__proj');
+-- `body_sql` is the rest of the query -- the chain text every fragment lands in. __sib is two
+-- window functions over the whole projection, and this emitted it for EVERY compiled match,
+-- including one with no sibling and no positional step to read it. It is emitted only when the
+-- body references it.
+--
+-- The condition is read off the GENERATED TEXT rather than re-derived from the IR, and that is the
+-- point: a fragment that reads __sib gets the CTE by saying so, and one that stops reading it stops
+-- paying for it, with no list of "fragments that need the window" to keep in step with the
+-- fragments. A future fragment that referenced __sib from outside the chain would fail to bind --
+-- loudly, which is the right failure, rather than reading a window that is not there.
+--
+-- contains(), not LIKE: `_` is a LIKE wildcard, so '%__sib%' would also match any two characters
+-- before "sib".
+CREATE OR REPLACE MACRO tree_sql_nav_ctes(proj_rel, body_sql) AS
+  'WITH __proj AS (SELECT * FROM ' || proj_rel || ')'
+  || CASE WHEN contains(body_sql, '__sib') THEN ', ' || tree_sql_sib_body('__proj') ELSE ' ' END;
 
 -- What TRAVERSAL opens with: the window only, read straight from the projection. sql/08_traversal
 -- has exactly two aliases and, unlike a selector, an anchor predicate on ONE row
@@ -610,7 +624,7 @@ SELECT CASE WHEN NOT (SELECT ok FROM chk) OR NOT (SELECT bool_and(ok) FROM n) TH
   -- The query opens with __proj and __sib: the projection read once however many step aliases
   -- range over it, and the window the sibling and positional relations read instead of scanning.
   -- This is the ONE place the projection relation text still appears in a compiled query.
-  tree_sql_nav_ctes(proj_rel)
+  tree_sql_nav_ctes(proj_rel, from_sql)
   || 'SELECT ' || subject || '.* EXCLUDE (' || list_aggregate(tree_canonical_columns(), 'string_agg', ', ') || ')'
   || COALESCE(', ' || list_aggregate(list_transform(list_filter(captures, lambda a: a <> subject), lambda a: a || ' AS ' || a), 'string_agg', ', '), '')
   -- The language the selector was WRITTEN in: the caller's `language :=` if they named one, else

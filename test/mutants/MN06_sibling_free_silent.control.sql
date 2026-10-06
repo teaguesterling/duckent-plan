@@ -309,7 +309,7 @@ SELECT CASE WHEN NOT (SELECT ok FROM chk) OR NOT (SELECT bool_and(ok) FROM n) TH
   -- The query opens with __proj and __sib: the projection read once however many step aliases
   -- range over it, and the window the sibling and positional relations read instead of scanning.
   -- This is the ONE place the projection relation text still appears in a compiled query.
-  tree_sql_nav_ctes(proj_rel)
+  tree_sql_nav_ctes(proj_rel, from_sql)
   || 'SELECT ' || subject || '.* EXCLUDE (' || list_aggregate(tree_canonical_columns(), 'string_agg', ', ') || ')'
   || COALESCE(', ' || list_aggregate(list_transform(list_filter(captures, lambda a: a <> subject), lambda a: a || ' AS ' || a), 'string_agg', ', '), '')
   -- The language the selector was WRITTEN in: the caller's `language :=` if they named one, else
