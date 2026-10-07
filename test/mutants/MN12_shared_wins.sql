@@ -63,7 +63,7 @@ shared AS (
 allb AS (SELECT list_concat(shared.extra, lp.bound) AS v FROM lp, shared),
 ded AS (SELECT list_filter(v, lambda x, i:
                  list_position(list_transform(v, lambda y: (y).name), (x).name) = i) AS v FROM allb)
-SELECT {type: (sem).type, id: (sem).id, classes: (sem).classes, attr: (sem).attr, attr_map: (sem).attr_map, element: (sem).element, pseudo_args: (sem).pseudo_args,
+SELECT {type: (sem).type, key: (sem).key, tags: (sem).tags, attr: (sem).attr, attr_map: (sem).attr_map, element: (sem).element, pseudo_args: (sem).pseudo_args,
   pseudo: CASE WHEN (sem).pseudo IS NULL AND (sem).pseudo_args IS NULL THEN NULL ELSE ded.v END
 }::TREE_SEMANTIC
 FROM ded);

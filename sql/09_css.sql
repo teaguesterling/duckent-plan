@@ -42,7 +42,7 @@
 --    to lower. Writing the combinator explicitly -- `a > :has(x)` -- or giving the compound a type
 --    name parses fine; so does every other compound after a space (`a .c`, `a #i`, `a [n=1]`).
 -- 2. An argument-less `:where` or `:is`. The css grammar knows those two names ONLY as functional
---    pseudo-classes, so written bare they do not form a pseudo_class_selector at all -- the `:`
+--    predicates, so written bare they do not form a pseudo_class_selector at all -- the `:`
 --    and the name land loose under the container and the selector stops there. The runner keeps
 --    any argument-less pseudo-class whatever its name (deciding it is unknown is the match
 --    compiler's job), so it accepts them; there is nothing here to accept.
@@ -368,7 +368,7 @@ CREATE OR REPLACE MACRO tree_css_lower(rows) AS (
                           AND (SELECT count(*) FROM c t WHERE t.ty IN ('>', '+', '~')
                                  AND t.pid = (SELECT id FROM container)) = 0)),
   -- an argument-less `:where` / `:is`: the css grammar knows those two names ONLY as functional
-  -- pseudo-classes, so written bare they do not even form a pseudo_class_selector -- the `:` and
+  -- predicates, so written bare they do not even form a pseudo_class_selector -- the `:` and
   -- the name land loose under the container. Note 2 of the header.
   -- ... which is a COMPLETE parse with a loose `:name` in it, not a truncated one, so it does not
   -- fire for `.fn:has(block` -- there the same two nodes come loose because the `(` was left open

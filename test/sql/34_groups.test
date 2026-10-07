@@ -337,8 +337,8 @@ SELECT tree_selector_group_depth(tree_steps([{type: 'a', has: [{type: 'b', has: 
 statement ok
 CALL tree_ddl_create('main', 'app', tree_spec(
   tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
-             semantic := tree_semantic(type := 'type', id := 'name',
-                                       classes := 'CASE WHEN type = ''function_definition'' AND (flags & 6) = 6 THEN [''fn''] ELSE [] END',
+             semantic := tree_semantic(type := 'type', key := 'name',
+                                       tags := 'CASE WHEN type = ''function_definition'' AND (flags & 6) = 6 THEN [''fn''] ELSE [] END',
                                        pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
@@ -459,7 +459,7 @@ SEMANTIC
 
 # ... and so is a sibling combinator inside a group on a sibling-free tree
 statement ok
-CALL tree_ddl_create('main', 'cats', tree_spec(tree_shape(key := 'cat_id', parent := 'parent_id'), source := 'read_csv(''test/data/categories.csv'')'));
+CALL tree_ddl_create('main', 'cats', tree_spec(tree_shape(unique_key := 'cat_id', parent := 'parent_id'), source := 'read_csv(''test/data/categories.csv'')'));
 
 statement error
 FROM tree_match('main', 'cats', tree_steps([{"where": 'true', has: [{comb: 'next'}]}]));

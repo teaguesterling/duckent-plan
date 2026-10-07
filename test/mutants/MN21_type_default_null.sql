@@ -10,8 +10,8 @@
 -- predicate defaulting to true, NULL-definite like every other filter in the language.
 -- MN21 mutates the TYPE default here.
 CREATE OR REPLACE MACRO tree_sql_sem_cols(sem) AS
-  COALESCE((sem).type, 'NULL::VARCHAR') || ' AS _type, ' || COALESCE((sem).id, 'NULL::VARCHAR') || ' AS _id, '
-  || COALESCE((sem).classes, 'NULL::VARCHAR[]') || ' AS _classes, '
+  COALESCE((sem).type, 'NULL::VARCHAR') || ' AS _type, ' || COALESCE((sem).key, 'NULL::VARCHAR') || ' AS _key, '
+  || COALESCE((sem).tags, 'NULL::VARCHAR[]') || ' AS _tags, '
   || CASE WHEN (sem).attr_map IS NULL THEN 'NULL::MAP(VARCHAR, VARCHAR)' ELSE 'CAST(' || (sem).attr_map || ' AS MAP(VARCHAR, VARCHAR))' END || ' AS _attr_map, '
   || 'COALESCE(' || COALESCE((sem).element, 'true') || ', false) AS _element, '
   || tree_sql_pseudo_map(sem) || ' AS _pseudo';

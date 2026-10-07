@@ -17,7 +17,7 @@ statement ok
 CALL tree_ddl_create('main', 'rep_col', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
-  semantic := tree_semantic(type := 'type', id := 'name', classes := 'css_classes',
+  semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
     element := 'is_element', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
@@ -25,7 +25,7 @@ statement ok
 CALL tree_ddl_create('main', 'rep_expr', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
-  semantic := tree_semantic(type := 'lower(upper(type))', id := 'name', classes := 'css_classes',
+  semantic := tree_semantic(type := 'lower(upper(type))', key := 'name', tags := 'css_classes',
     element := 'is_element', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
@@ -161,7 +161,7 @@ statement ok
 CALL tree_ddl_create('main', 'rep_class', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
-  semantic := tree_semantic(type := 'type', classes := 'cls')),
+  semantic := tree_semantic(type := 'type', tags := 'cls')),
   source := '(SELECT *, CASE WHEN (flags & 6) = 6 THEN [''def''] ELSE [] END AS cls FROM read_parquet(''test/data/app.parquet''))'));
 
 # the bare pseudo-class
@@ -193,7 +193,7 @@ statement ok
 CALL tree_ddl_create('main', 'rep_class_none', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
-  semantic := tree_semantic(type := 'type', classes := '[]::VARCHAR[]',
+  semantic := tree_semantic(type := 'type', tags := '[]::VARCHAR[]',
     pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
@@ -219,7 +219,7 @@ statement ok
 CALL tree_ddl_create('main', 'rep_elem_col', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
-  semantic := tree_semantic(type := 'type', id := 'name', classes := 'css_classes',
+  semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
     element := 'is_element', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
@@ -227,7 +227,7 @@ statement ok
 CALL tree_ddl_create('main', 'rep_elem_stub', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
-  semantic := tree_semantic(type := 'type', id := 'name', classes := 'css_classes',
+  semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
     element := 'is_construct_stub(flags)', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
@@ -235,7 +235,7 @@ statement ok
 CALL tree_ddl_create('main', 'rep_elem_expr', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
-  semantic := tree_semantic(type := 'type', id := 'name', classes := 'css_classes',
+  semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
     element := 'regexp_matches(type, ''^[a-z_]'')', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 

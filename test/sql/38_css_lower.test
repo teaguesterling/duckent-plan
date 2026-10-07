@@ -20,8 +20,8 @@ LOAD sitting_duck;
 statement ok
 CALL tree_ddl_create('main', 'app', tree_spec(
   tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
-             semantic := tree_semantic(type := 'type', id := 'name',
-                                       classes := 'CASE WHEN (flags & 6) = 6 AND type = ''function_definition'' THEN [''fn''] ELSE [] END')),
+             semantic := tree_semantic(type := 'type', key := 'name',
+                                       tags := 'CASE WHEN (flags & 6) = 6 AND type = ''function_definition'' THEN [''fn''] ELSE [] END')),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 # ---------------------------------------------------------------------------------------

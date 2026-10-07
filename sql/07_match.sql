@@ -1,6 +1,6 @@
 -- sql/07_match.sql
 CREATE OR REPLACE MACRO tree_canonical_columns() AS
-  ['_root', '_pre', '_level', '_parent', '_size', '_children', '_next', '_type', '_id', '_classes', '_attr_map', '_element', '_pseudo'];
+  ['_root', '_pre', '_level', '_parent', '_size', '_children', '_next', '_type', '_key', '_tags', '_attr_map', '_element', '_pseudo'];
 
 -- One fragment per relation, each the single definition shared by combinators, groups and traversal.
 -- a and b are step aliases; elem says whether the tree declares ELEMENT, in which case the sibling
@@ -158,7 +158,7 @@ CREATE OR REPLACE MACRO tree_sql_comb(op, a, b, elem) AS
     -- exactly the case that must be told what is wrong instead of receiving a NULL fragment.
     ELSE tree_err('tree_match: unknown combinator ' || COALESCE(op, '<NULL>')) END;
 
--- The pseudo-classes the language itself defines. They are structural, so every tree has them
+-- The predicates the language itself defines. They are structural, so every tree has them
 -- whatever its SEMANTIC group binds, and they are never reported as unknown. One list, read by
 -- tree_sql_builtin_pseudo (which compiles them) and by tree_compile_match -- which must not mark
 -- them unknown, and must not refuse them on a tree with no SEMANTIC group: they read no S slot.
@@ -252,8 +252,8 @@ CREATE OR REPLACE MACRO tree_sql_attr_col_cmp(alias, col, ctype, op, arg) AS
 CREATE OR REPLACE MACRO tree_sql_clause(kind, value, op, arg, alias, attr_cols, has_map, elem) AS
   CASE kind
     WHEN 'type'   THEN alias || '._type = ' || tree_sql_lit(value)
-    WHEN 'id'     THEN alias || '._id = ' || tree_sql_lit(value)
-    WHEN 'class'  THEN 'COALESCE(list_contains(' || alias || '._classes, ' || tree_sql_lit(value) || '), false)'
+    WHEN 'id'     THEN alias || '._key = ' || tree_sql_lit(value)
+    WHEN 'class'  THEN 'COALESCE(list_contains(' || alias || '._tags, ' || tree_sql_lit(value) || '), false)'
     -- The built-ins are compiled by tree_sql_builtin_pseudo, which returns NULL for every other
     -- name -- so this branch consults the one list rather than repeating it. A declared
     -- pseudo-class is a lookup in the projection's _pseudo map.
@@ -354,7 +354,7 @@ CREATE OR REPLACE MACRO tree_sql_group(kind, steps, anchor, elem) AS
 CREATE OR REPLACE MACRO tree_compile_match(sch, nm, sel, semantic := NULL, language := NULL) AS (
 WITH t AS (
   SELECT tr.profile, tr.has_semantic OR semantic IS NOT NULL AS has_semantic,
-         (SELECT list(name) FROM tree_catalog.pseudo_classes p WHERE p.database_name = current_database() AND p.schema_name = sch AND p.tree_name = nm) AS known_pseudos,
+         (SELECT list(name) FROM tree_catalog.predicates p WHERE p.database_name = current_database() AND p.schema_name = sch AND p.tree_name = nm) AS known_pseudos,
          -- whether any row can be a non-element: only then must the sibling and positional
          -- fragments scan for the nearest element neighbour instead of using the O(1) pre/size form
          EXISTS (SELECT 1 FROM tree_catalog.slots s WHERE s.database_name = current_database() AND s.schema_name = sch AND s.tree_name = nm AND s.slot = 'ELEMENT')
@@ -377,7 +377,7 @@ WITH t AS (
                    WHERE c.database_name = current_database() AND c.schema_name = sch AND c.tree_name = nm AND c.artifact = 'attribute_columns'),
                   []::STRUCT(name VARCHAR, "type" VARCHAR)[]) AS attr_cols
   FROM tree_catalog.trees tr WHERE tr.database_name = current_database() AND tr.schema_name = sch AND tr.tree_name = nm),
--- The overlay with its macro-, map- and prefix-bound pseudo-classes turned into expression
+-- The overlay with its macro-, map- and prefix-bound predicates turned into expression
 -- bodies, exactly as the DDL compilers do before storing them: tree_sql_pseudo_map reads (p).body
 -- only, so an unexpanded binding would compile the _pseudo map -- and with it the whole
 -- projection text -- to NULL. A NULL overlay must stay NULL rather than become a struct of NULLs,
@@ -510,10 +510,10 @@ chk AS (SELECT CASE
 proj AS (
   SELECT CASE WHEN semantic IS NULL THEN 'tree_catalog.' || tree_sql_object_name('proj', sch, nm) || '()'
     ELSE '(SELECT * REPLACE (' || list_aggregate(list_filter([
-        (semantic).type || ' AS _type', (semantic).id || ' AS _id', (semantic).classes || ' AS _classes',
+        (semantic).type || ' AS _type', (semantic).key || ' AS _key', (semantic).tags || ' AS _tags',
         CASE WHEN (semantic).attr_map IS NULL THEN NULL ELSE 'CAST(' || (semantic).attr_map || ' AS MAP(VARCHAR, VARCHAR)) AS _attr_map' END,
         CASE WHEN (semantic).element IS NULL THEN NULL ELSE 'COALESCE(' || (semantic).element || ', false) AS _element' END,
-        -- map_concat, not replace: the catalog's pseudo-classes stay bound, the overlay's
+        -- map_concat, not replace: the catalog's predicates stay bound, the overlay's
         -- entries are added, and the overlay (the second argument) wins on a shared name
         -- Gated on (sem).pseudo -- the EXPANDED overlay -- not the raw (semantic).pseudo: an
         -- overlay that sets only pseudo_args (no pseudo declared at all) still expands to a
@@ -534,7 +534,7 @@ cfg AS (SELECT (SELECT p FROM proj) AS p, (SELECT has_element FROM t) AS elem,
                -- the language the front-end stamped on the selector's root row, computed here
                -- (where no lambda is in scope) so the output SELECT reads a plain column
                tree_selector_language(sel) AS lang),
--- IR rows, every level of them: S clauses refused on S-less trees, unknown pseudo-classes marked,
+-- IR rows, every level of them: S clauses refused on S-less trees, unknown predicates marked,
 -- sibling combinators refused under sibling_free. unnest(recursive := true) flattens the whole
 -- selector, so a clause or a combinator inside a group is checked exactly like a top-level one.
 n AS (
@@ -543,7 +543,7 @@ n AS (
                    AND NOT list_contains(COALESCE((SELECT known_pseudos FROM t), []), value)
                    AND (semantic IS NULL OR NOT list_contains((SELECT names FROM ovp), value)) THEN 'pseudo_unknown' ELSE kind END AS kind,
          value, op, arg, COALESCE(alias, 's' || node_id) AS alias,
-         -- The S-less refusal, with the built-in positional pseudo-classes exempted: they are
+         -- The S-less refusal, with the built-in positional predicates exempted: they are
          -- structural (they compile through the navigation fragments, read no S slot and bind
          -- nothing from the SEMANTIC group), so there is nothing about them for an R-only tree to
          -- be missing. Refusing them said "this tree has no SEMANTIC group" about a clause that
