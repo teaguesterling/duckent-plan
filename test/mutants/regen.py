@@ -166,11 +166,11 @@ SPEC = {
          "    FROM n g WHERE g.kind = 'has'),", 2)]),
 
     "MN25": ("sql/07_match.sql", ["tree_sql_clause"], [
-        ("WHEN 'class'  THEN 'COALESCE(list_contains(' || alias || '._classes, ' || tree_sql_lit(value) || '), false)'",
+        ("WHEN 'class'  THEN 'COALESCE(list_contains(' || alias || '._tags, ' || tree_sql_lit(value) || '), false)'",
          "-- the mutation\n"
-         "    WHEN 'class'  THEN 'CASE WHEN COALESCE(len(' || alias || '._classes), 0) = 0'\n"
+         "    WHEN 'class'  THEN 'CASE WHEN COALESCE(len(' || alias || '._tags), 0) = 0'\n"
          "                       || ' THEN COALESCE(' || alias || '._pseudo[' || tree_sql_lit(value) || '], false)'\n"
-         "                       || ' ELSE COALESCE(list_contains(' || alias || '._classes, '"
+         "                       || ' ELSE COALESCE(list_contains(' || alias || '._tags, '"
          " || tree_sql_lit(value) || '), false) END'", 1)]),
 }
 

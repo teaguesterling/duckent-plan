@@ -382,8 +382,8 @@ def write_42_second_differential(hand):
             "# A compiler that did could still answer every record above correctly.\n\n",
             _app_ddl("app_declared_plain",
                      ["size := 'descendant_count'", "parent := 'parent_id'",
-                      "children := 'children_count'"], "type := 'type', id := 'name', classes := 'css_classes'"),
-            _app_ddl("app_derived_plain", [], "type := 'type', id := 'name', classes := 'css_classes'")]
+                      "children := 'children_count'"], "type := 'type', key := 'name', tags := 'css_classes'"),
+            _app_ddl("app_derived_plain", [], "type := 'type', key := 'name', tags := 'css_classes'")]
     for css in ("function_definition + function_definition",
                 "block > expression_statement:first-child",
                 "block > expression_statement:last-child",
@@ -445,7 +445,7 @@ def write_43_representation(hand):
             " list the source computes\n# " + "-" * 86 + "\n\n",
             _app_ddl("rep_pseudo", SIZE_ONLY,
                      "type := 'type', pseudo := [{name: 'def', body: '(flags & 6) = 6'}]"),
-            _app_ddl("rep_class", SIZE_ONLY, "type := 'type', classes := 'cls'",
+            _app_ddl("rep_class", SIZE_ONLY, "type := 'type', tags := 'cls'",
                      source="(SELECT *, CASE WHEN (flags & 6) = 6 THEN [''def''] ELSE [] END "
                             "AS cls FROM read_parquet(''test/data/app.parquet''))")]
     for sel, (lhs, rhs) in (("the bare pseudo-class",
@@ -463,7 +463,7 @@ def write_43_representation(hand):
             "# `.def` must select nothing there while `:def` still selects every def -- the second\n"
             "# column, which keeps the first from passing on a tree that selects nothing at all.\n\n",
             _app_ddl("rep_class_none", SIZE_ONLY,
-                     "type := 'type', classes := '[]::VARCHAR[]',\n"
+                     "type := 'type', tags := '[]::VARCHAR[]',\n"
                      "    pseudo := [{name: 'def', body: '(flags & 6) = 6'}]"),
             "query II\n"
             "SELECT (SELECT count(*) FROM tree_match('main', 'rep_class_none', tree_steps([{class: 'def'}]))),\n"
@@ -583,7 +583,7 @@ def _write(path, chunks):
 def corpus_sem(type_expr="type", element_expr="is_element"):
     """The corpus S group, with TYPE and ELEMENT as parameters: 43 varies exactly those two and
     holds everything else fixed, so the S group has one spelling here."""
-    return ("type := '%s', id := 'name', classes := 'css_classes',\n"
+    return ("type := '%s', key := 'name', tags := 'css_classes',\n"
             "    element := '%s', pseudo := [{name: 'def', body: '(flags & 6) = 6'}]"
             % (sql_text(type_expr), sql_text(element_expr)))
 

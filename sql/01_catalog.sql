@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS tree_catalog.slots(
   database_name VARCHAR, schema_name VARCHAR, tree_name VARCHAR,
   block VARCHAR, slot VARCHAR, expression VARCHAR);
 
-CREATE TABLE IF NOT EXISTS tree_catalog.pseudo_classes(
+CREATE TABLE IF NOT EXISTS tree_catalog.predicates(
   database_name VARCHAR, schema_name VARCHAR, tree_name VARCHAR,
   name VARCHAR, kind VARCHAR, body VARCHAR, origin VARCHAR, purity VARCHAR);
 
@@ -47,6 +47,6 @@ CREATE TABLE IF NOT EXISTS tree_state.assertions(
 
 CREATE OR REPLACE MACRO tree_catalog_trees() AS TABLE SELECT * FROM tree_catalog.trees;
 CREATE OR REPLACE MACRO tree_catalog_slots() AS TABLE SELECT * FROM tree_catalog.slots ORDER BY schema_name, tree_name, block, slot;
-CREATE OR REPLACE MACRO tree_catalog_pseudo_classes() AS TABLE SELECT * FROM tree_catalog.pseudo_classes;
+CREATE OR REPLACE MACRO tree_catalog_predicates() AS TABLE SELECT * FROM tree_catalog.predicates;
 CREATE OR REPLACE MACRO tree_catalog_assertions() AS TABLE SELECT * FROM tree_state.assertions;
 CREATE OR REPLACE MACRO tree_catalog_languages() AS TABLE SELECT * FROM tree_catalog.selector_languages;

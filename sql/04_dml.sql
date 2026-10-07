@@ -74,13 +74,13 @@ CREATE OR REPLACE MACRO tree_compile_order_check(order_expr, root_csv, source_sq
 -- Untested by construction, and deliberately so: which of several equally-tying roots gets named
 -- is nondeterministic, so a record pinning the message would be fragile. The records that do exist
 -- (dupkey, dupkey2, duproot) name a single colliding pair, where both forms agree byte for byte.
-CREATE OR REPLACE MACRO tree_compile_key_check(key_expr, root_csv, source_sql, label) AS
-  CASE WHEN key_expr IS NULL THEN NULL ELSE
-    'SELECT CASE WHEN __mx > 1 THEN tree_err(''KEY '' || COALESCE((__w).v, ''<NULL>'') || '' appears '' || __mx || '' times'
+CREATE OR REPLACE MACRO tree_compile_unique_key_check(reach_key_expr, root_csv, source_sql, label) AS
+  CASE WHEN reach_key_expr IS NULL THEN NULL ELSE
+    'SELECT CASE WHEN __mx > 1 THEN tree_err(''UNIQUE KEY '' || COALESCE((__w).v, ''<NULL>'') || '' appears '' || __mx || '' times'
     || CASE WHEN root_csv IS NULL THEN ' in tree ' || replace(label, '''', '''''') || ''')'
             ELSE ' in root '' || COALESCE((__w).k, ''<NULL>'') || '' of tree ' || replace(label, '''', '''''') || ''')' END
     || ' END FROM (SELECT max(__n) AS __mx, arg_max({k: __k, v: __v::VARCHAR}, __n) AS __w'
-    || ' FROM (SELECT __k, __v, count(*) AS __n FROM (SELECT ' || tree_sql_root(root_csv, '') || '::VARCHAR AS __k, ' || key_expr || ' AS __v FROM ' || source_sql || ') GROUP BY __k, __v))'
+    || ' FROM (SELECT __k, __v, count(*) AS __n FROM (SELECT ' || tree_sql_root(root_csv, '') || '::VARCHAR AS __k, ' || reach_key_expr || ' AS __v FROM ' || source_sql || ') GROUP BY __k, __v))'
   END;
 
 -- After the key check: every source row must be reached by the walk from a NULL-parent row in
@@ -88,14 +88,14 @@ CREATE OR REPLACE MACRO tree_compile_key_check(key_expr, root_csv, source_sql, l
 -- rather than silently left out of the tree. The parent basis requires KEY to be a plain column,
 -- so when ATTR is open (`*`) the projection carries that column and the refusal can name an
 -- example key; when ATTR is closed it compares row counts per root and names only the count.
-CREATE OR REPLACE MACRO tree_compile_reach_check(key_expr, root_csv, source_sql, rel_sql, label, attr_text) AS
-  CASE WHEN key_expr IS NULL THEN NULL
+CREATE OR REPLACE MACRO tree_compile_reach_check(reach_key_expr, root_csv, source_sql, rel_sql, label, attr_text) AS
+  CASE WHEN reach_key_expr IS NULL THEN NULL
        WHEN attr_text = '*' THEN
     'SELECT tree_err(count(*) || '' rows of tree ' || replace(label, '''', '''''') || ' are not reachable from a root'
     || CASE WHEN root_csv IS NULL THEN '' ELSE ' in root '' || COALESCE(min(__k), ''<NULL>'') || ''' END
     || ': orphans or a cycle, e.g. key '' || COALESCE(min(__v::VARCHAR), ''<NULL>''))'
-    || ' FROM (SELECT s.__k, s.__v FROM (SELECT ' || tree_sql_root(root_csv, '') || '::VARCHAR AS __k, ' || key_expr || ' AS __v FROM ' || source_sql || ') s'
-    || ' ANTI JOIN (SELECT _root::VARCHAR AS __k, ' || key_expr || ' AS __v FROM ' || rel_sql || ') r ON r.__k = s.__k AND r.__v = s.__v) HAVING count(*) > 0'
+    || ' FROM (SELECT s.__k, s.__v FROM (SELECT ' || tree_sql_root(root_csv, '') || '::VARCHAR AS __k, ' || reach_key_expr || ' AS __v FROM ' || source_sql || ') s'
+    || ' ANTI JOIN (SELECT _root::VARCHAR AS __k, ' || reach_key_expr || ' AS __v FROM ' || rel_sql || ') r ON r.__k = s.__k AND r.__v = s.__v) HAVING count(*) > 0'
        ELSE
     'SELECT tree_err((s.__n - COALESCE(r.__n, 0)) || '' rows of tree ' || replace(label, '''', '''''') || ' are not reachable from a root'
     || CASE WHEN root_csv IS NULL THEN '' ELSE ' in root '' || s.__k || ''' END
@@ -168,7 +168,7 @@ CREATE OR REPLACE MACRO tree_sql_o_order_col(shape, attr_text) AS
 -- parent basis. Mirrors the join the projection makes to resolve it (02_projection.sql).
 CREATE OR REPLACE MACRO tree_sql_o_next_id_col(shape) AS
   CASE WHEN (shape).level IS NOT NULL OR (shape).parent IS NULL
-       THEN (shape)."order" ELSE (shape).key END;
+       THEN (shape)."order" ELSE (shape).unique_key END;
 
 -- Whether the RAW declared NEXT can be read back, on exactly the terms tree_sql_o_order_col uses:
 -- ATTR must be open for the source columns to be in rel_sql at all, and both expressions must be
@@ -275,7 +275,7 @@ CREATE OR REPLACE MACRO tree_sql_o_bad_cte(shape, rel_sql, order_col, attr_text)
 -- (k, pos) alone leaves the tie to scan order, so the same source and shape named SIZE on one
 -- run and CHILDREN on the next. Both messages were true, which is exactly the problem: the
 -- content was correct by accident rather than by construction. This is the same defect class as
--- the arg_max pairings in tree_compile_order_check and tree_compile_key_check, and it is closed
+-- the arg_max pairings in tree_compile_order_check and tree_compile_unique_key_check, and it is closed
 -- the same way -- structurally, so the mismatch is unrepresentable rather than merely unlikely.
 CREATE OR REPLACE MACRO tree_compile_o_conformance(shape, rel_sql, label, order_col, attr_text) AS
   CASE WHEN NOT tree_sql_declares_o(shape) THEN NULL ELSE
@@ -352,7 +352,7 @@ CREATE OR REPLACE MACRO tree_compile_insert(sch, nm, source) AS (
   WITH c AS (SELECT tree_dml_context('tree_insert', sch, nm) AS x),
   -- NULL in the level basis, which is how both parent-basis checks below drop out of the list
   p AS (SELECT x, tree_compile_projection(x.shape, source, x.attr) AS proj,
-               CASE WHEN (x.shape).level IS NOT NULL OR (x.shape).parent IS NULL THEN NULL ELSE (x.shape).key END AS key_expr FROM c)
+               CASE WHEN (x.shape).level IS NOT NULL OR (x.shape).parent IS NULL THEN NULL ELSE (x.shape).unique_key END AS reach_key_expr FROM c)
   SELECT list_filter(['BEGIN TRANSACTION',
     tree_sql_frozen_guard(x.order_source, 'tree_insert'),
     -- before the projection is evaluated, not after: a tie would otherwise be numbered first,
@@ -361,10 +361,10 @@ CREATE OR REPLACE MACRO tree_compile_insert(sch, nm, source) AS (
     -- The NEW source alone, never unioned with x.tbl: insert refuses a ROOT that is already
     -- present (the statement below), so the roots arriving here are disjoint from the stored
     -- ones and a key they share with a stored row is not a collision.
-    tree_compile_key_check(key_expr, (x.shape).root, source, sch || '.' || nm),
+    tree_compile_unique_key_check(reach_key_expr, (x.shape).root, source, sch || '.' || nm),
     'CREATE TEMP TABLE __duckent_new AS ' || proj,
     -- and the reach check right after it, because __duckent_new IS the walk's output
-    tree_compile_reach_check(key_expr, (x.shape).root, source, '__duckent_new', sch || '.' || nm, x.attr),
+    tree_compile_reach_check(reach_key_expr, (x.shape).root, source, '__duckent_new', sch || '.' || nm, x.attr),
     tree_sql_shadow_check('__duckent_new', 'tree_insert'),
     'SELECT CASE WHEN count(*) > 0 THEN error(''tree_insert: ROOT values already present in ' || replace(sch || '.' || nm, '''', '''''') || ': '' || string_agg(DISTINCT n._root::VARCHAR, '', '')) END FROM __duckent_new n JOIN tree_state.partitions p ON p.root_key = n._root::VARCHAR AND p.database_name = ' || tree_sql_lit(x.db) || ' AND p.schema_name = ' || tree_sql_lit(sch) || ' AND p.tree_name = ' || tree_sql_lit(nm),
     tree_compile_p13('__duckent_new', sch || '.' || nm, x.has_root, (x.shape).level),
@@ -383,16 +383,16 @@ CREATE OR REPLACE MACRO tree_compile_insert(sch, nm, source) AS (
 CREATE OR REPLACE MACRO tree_compile_replace(sch, nm, source) AS (
   WITH c AS (SELECT tree_dml_context('tree_replace', sch, nm) AS x),
   p AS (SELECT x, tree_compile_projection(x.shape, source, x.attr) AS proj,
-               CASE WHEN (x.shape).level IS NOT NULL OR (x.shape).parent IS NULL THEN NULL ELSE (x.shape).key END AS key_expr FROM c)
+               CASE WHEN (x.shape).level IS NOT NULL OR (x.shape).parent IS NULL THEN NULL ELSE (x.shape).unique_key END AS reach_key_expr FROM c)
   SELECT list_filter(['BEGIN TRANSACTION',
     tree_sql_frozen_guard(x.order_source, 'tree_replace'),
     tree_compile_order_check((x.shape)."order", (x.shape).root, source, sch || '.' || nm),
     -- The NEW source alone, as for insert, and here the union would be actively wrong: replace
     -- rewrites whole partitions, so the rows it is about to delete are STILL PRESENT in x.tbl
     -- while this runs, and every key in an unchanged tree would read as appearing twice.
-    tree_compile_key_check(key_expr, (x.shape).root, source, sch || '.' || nm),
+    tree_compile_unique_key_check(reach_key_expr, (x.shape).root, source, sch || '.' || nm),
     'CREATE TEMP TABLE __duckent_new AS ' || proj,
-    tree_compile_reach_check(key_expr, (x.shape).root, source, '__duckent_new', sch || '.' || nm, x.attr),
+    tree_compile_reach_check(reach_key_expr, (x.shape).root, source, '__duckent_new', sch || '.' || nm, x.attr),
     tree_sql_shadow_check('__duckent_new', 'tree_replace'),
     tree_compile_p13('__duckent_new', sch || '.' || nm, x.has_root, (x.shape).level),
     -- and the same conformance check insert runs, for the same reason: replace rewrites whole

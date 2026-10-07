@@ -55,7 +55,7 @@ shared AS (
                    ), []) AS extra
   FROM lp
 )
-SELECT {type: (sem).type, id: (sem).id, classes: (sem).classes, attr: (sem).attr, attr_map: (sem).attr_map, element: (sem).element, pseudo_args: (sem).pseudo_args,
+SELECT {type: (sem).type, key: (sem).key, tags: (sem).tags, attr: (sem).attr, attr_map: (sem).attr_map, element: (sem).element, pseudo_args: (sem).pseudo_args,
   pseudo: CASE WHEN (sem).pseudo IS NULL AND (sem).pseudo_args IS NULL THEN NULL ELSE list_concat(lp.bound, shared.extra) END
 }::TREE_SEMANTIC
 FROM lp, shared);

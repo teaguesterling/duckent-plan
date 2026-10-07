@@ -21,11 +21,11 @@
 CREATE OR REPLACE MACRO tree_sql_clause(kind, value, op, arg, alias, attr_cols, has_map, elem) AS
   CASE kind
     WHEN 'type'   THEN alias || '._type = ' || tree_sql_lit(value)
-    WHEN 'id'     THEN alias || '._id = ' || tree_sql_lit(value)
+    WHEN 'id'     THEN alias || '._key = ' || tree_sql_lit(value)
     -- the mutation
-    WHEN 'class'  THEN 'CASE WHEN COALESCE(len(' || alias || '._classes), 0) = 0'
+    WHEN 'class'  THEN 'CASE WHEN COALESCE(len(' || alias || '._tags), 0) = 0'
                        || ' THEN COALESCE(' || alias || '._pseudo[' || tree_sql_lit(value) || '], false)'
-                       || ' ELSE COALESCE(list_contains(' || alias || '._classes, ' || tree_sql_lit(value) || '), false) END'
+                       || ' ELSE COALESCE(list_contains(' || alias || '._tags, ' || tree_sql_lit(value) || '), false) END'
     -- The built-ins are compiled by tree_sql_builtin_pseudo, which returns NULL for every other
     -- name -- so this branch consults the one list rather than repeating it. A declared
     -- pseudo-class is a lookup in the projection's _pseudo map.

@@ -204,7 +204,7 @@ statement ok
 CREATE TABLE cats2 AS SELECT 'a' AS forest, * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 'b', * FROM read_csv('test/data/categories.csv');
 
 statement ok
-CALL tree_ddl_create('main', 'cats2', tree_spec(tree_shape(root := 'forest', key := 'cat_id', parent := 'parent_id'), source := 'cats2'));
+CALL tree_ddl_create('main', 'cats2', tree_spec(tree_shape(root := 'forest', unique_key := 'cat_id', parent := 'parent_id'), source := 'cats2'));
 
 query II
 SELECT (SELECT count(*) FROM tree_project('main', 'cats2')), (SELECT count(*) FROM cats2);
@@ -215,7 +215,7 @@ statement ok
 CREATE TABLE orphan AS SELECT * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 99, 'lost', 77;
 
 statement error
-CALL tree_ddl_create('main', 'orphan', tree_spec(tree_shape(key := 'cat_id', parent := 'parent_id'), source := 'orphan'));
+CALL tree_ddl_create('main', 'orphan', tree_spec(tree_shape(unique_key := 'cat_id', parent := 'parent_id'), source := 'orphan'));
 ----
 1 rows of tree main.orphan are not reachable from a root
 
@@ -223,15 +223,15 @@ statement ok
 CREATE TABLE dupkey AS SELECT * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 2, 'again', 1;
 
 statement error
-CALL tree_ddl_create('main', 'dupkey', tree_spec(tree_shape(key := 'cat_id', parent := 'parent_id'), source := 'dupkey'));
+CALL tree_ddl_create('main', 'dupkey', tree_spec(tree_shape(unique_key := 'cat_id', parent := 'parent_id'), source := 'dupkey'));
 ----
-KEY 2 appears 2 times
+UNIQUE KEY 2 appears 2 times
 
 statement ok
 CREATE TABLE cyc AS SELECT * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 90, 'x', 91 UNION ALL SELECT 91, 'y', 90;
 
 statement error
-CALL tree_ddl_create('main', 'cyc', tree_spec(tree_shape(key := 'cat_id', parent := 'parent_id'), source := 'cyc'));
+CALL tree_ddl_create('main', 'cyc', tree_spec(tree_shape(unique_key := 'cat_id', parent := 'parent_id'), source := 'cyc'));
 ----
 2 rows of tree main.cyc are not reachable from a root
 
@@ -242,12 +242,12 @@ CALL tree_ddl_create('main', 'cyc', tree_spec(tree_shape(key := 'cat_id', parent
 # partition they never wrote. Asserted through the END of each message, so an ' in root {r0: 0}'
 # clause creeping back in fails these records (the two above stop short of the clause and cannot).
 statement error
-CALL tree_ddl_create('main', 'dupkey2', tree_spec(tree_shape(key := 'cat_id', parent := 'parent_id'), source := 'dupkey'));
+CALL tree_ddl_create('main', 'dupkey2', tree_spec(tree_shape(unique_key := 'cat_id', parent := 'parent_id'), source := 'dupkey'));
 ----
-KEY 2 appears 2 times in tree main.dupkey2
+UNIQUE KEY 2 appears 2 times in tree main.dupkey2
 
 statement error
-CALL tree_ddl_create('main', 'orphan2', tree_spec(tree_shape(key := 'cat_id', parent := 'parent_id'), source := 'orphan'));
+CALL tree_ddl_create('main', 'orphan2', tree_spec(tree_shape(unique_key := 'cat_id', parent := 'parent_id'), source := 'orphan'));
 ----
 1 rows of tree main.orphan2 are not reachable from a root: orphans or a cycle, e.g. key 99
 
@@ -256,9 +256,9 @@ statement ok
 CREATE TABLE duproot AS SELECT 'a' AS forest, * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 'b', * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 'b', 2, 'again', 1;
 
 statement error
-CALL tree_ddl_create('main', 'duproot', tree_spec(tree_shape(root := 'forest', key := 'cat_id', parent := 'parent_id'), source := 'duproot'));
+CALL tree_ddl_create('main', 'duproot', tree_spec(tree_shape(root := 'forest', unique_key := 'cat_id', parent := 'parent_id'), source := 'duproot'));
 ----
-KEY 2 appears 2 times in root {'forest': b} of tree main.duproot
+UNIQUE KEY 2 appears 2 times in root {'forest': b} of tree main.duproot
 
 # A KEY on a LEVEL-basis tree is checked too, which it was not. tree_compile_create NULLed
 # key_expr whenever the basis was level -- deliberately, because key_expr gates the REACH check as
@@ -271,9 +271,9 @@ statement ok
 CREATE TABLE lvlkeydup AS SELECT * FROM (VALUES ('a', 0, 0, 'k1'), ('a', 1, 1, 'k2'), ('a', 2, 1, 'k2')) v(rt, ord, lvl, k);
 
 statement error
-CALL tree_ddl_create('main', 'lvldup', tree_spec(tree_shape(root := 'rt', "order" := 'ord', level := 'lvl', key := 'k'), source := 'lvlkeydup'));
+CALL tree_ddl_create('main', 'lvldup', tree_spec(tree_shape(root := 'rt', "order" := 'ord', level := 'lvl', unique_key := 'k'), source := 'lvlkeydup'));
 ----
-KEY k2 appears 2 times in root {'rt': a} of tree main.lvldup
+UNIQUE KEY k2 appears 2 times in root {'rt': a} of tree main.lvldup
 
 # and a unique one is accepted, so the record above is not passing because level-basis KEY is
 # refused outright
@@ -281,7 +281,7 @@ statement ok
 CREATE TABLE lvlkeyok AS SELECT * FROM (VALUES ('a', 0, 0, 'k1'), ('a', 1, 1, 'k2'), ('a', 2, 1, 'k3')) v(rt, ord, lvl, k);
 
 statement ok
-CALL tree_ddl_create('main', 'lvlok', tree_spec(tree_shape(root := 'rt', "order" := 'ord', level := 'lvl', key := 'k'), source := 'lvlkeyok'));
+CALL tree_ddl_create('main', 'lvlok', tree_spec(tree_shape(root := 'rt', "order" := 'ord', level := 'lvl', unique_key := 'k'), source := 'lvlkeyok'));
 
 # the REACH check stays gated to the parent basis. lvlkeyok's rows have no PARENT to walk, so a
 # reach check over them would have nothing to reach FROM and would refuse a well-formed tree --
@@ -295,14 +295,14 @@ statement ok
 CREATE TABLE orphanroot AS SELECT 'a' AS forest, * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 'b', * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 'b', 99, 'lost', 77;
 
 statement error
-CALL tree_ddl_create('main', 'orphanroot', tree_spec(tree_shape(root := 'forest', key := 'cat_id', parent := 'parent_id'), source := 'orphanroot'));
+CALL tree_ddl_create('main', 'orphanroot', tree_spec(tree_shape(root := 'forest', unique_key := 'cat_id', parent := 'parent_id'), source := 'orphanroot'));
 ----
 1 rows of tree main.orphanroot are not reachable from a root in root {'forest': b}: orphans or a cycle, e.g. key 99
 
 # A closed ATTR does not carry the KEY column into the projection, so the reach check compares row
 # counts per root instead of anti-joining on the key, and names the count alone.
 statement error
-CALL tree_ddl_create('main', 'orphan3', tree_spec(tree_shape(key := 'cat_id', parent := 'parent_id', semantic := tree_semantic(attr := 'name')), source := 'orphan'));
+CALL tree_ddl_create('main', 'orphan3', tree_spec(tree_shape(unique_key := 'cat_id', parent := 'parent_id', semantic := tree_semantic(attr := 'name')), source := 'orphan'));
 ----
 1 rows of tree main.orphan3 are not reachable from a root: orphans or a cycle
 
@@ -311,7 +311,7 @@ CALL tree_ddl_create('main', 'orphan3', tree_spec(tree_shape(key := 'cat_id', pa
 # with a stored row is not a collision, and unioning the stored table in would make replace refuse
 # every unchanged tree.
 statement ok
-CALL tree_ddl_create('main', 'ing', tree_spec(tree_shape(root := 'forest', key := 'cat_id', parent := 'parent_id'), source := '(SELECT ''a'' AS forest, * FROM read_csv(''test/data/categories.csv''))'));
+CALL tree_ddl_create('main', 'ing', tree_spec(tree_shape(root := 'forest', unique_key := 'cat_id', parent := 'parent_id'), source := '(SELECT ''a'' AS forest, * FROM read_csv(''test/data/categories.csv''))'));
 
 statement error
 CALL tree_insert('main', 'ing', '(SELECT ''b'' AS forest, * FROM read_csv(''test/data/categories.csv'') UNION ALL SELECT ''b'', 99, ''lost'', 77)');
@@ -321,7 +321,7 @@ CALL tree_insert('main', 'ing', '(SELECT ''b'' AS forest, * FROM read_csv(''test
 statement error
 CALL tree_insert('main', 'ing', '(SELECT ''b'' AS forest, * FROM read_csv(''test/data/categories.csv'') UNION ALL SELECT ''b'', 2, ''again'', 1)');
 ----
-KEY 2 appears 2 times in root {'forest': b} of tree main.ing
+UNIQUE KEY 2 appears 2 times in root {'forest': b} of tree main.ing
 
 # the same key in ANOTHER root is not a collision, and the insert lands
 statement ok
@@ -351,7 +351,7 @@ statement ok
 CREATE TABLE altorphansrc AS SELECT 'a' AS forest, * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 'b', * FROM read_csv('test/data/categories.csv');
 
 statement ok
-CALL tree_ddl_create('main', 'altorphan', tree_spec(tree_shape(root := 'forest', key := 'cat_id', parent := 'parent_id'), source := 'altorphansrc'));
+CALL tree_ddl_create('main', 'altorphan', tree_spec(tree_shape(root := 'forest', unique_key := 'cat_id', parent := 'parent_id'), source := 'altorphansrc'));
 
 statement ok
 INSERT INTO altorphansrc VALUES ('b', 99, 'lost', 77);
@@ -365,7 +365,7 @@ statement ok
 CREATE TABLE altdupsrc AS SELECT 'a' AS forest, * FROM read_csv('test/data/categories.csv') UNION ALL SELECT 'b', * FROM read_csv('test/data/categories.csv');
 
 statement ok
-CALL tree_ddl_create('main', 'altdup', tree_spec(tree_shape(root := 'forest', key := 'cat_id', parent := 'parent_id'), source := 'altdupsrc'));
+CALL tree_ddl_create('main', 'altdup', tree_spec(tree_shape(root := 'forest', unique_key := 'cat_id', parent := 'parent_id'), source := 'altdupsrc'));
 
 # The duplicate takes a leaf's key (3, a childless row) and the deleted row is another leaf (5),
 # so root b's row count is unchanged at 5 -- the key check must catch this, not the row-count
@@ -379,4 +379,4 @@ INSERT INTO altdupsrc VALUES ('b', 3, 'again', 2);
 statement error
 CALL tree_ddl_alter('main', 'altdup', tree_semantic(type := 'name'));
 ----
-KEY 3 appears 2 times in root {'forest': b} of tree main.altdup
+UNIQUE KEY 3 appears 2 times in root {'forest': b} of tree main.altdup

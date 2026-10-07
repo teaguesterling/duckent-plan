@@ -5,7 +5,7 @@ CREATE OR REPLACE MACRO tree_shape_from_catalog(db, sch, nm) AS (
   SELECT CASE WHEN count(*) = 0 THEN NULL ELSE {
     root: max(expression) FILTER (WHERE slot = 'ROOT'),
     "order": max(expression) FILTER (WHERE slot = 'ORDER'),
-    key: max(expression) FILTER (WHERE slot = 'KEY'),
+    unique_key: max(expression) FILTER (WHERE slot = 'UNIQUE KEY'),
     level: max(expression) FILTER (WHERE slot = 'LEVEL'),
     parent: max(expression) FILTER (WHERE slot = 'PARENT'),
     sibling_order: max(expression) FILTER (WHERE slot = 'SIBLING_ORDER'),
@@ -14,8 +14,8 @@ CREATE OR REPLACE MACRO tree_shape_from_catalog(db, sch, nm) AS (
     next: max(expression) FILTER (WHERE slot = 'NEXT'),
     semantic: {
       type: max(expression) FILTER (WHERE slot = 'TYPE'),
-      id: max(expression) FILTER (WHERE slot = 'ID'),
-      classes: max(expression) FILTER (WHERE slot = 'CLASSES'),
+      key: max(expression) FILTER (WHERE slot = 'KEY'),
+      tags: max(expression) FILTER (WHERE slot = 'TAGS'),
       attr: max(expression) FILTER (WHERE slot = 'ATTR'),
       attr_map: max(expression) FILTER (WHERE slot = 'ATTR_MAP'),
       element: max(expression) FILTER (WHERE slot = 'ELEMENT'),
@@ -33,19 +33,19 @@ CREATE OR REPLACE MACRO tree_shape_from_catalog(db, sch, nm) AS (
                             macro: CASE WHEN kind = 'macro' THEN split_part(body, '(', 1) END,
                             args: CASE WHEN kind = 'macro' THEN NULLIF(regexp_extract(body, '^[^(]*\((.*)\)$', 1), '') END,
                             prefix: CASE origin WHEN 'shared' THEN tree_shared_pseudo_prefix() WHEN 'prefix' THEN 'prefix' ELSE NULL END} ORDER BY name)
-               FROM tree_catalog.pseudo_classes p WHERE p.database_name = db AND p.schema_name = sch AND p.tree_name = nm)
+               FROM tree_catalog.predicates p WHERE p.database_name = db AND p.schema_name = sch AND p.tree_name = nm)
     }::TREE_SEMANTIC }::TREE_SHAPE END
   FROM tree_catalog.slots WHERE database_name = db AND schema_name = sch AND tree_name = nm);
 
 -- Child fields win; pseudo lists union with the child shadowing by name.
 CREATE OR REPLACE MACRO tree_shape_merge(p, c) AS
   CASE WHEN p IS NULL THEN c ELSE {
-    root: COALESCE((c).root, (p).root), "order": COALESCE((c)."order", (p)."order"), key: COALESCE((c).key, (p).key),
+    root: COALESCE((c).root, (p).root), "order": COALESCE((c)."order", (p)."order"), unique_key: COALESCE((c).unique_key, (p).unique_key),
     level: COALESCE((c).level, (p).level), parent: COALESCE((c).parent, (p).parent), sibling_order: COALESCE((c).sibling_order, (p).sibling_order),
     size: COALESCE((c).size, (p).size), children: COALESCE((c).children, (p).children), next: COALESCE((c).next, (p).next),
     semantic: {
-      type: COALESCE((c).semantic.type, (p).semantic.type), id: COALESCE((c).semantic.id, (p).semantic.id),
-      classes: COALESCE((c).semantic.classes, (p).semantic.classes), attr: COALESCE((c).semantic.attr, (p).semantic.attr),
+      type: COALESCE((c).semantic.type, (p).semantic.type), key: COALESCE((c).semantic.key, (p).semantic.key),
+      tags: COALESCE((c).semantic.tags, (p).semantic.tags), attr: COALESCE((c).semantic.attr, (p).semantic.attr),
       attr_map: COALESCE((c).semantic.attr_map, (p).semantic.attr_map),
       element: COALESCE((c).semantic.element, (p).semantic.element),
       pseudo_args: COALESCE((c).semantic.pseudo_args, (p).semantic.pseudo_args),
@@ -54,7 +54,7 @@ CREATE OR REPLACE MACRO tree_shape_merge(p, c) AS
         COALESCE((c).semantic.pseudo, []))
     }::TREE_SEMANTIC }::TREE_SHAPE END;
 
--- The pseudo_classes rows for an already expanded pseudo list, shared by create and alter so the
+-- The predicates rows for an already expanded pseudo list, shared by create and alter so the
 -- two cannot record a binding differently. NULL when there is nothing to insert (the caller's
 -- statement list drops NULLs). kind and origin record how the body was bound: macro when a macro
 -- name was named, prefix when the entry came from a prefix binding, shared when it came from the
@@ -69,7 +69,7 @@ CREATE OR REPLACE MACRO tree_shape_merge(p, c) AS
 -- literal prefix. purity is not computed yet.
 CREATE OR REPLACE MACRO tree_sql_pseudo_insert(db, sch, nm, pseudo, explicit_sel_prefix) AS
   CASE WHEN len(COALESCE(pseudo, [])) = 0 THEN NULL ELSE
-  'INSERT INTO tree_catalog.pseudo_classes VALUES ' || list_aggregate(list_transform(pseudo, lambda x:
+  'INSERT INTO tree_catalog.predicates VALUES ' || list_aggregate(list_transform(pseudo, lambda x:
       '(' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ' || tree_sql_lit((x).name) || ', '
       || CASE WHEN (x).macro IS NULL THEN '''expression''' ELSE '''macro''' END || ', ' || tree_sql_lit((x).body) || ', '
       || CASE WHEN (x).prefix IS NULL THEN '''local'''
@@ -115,7 +115,7 @@ WITH base AS (
              AND NOT (t.schema_name = sch AND t.tree_name = nm)) AS collides_with,
          (spec).abstract AS abstract, (spec).source AS source, (spec).storage AS storage
 ),
--- Macro-, map- and prefix-bound pseudo-classes become expression bodies here, before validation
+-- Macro-, map- and prefix-bound predicates become expression bodies here, before validation
 -- and before anything is stored: tree_sql_pseudo_map reads (p).body only, so an unexpanded
 -- binding would compile the pseudo map -- and with it the projection -- to NULL. The catalog
 -- then holds the expanded body, so nothing downstream has to re-expand (and a prefix binding
@@ -125,7 +125,7 @@ expanded AS (
     -- the group as WRITTEN, kept alongside the expanded one for tree_sql_check_prefixes: a prefix
     -- that bound no macro leaves no trace in the expansion (sql/00_types.sql)
     (merged).semantic AS raw_semantic,
-    {root: (merged).root, "order": (merged)."order", key: (merged).key, level: (merged).level, parent: (merged).parent,
+    {root: (merged).root, "order": (merged)."order", unique_key: (merged).unique_key, level: (merged).level, parent: (merged).parent,
      sibling_order: (merged).sibling_order, size: (merged).size, children: (merged).children, next: (merged).next,
      semantic: tree_expand_pseudo((merged).semantic)}::TREE_SHAPE AS shape,
     -- Tested against this create's own declared PSEUDO, never the LIKE-merged one: a parent's
@@ -150,13 +150,13 @@ derived AS (
     -- checks are NULL-gated on it, so the level basis passes NULL here rather than each call site
     -- re-deciding which basis this is. A level-basis tree may still DECLARE a KEY, so this asks
     -- the basis, not whether a KEY exists.
-    -- key_expr gates the REACH check, which walks PARENT, so it is meaningless without one and
+    -- reach_key_expr gates the REACH check, which walks PARENT, so it is meaningless without one and
     -- stays NULL on a level basis. UNIQUENESS is a property of the DECLARATION, not of the basis:
     -- it was gated with the reach check, so a level-basis tree's declared KEY was recorded in the
     -- slot list below and never verified, while the same declaration was enforced on a parent
     -- basis. Two claims, two gates.
-    CASE WHEN level_basis THEN NULL ELSE (shape).key END AS key_expr,
-    (shape).key AS key_unique_expr,
+    CASE WHEN level_basis THEN NULL ELSE (shape).unique_key END AS reach_key_expr,
+    (shape).unique_key AS unique_key_expr,
     COALESCE((shape).semantic.attr, CASE WHEN abstract THEN '' ELSE '*' END) AS attr_text,
     -- Whether the tree has an S GROUP, which is what tree_match reads to decide whether an S
     -- clause (TYPE, ID, CLASS, ATTR, PSEUDO) may be asked for at all. The question -- does this
@@ -188,8 +188,8 @@ checked AS (
       WHEN abstract AND source IS NOT NULL THEN tree_err('tree_ddl_create: a SHAPE ONLY (abstract) tree cannot have a source')
       WHEN NOT abstract AND source IS NULL THEN tree_err('tree_ddl_create: no source given; declare abstract := true (SHAPE ONLY) or pass source')
       WHEN storage IS NULL OR storage NOT IN ('materialized', 'projection') THEN tree_err('tree_ddl_create: storage must be materialized or projection')
-      WHEN NOT level_basis AND (shape).key IS NULL THEN tree_err('tree_ddl_create: PARENT basis requires KEY (the column PARENT refers to)')
-      WHEN NOT level_basis AND NOT (tree_sql_is_ident((shape).key) AND tree_sql_is_ident((shape).parent)) THEN tree_err('tree_ddl_create: PARENT basis needs KEY and PARENT to be plain column names')
+      WHEN NOT level_basis AND (shape).unique_key IS NULL THEN tree_err('tree_ddl_create: PARENT basis requires UNIQUE KEY (the column PARENT refers to)')
+      WHEN NOT level_basis AND NOT (tree_sql_is_ident((shape).unique_key) AND tree_sql_is_ident((shape).parent)) THEN tree_err('tree_ddl_create: PARENT basis needs UNIQUE KEY and PARENT to be plain column names')
       -- SIBLING_ORDER belongs to the PARENT basis and to nothing else. The level basis derives the
       -- sibling order from ORDER by construction (_pre is the rank of ORDER within the root), and
       -- the level-basis arm of tree_compile_projection never reads (shape).sibling_order -- it is
@@ -215,10 +215,10 @@ checked AS (
 ),
 slot_rows AS (
   SELECT list_filter([
-    {b: 'R', s: 'ROOT', e: (shape).root}, {b: 'R', s: 'ORDER', e: (shape)."order"}, {b: 'R', s: 'KEY', e: (shape).key},
+    {b: 'R', s: 'ROOT', e: (shape).root}, {b: 'R', s: 'ORDER', e: (shape)."order"}, {b: 'R', s: 'UNIQUE KEY', e: (shape).unique_key},
     {b: 'R', s: 'LEVEL', e: (shape).level}, {b: CASE WHEN level_basis THEN 'O' ELSE 'R' END, s: 'PARENT', e: (shape).parent},
     {b: 'R', s: 'SIBLING_ORDER', e: (shape).sibling_order},
-    {b: 'S', s: 'TYPE', e: (shape).semantic.type}, {b: 'S', s: 'ID', e: (shape).semantic.id}, {b: 'S', s: 'CLASSES', e: (shape).semantic.classes},
+    {b: 'S', s: 'TYPE', e: (shape).semantic.type}, {b: 'S', s: 'KEY', e: (shape).semantic.key}, {b: 'S', s: 'TAGS', e: (shape).semantic.tags},
     {b: 'S', s: 'ATTR', e: attr_text}, {b: 'S', s: 'ATTR_MAP', e: (shape).semantic.attr_map},
     {b: 'S', s: 'ELEMENT', e: (shape).semantic.element}, {b: 'S', s: 'PSEUDO_ARGS', e: (shape).semantic.pseudo_args},
     {b: 'O', s: 'SIZE', e: (shape).size}, {b: 'O', s: 'CHILDREN', e: (shape).children}, {b: 'O', s: 'NEXT', e: (shape).next}
@@ -243,8 +243,8 @@ built AS (
    -- The parent basis's two, in this order and both ahead of everything that evaluates proj_sql:
    -- a repeated KEY multiplies or collapses the walk, so the reach check run first would report
    -- that as unreachable rows and name the wrong defect.
-   CASE WHEN abstract THEN NULL ELSE tree_compile_key_check(key_unique_expr, (shape).root, source, sch || '.' || nm) END AS s_key,
-   CASE WHEN abstract THEN NULL ELSE tree_compile_reach_check(key_expr, (shape).root, source, '(' || proj_sql || ')', sch || '.' || nm, attr_text) END AS s_reach,
+   CASE WHEN abstract THEN NULL ELSE tree_compile_unique_key_check(unique_key_expr, (shape).root, source, sch || '.' || nm) END AS s_key,
+   CASE WHEN abstract THEN NULL ELSE tree_compile_reach_check(reach_key_expr, (shape).root, source, '(' || proj_sql || ')', sch || '.' || nm, attr_text) END AS s_reach,
    CASE WHEN abstract THEN NULL ELSE tree_sql_shadow_check('(' || proj_sql || ')', 'tree_ddl_create') END AS s_shadow,
    CASE WHEN abstract THEN NULL ELSE tree_compile_p13('(' || proj_sql || ')', sch || '.' || nm, (shape).root IS NOT NULL, (shape).level) END AS s_p13,
    -- O conformance (M3 §3.1), after P13 so a malformed level is reported as that rather than as
@@ -283,7 +283,7 @@ CREATE OR REPLACE MACRO tree_compile_drop(sch, nm) AS (
     ELSE ['BEGIN TRANSACTION',
     'DELETE FROM tree_catalog.trees WHERE database_name = current_database() AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
     'DELETE FROM tree_catalog.slots WHERE database_name = current_database() AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
-    'DELETE FROM tree_catalog.pseudo_classes WHERE database_name = current_database() AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
+    'DELETE FROM tree_catalog.predicates WHERE database_name = current_database() AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
     'DELETE FROM tree_catalog.compiled WHERE database_name = current_database() AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
     'DELETE FROM tree_state.partitions WHERE database_name = current_database() AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
     'DELETE FROM tree_state.assertions WHERE database_name = current_database() AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
@@ -319,14 +319,14 @@ ex AS (SELECT *, tree_expand_pseudo(semantic) AS sem,
        FROM t),
 n AS (
   SELECT *,
-    {root: (old_shape).root, "order": (old_shape)."order", key: (old_shape).key, level: (old_shape).level, parent: (old_shape).parent, sibling_order: (old_shape).sibling_order,
+    {root: (old_shape).root, "order": (old_shape)."order", unique_key: (old_shape).unique_key, level: (old_shape).level, parent: (old_shape).parent, sibling_order: (old_shape).sibling_order,
      size: (old_shape).size, children: (old_shape).children, next: (old_shape).next, semantic: sem}::TREE_SHAPE AS shape,
     COALESCE((sem).attr, (old_shape).semantic.attr, CASE WHEN is_abstract THEN '' ELSE '*' END) AS attr_text,
-    -- see create's key_expr: NULL in the level basis, which NULL-gates the reach check. Uniqueness
+    -- see create's reach_key_expr: NULL in the level basis, which NULL-gates the reach check. Uniqueness
     -- is gated on the declaration instead, so altering a tree re-verifies a KEY on either basis.
     -- Alter never touches R, so the basis is the one the stored shape already carries.
-    CASE WHEN (old_shape).level IS NOT NULL OR (old_shape).parent IS NULL THEN NULL ELSE (old_shape).key END AS key_expr,
-    (old_shape).key AS key_unique_expr,
+    CASE WHEN (old_shape).level IS NOT NULL OR (old_shape).parent IS NULL THEN NULL ELSE (old_shape).unique_key END AS reach_key_expr,
+    (old_shape).unique_key AS unique_key_expr,
     -- Whether the tree has an S GROUP after this alter, which is what tree_match reads to decide
     -- whether an S clause may be asked for. The same predicate create reads (tree_semantic_declares,
     -- sql/00_types.sql), asked of THIS ALTER'S semantic and nothing else.
@@ -350,7 +350,7 @@ c AS (
     tree_sql_check_prefixes(semantic, 'tree_ddl_alter')
       AND tree_sql_check_semantic(sem, attr_text, 'tree_ddl_alter') AS ok,
     list_filter([
-      {b: 'S', s: 'TYPE', e: (sem).type}, {b: 'S', s: 'ID', e: (sem).id}, {b: 'S', s: 'CLASSES', e: (sem).classes},
+      {b: 'S', s: 'TYPE', e: (sem).type}, {b: 'S', s: 'KEY', e: (sem).key}, {b: 'S', s: 'TAGS', e: (sem).tags},
       {b: 'S', s: 'ATTR', e: attr_text}, {b: 'S', s: 'ATTR_MAP', e: (sem).attr_map},
       {b: 'S', s: 'ELEMENT', e: (sem).element}, {b: 'S', s: 'PSEUDO_ARGS', e: (sem).pseudo_args}], lambda x: (x).e IS NOT NULL) AS rows
   FROM n
@@ -375,8 +375,8 @@ SELECT CASE WHEN semantic IS NULL THEN tree_err('tree_ddl_alter: semantic is NUL
    CASE WHEN is_abstract THEN NULL ELSE tree_compile_order_check((old_shape)."order", (old_shape).root, source_sql, sch || '.' || nm) END,
    -- ahead of the drift checks for the same reason the order check is: both evaluate proj_sql, and
    -- a source whose KEY repeats walks to the wrong number of rows, which would be reported as drift
-   CASE WHEN is_abstract THEN NULL ELSE tree_compile_key_check(key_unique_expr, (old_shape).root, source_sql, sch || '.' || nm) END,
-   CASE WHEN is_abstract THEN NULL ELSE tree_compile_reach_check(key_expr, (old_shape).root, source_sql, '(' || proj_sql || ')', sch || '.' || nm, attr_text) END,
+   CASE WHEN is_abstract THEN NULL ELSE tree_compile_unique_key_check(unique_key_expr, (old_shape).root, source_sql, sch || '.' || nm) END,
+   CASE WHEN is_abstract THEN NULL ELSE tree_compile_reach_check(reach_key_expr, (old_shape).root, source_sql, '(' || proj_sql || ')', sch || '.' || nm, attr_text) END,
    CASE WHEN is_abstract OR storage <> 'materialized' THEN NULL ELSE
    'SELECT CASE WHEN count(*) > 0 THEN error(''tree_ddl_alter: tree ' || replace(sch || '.' || nm, '''', '''''')
      || ' holds '' || count(*) || '' partition(s) ingested after create; altering would drop them. tree_delete them or re-ingest with tree_replace after altering'') END'
@@ -397,7 +397,7 @@ SELECT CASE WHEN semantic IS NULL THEN tree_err('tree_ddl_alter: semantic is NUL
    CASE WHEN is_abstract OR storage <> 'materialized' THEN NULL
         ELSE tree_compile_o_conformance(shape, '(' || proj_sql || ')', sch || '.' || nm, tree_sql_o_order_col(shape, attr_text), attr_text) END,
    'DELETE FROM tree_catalog.slots WHERE database_name = ' || tree_sql_lit(db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm) || ' AND block = ''S''',
-   'DELETE FROM tree_catalog.pseudo_classes WHERE database_name = ' || tree_sql_lit(db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
+   'DELETE FROM tree_catalog.predicates WHERE database_name = ' || tree_sql_lit(db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
    'INSERT INTO tree_catalog.slots VALUES ' || list_aggregate(list_transform(rows, lambda x:
        '(' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ' || tree_sql_lit((x).b) || ', ' || tree_sql_lit((x).s) || ', ' || tree_sql_lit((x).e) || ')'), 'string_agg', ', '),
    tree_sql_pseudo_insert(db, sch, nm, (sem).pseudo, explicit_sel_prefix),
@@ -421,10 +421,10 @@ CREATE OR REPLACE MACRO tree_apply(shape, source) AS TABLE
   FROM query(tree_compile_projection(shape, source, '*'));
 
 -- Classes are data: enumerate them per tree.
--- 1.5.5 note: `SELECT unnest(_classes) ... GROUP BY ALL` fails ("Cannot group on an
+-- 1.5.5 note: `SELECT unnest(_tags) ... GROUP BY ALL` fails ("Cannot group on an
 -- UNNEST or UNLIST clause") because DuckDB won't group on an UNNEST expression in the
 -- select list. Unnesting in the FROM clause instead (a lateral UNNEST(...) AS u(class))
 -- produces a plain column that GROUP BY ALL can group on; the compiled result is the
 -- same set of (class, row_count) pairs the brief's version intended.
-CREATE OR REPLACE MACRO tree_catalog_classes(sch, nm) AS TABLE
-  SELECT class, count(*) AS row_count FROM tree_project(sch, nm), UNNEST(_classes) AS u(class) WHERE _classes IS NOT NULL GROUP BY ALL ORDER BY class;
+CREATE OR REPLACE MACRO tree_catalog_tags(sch, nm) AS TABLE
+  SELECT class, count(*) AS row_count FROM tree_project(sch, nm), UNNEST(_tags) AS u(class) WHERE _tags IS NOT NULL GROUP BY ALL ORDER BY class;

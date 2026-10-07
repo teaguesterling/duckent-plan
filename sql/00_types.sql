@@ -1,10 +1,10 @@
 -- sql/00_types.sql
 CREATE TYPE TREE_SEMANTIC AS STRUCT(
-  type VARCHAR, id VARCHAR, classes VARCHAR, attr VARCHAR, attr_map VARCHAR, element VARCHAR, pseudo_args VARCHAR,
+  type VARCHAR, key VARCHAR, tags VARCHAR, attr VARCHAR, attr_map VARCHAR, element VARCHAR, pseudo_args VARCHAR,
   pseudo STRUCT(name VARCHAR, body VARCHAR, macro VARCHAR, args VARCHAR, prefix VARCHAR)[]);
 
 CREATE TYPE TREE_SHAPE AS STRUCT(
-  root VARCHAR, "order" VARCHAR, key VARCHAR, level VARCHAR, parent VARCHAR, sibling_order VARCHAR,
+  root VARCHAR, "order" VARCHAR, unique_key VARCHAR, level VARCHAR, parent VARCHAR, sibling_order VARCHAR,
   size VARCHAR, children VARCHAR, next VARCHAR,
   semantic TREE_SEMANTIC);
 
@@ -45,9 +45,9 @@ CREATE OR REPLACE MACRO tree_err(msg) AS
 
 -- pseudo: a list of any of {name, body} | {name, macro, args} | {prefix, args}; pseudo_map: MAP of name -> macro
 -- with pseudo_args shared by every entry; the constructor flattens the map into the list.
-CREATE OR REPLACE MACRO tree_semantic(type := NULL, id := NULL, classes := NULL, attr := NULL, attr_map := NULL, element := NULL,
+CREATE OR REPLACE MACRO tree_semantic(type := NULL, key := NULL, tags := NULL, attr := NULL, attr_map := NULL, element := NULL,
                                       pseudo := NULL, pseudo_map := NULL, pseudo_args := NULL) AS
-  {type: type, id: id, classes: classes, attr: attr, attr_map: attr_map, element: element, pseudo_args: pseudo_args,
+  {type: type, key: key, tags: tags, attr: attr, attr_map: attr_map, element: element, pseudo_args: pseudo_args,
    pseudo: CASE WHEN pseudo IS NULL AND pseudo_map IS NULL THEN NULL ELSE list_concat(
      COALESCE(pseudo::STRUCT(name VARCHAR, body VARCHAR, macro VARCHAR, args VARCHAR, prefix VARCHAR)[], []),
      CASE WHEN pseudo_map IS NULL THEN [] ELSE list_transform(map_entries(pseudo_map),
@@ -108,7 +108,7 @@ shared AS (
                    ), []) AS extra
   FROM lp
 )
-SELECT {type: (sem).type, id: (sem).id, classes: (sem).classes, attr: (sem).attr, attr_map: (sem).attr_map, element: (sem).element, pseudo_args: (sem).pseudo_args,
+SELECT {type: (sem).type, key: (sem).key, tags: (sem).tags, attr: (sem).attr, attr_map: (sem).attr_map, element: (sem).element, pseudo_args: (sem).pseudo_args,
   pseudo: CASE WHEN (sem).pseudo IS NULL AND (sem).pseudo_args IS NULL THEN NULL ELSE list_concat(lp.bound, shared.extra) END
 }::TREE_SEMANTIC
 FROM lp, shared);
@@ -132,7 +132,7 @@ FROM lp, shared);
 -- make every child S-ful. Never NULL, whatever it is handed -- every term is an IS NOT NULL
 -- predicate or a length test -- so a caller may concatenate the result into generated SQL.
 CREATE OR REPLACE MACRO tree_semantic_declares(sem) AS
-  (sem).type IS NOT NULL OR (sem).id IS NOT NULL OR (sem).classes IS NOT NULL
+  (sem).type IS NOT NULL OR (sem).key IS NOT NULL OR (sem).tags IS NOT NULL
     OR (sem).attr_map IS NOT NULL OR (sem).element IS NOT NULL
     OR len(COALESCE((sem).pseudo, [])) > 0 OR (sem).pseudo_args IS NOT NULL;
 
@@ -143,9 +143,9 @@ CREATE OR REPLACE MACRO tree_sql_literal_type(arg) AS
        WHEN lower(trim(arg)) IN ('true', 'false') THEN 'BOOLEAN'
        ELSE NULL END;
 
-CREATE OR REPLACE MACRO tree_shape(root := NULL, "order" := NULL, key := NULL, level := NULL, parent := NULL, sibling_order := NULL,
+CREATE OR REPLACE MACRO tree_shape(root := NULL, "order" := NULL, unique_key := NULL, level := NULL, parent := NULL, sibling_order := NULL,
                                    size := NULL, children := NULL, next := NULL, semantic := NULL) AS
-  {root: root, "order": "order", key: key, level: level, parent: parent, sibling_order: sibling_order,
+  {root: root, "order": "order", unique_key: unique_key, level: level, parent: parent, sibling_order: sibling_order,
    size: size, children: children, next: next, semantic: semantic}::TREE_SHAPE;
 
 CREATE OR REPLACE MACRO tree_spec(shape, abstract := false, "like" := NULL, source := NULL, storage := 'materialized') AS
@@ -188,7 +188,7 @@ CREATE OR REPLACE MACRO tree_sql_check_semantic(sem, attr_text, verb) AS
     WHEN regexp_matches(COALESCE(attr_text, ''), '(?i)\bAS\s+"?_')
       THEN tree_err(verb || ': ATTR alias collides with the canonical prefix: ' || regexp_extract(attr_text, '(?i)\bAS\s+("?_[A-Za-z0-9_]*)', 1))
     -- A NULL name, or a body with no macro to derive one from, would compile the pseudo map
-    -- and the pseudo_classes INSERT to NULL; both would then be dropped from the statement
+    -- and the predicates INSERT to NULL; both would then be dropped from the statement
     -- list instead of refusing. A macro-bound entry passes with a NULL body because the DDL
     -- compilers run tree_expand_pseudo first, which fills the body in from macro(args);
     -- prefix entries are exempt entirely -- expansion is what gives them their names.
@@ -204,7 +204,7 @@ CREATE OR REPLACE MACRO tree_sql_check_semantic(sem, attr_text, verb) AS
 -- it with NOTHING -- so by the time tree_sql_check_semantic sees the group, a prefix that bound
 -- no macro is indistinguishable from one that was never written. The tree was created with an
 -- empty PSEUDO block and every `:name` its author meant to mint was an unknown pseudo-class
--- compiling to false, silently: `{prefix: 'sel_ats_'}` read as "this tree has no pseudo-classes"
+-- compiling to false, silently: `{prefix: 'sel_ats_'}` read as "this tree has no predicates"
 -- rather than as a misspelling of `sel_ast_`.
 --
 -- Only a freshly declared entry ({prefix, args} with no name) is a prefix declaration; a
@@ -220,7 +220,7 @@ CREATE OR REPLACE MACRO tree_sql_check_prefixes(sem, verb) AS (
                WHERE NOT EXISTS (SELECT 1 FROM m WHERE starts_with(m.function_name, (px.p).prefix))),
        -- The IMPLICIT shared tier needs the same check. PSEUDO_ARGS switches on every macro under
        -- tree_shared_pseudo_prefix(), so it makes exactly the claim an explicit prefix entry makes
-       -- -- that there are pseudo-classes to bind -- and it was the one spelling that bypassed
+       -- -- that there are predicates to bind -- and it was the one spelling that bypassed
        -- this. Unchecked, it bound none while tree_semantic_declares still counted it as an S
        -- group, so has_semantic went true and tree_match's S-less refusal stopped firing: a TYPE
        -- clause compiled against TYPE's 'node' default and returned zero rows where a refusal was

@@ -76,7 +76,7 @@ CALL tree_ddl_create('main', 'shadow', tree_spec(tree_shape(root := 'file_path',
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 query III rowsort
-SELECT name, origin, body FROM tree_catalog_pseudo_classes() WHERE tree_name = 'shadow';
+SELECT name, origin, body FROM tree_catalog_predicates() WHERE tree_name = 'shadow';
 ----
 busy	local	children_count > 2
 leaf	prefix	sel_ast_leaf(descendant_count)
@@ -98,7 +98,7 @@ CALL tree_ddl_create('main', 'shared', tree_spec(tree_shape(root := 'file_path',
 # the full row set, not a name filter: at this point sel_leaf, sel_ast_leaf and sel_deep are all
 # live, 'shared' declares no local or prefix pseudo of its own, so all three bind as shared
 query III rowsort
-SELECT name, origin, body FROM tree_catalog_pseudo_classes() WHERE tree_name = 'shared';
+SELECT name, origin, body FROM tree_catalog_predicates() WHERE tree_name = 'shared';
 ----
 ast_leaf	shared	sel_ast_leaf(descendant_count)
 deep	shared	sel_deep(descendant_count)
@@ -130,7 +130,7 @@ statement ok
 CALL tree_ddl_create('main', 'shadow_like', tree_spec(tree_shape(), "like" := 'shadow', source := 'read_parquet(''test/data/app.parquet'')'));
 
 query III rowsort
-SELECT name, origin, body FROM tree_catalog_pseudo_classes() WHERE tree_name = 'shadow_like';
+SELECT name, origin, body FROM tree_catalog_predicates() WHERE tree_name = 'shadow_like';
 ----
 busy	local	children_count > 2
 deep	shared	sel_deep(descendant_count)
@@ -149,13 +149,13 @@ CALL tree_ddl_alter('main', 'altpseudo', tree_semantic(type := 'type', pseudo_ar
 query III
 SELECT (SELECT expression FROM tree_catalog_slots() WHERE tree_name = 'altpseudo' AND slot = 'PSEUDO_ARGS'),
        has_semantic,
-       (SELECT count(*) FROM tree_catalog_pseudo_classes() WHERE tree_name = 'altpseudo' AND origin = 'shared')
+       (SELECT count(*) FROM tree_catalog_predicates() WHERE tree_name = 'altpseudo' AND origin = 'shared')
 FROM tree_catalog_trees() WHERE tree_name = 'altpseudo';
 ----
 descendant_count	true	3
 
 query II rowsort
-SELECT name, origin FROM tree_catalog_pseudo_classes() WHERE tree_name = 'altpseudo';
+SELECT name, origin FROM tree_catalog_predicates() WHERE tree_name = 'altpseudo';
 ----
 ast_leaf	shared
 deep	shared
@@ -244,6 +244,6 @@ CALL tree_ddl_create('main', 'okpfx', tree_spec(tree_shape(root := 'file_path', 
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 query II
-SELECT name, origin FROM tree_catalog_pseudo_classes() WHERE tree_name = 'okpfx' AND origin = 'prefix';
+SELECT name, origin FROM tree_catalog_predicates() WHERE tree_name = 'okpfx' AND origin = 'prefix';
 ----
 leaf	prefix

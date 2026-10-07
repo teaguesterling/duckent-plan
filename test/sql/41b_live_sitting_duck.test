@@ -29,14 +29,14 @@ CREATE TABLE sd_scripts AS SELECT * REPLACE (regexp_replace(file_path, '.*/', ''
 statement ok
 CALL tree_ddl_create('main', 'scripts', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
-  semantic := tree_semantic(type := 'type', id := 'name', classes := 'css_classes',
+  semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
     element := 'is_element', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/scripts.parquet'')'));
 
 statement ok
 CALL tree_ddl_create('main', 'py_variety', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
-  semantic := tree_semantic(type := 'type', id := 'name', classes := 'css_classes',
+  semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
     element := 'is_element', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/py_variety.parquet'')'));
 

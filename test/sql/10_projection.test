@@ -22,9 +22,9 @@ SELECT count(*) FILTER (WHERE _children <> children_count), count(*) FILTER (WHE
 query IIII
 WITH p AS (FROM query(tree_compile_projection(
   tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', parent := 'parent_id', size := 'descendant_count', children := 'children_count',
-             semantic := tree_semantic(type := 'type', id := 'name', pseudo := [{name: 'leaf', body: 'descendant_count = 0'}])),
+             semantic := tree_semantic(type := 'type', key := 'name', pseudo := [{name: 'leaf', body: 'descendant_count = 0'}])),
   'read_parquet(''test/data/app.parquet'')', 'name, start_line')))
-SELECT _type, _id, _pseudo['leaf'], start_line FROM p WHERE _pre = 6;
+SELECT _type, _key, _pseudo['leaf'], start_line FROM p WHERE _pre = 6;
 ----
 function_definition	greet	false	4
 
@@ -64,9 +64,9 @@ FROM p;
 
 # parent basis: encoder yields pre-order by sibling key, level from depth of chain
 query IIII
-WITH p AS (FROM query(tree_compile_projection(tree_shape(key := 'email', parent := 'manager_email', sibling_order := 'hire_date',
-             semantic := tree_semantic(type := 'role', id := 'email')), 'read_csv(''test/data/employees.csv'')', '*')))
-SELECT _pre, _level, _id, _parent FROM p ORDER BY _pre LIMIT 4;
+WITH p AS (FROM query(tree_compile_projection(tree_shape(unique_key := 'email', parent := 'manager_email', sibling_order := 'hire_date',
+             semantic := tree_semantic(type := 'role', key := 'email')), 'read_csv(''test/data/employees.csv'')', '*')))
+SELECT _pre, _level, _key, _parent FROM p ORDER BY _pre LIMIT 4;
 ----
 0	0	ada@co	NULL
 1	1	cy@co	0
@@ -75,7 +75,7 @@ SELECT _pre, _level, _id, _parent FROM p ORDER BY _pre LIMIT 4;
 
 # parent basis sizes: cto has 6 descendants, bo has 2
 query II
-WITH p AS (FROM query(tree_compile_projection(tree_shape(key := 'email', parent := 'manager_email', sibling_order := 'hire_date'), 'read_csv(''test/data/employees.csv'')', '*')))
+WITH p AS (FROM query(tree_compile_projection(tree_shape(unique_key := 'email', parent := 'manager_email', sibling_order := 'hire_date'), 'read_csv(''test/data/employees.csv'')', '*')))
 SELECT (SELECT _size FROM p WHERE email = 'ada@co'), (SELECT _size FROM p WHERE email = 'bo@co');
 ----
 6	2
@@ -176,7 +176,7 @@ CREATE TABLE knext AS SELECT * FROM (VALUES
   (10, NULL, 30), (20, 10, 40), (30, 10, NULL), (40, 20, 10)) v(k, par, nxt);
 
 query IIII
-WITH p AS (FROM query(tree_compile_projection(tree_shape(key := 'k', parent := 'par', next := 'nxt'), 'knext', '*')))
+WITH p AS (FROM query(tree_compile_projection(tree_shape(unique_key := 'k', parent := 'par', next := 'nxt'), 'knext', '*')))
 SELECT list(k ORDER BY _pre), list(_next ORDER BY _pre), list(_size ORDER BY _pre),
        list(_children ORDER BY _pre) FROM p;
 ----
@@ -192,10 +192,10 @@ SELECT list(k ORDER BY _pre), list(_next ORDER BY _pre), list(_size ORDER BY _pr
 # gate non-empty either way, so only the clause itself can drop __key.
 query II
 SELECT (SELECT count(*) FROM (DESCRIBE FROM query(tree_compile_projection(
-          tree_shape(key := 'k', parent := 'par'), 'knext', '*')))
+          tree_shape(unique_key := 'k', parent := 'par'), 'knext', '*')))
         WHERE column_name LIKE '\_\_%' ESCAPE '\'),
        (SELECT count(*) FROM (DESCRIBE FROM query(tree_compile_projection(
-          tree_shape(key := 'k', parent := 'par', next := 'nxt'), 'knext', '*')))
+          tree_shape(unique_key := 'k', parent := 'par', next := 'nxt'), 'knext', '*')))
         WHERE column_name LIKE '\_\_%' ESCAPE '\');
 ----
 0	0

@@ -7,7 +7,7 @@ CREATE OR REPLACE MACRO tree_sql_root(root_csv, qual) AS
        ELSE '{' || list_aggregate(list_transform(tree_sql_list(root_csv),
               lambda x, i: (CASE WHEN tree_sql_is_ident(x) THEN x ELSE 'r' || i END) || ': ' || qual || x), 'string_agg', ', ') || '}' END;
 
--- MAP(VARCHAR, BOOLEAN) of expression-bodied pseudo-classes.
+-- MAP(VARCHAR, BOOLEAN) of expression-bodied predicates.
 -- 1.5.5 note: every struct dot-access (the "sem" parameter and the lambda-bound "p")
 -- must be parenthesized -- (sem).pseudo, (p).name -- when this macro is ultimately
 -- inlined into a table function argument (query(tree_compile_projection(...))). Left
@@ -27,8 +27,8 @@ CREATE OR REPLACE MACRO tree_sql_pseudo_map(sem) AS
 -- predicate defaulting to true, NULL-definite like every other filter in the language.
 -- MN21 mutates the TYPE default here.
 CREATE OR REPLACE MACRO tree_sql_sem_cols(sem) AS
-  COALESCE((sem).type, '''node''') || ' AS _type, ' || COALESCE((sem).id, 'NULL::VARCHAR') || ' AS _id, '
-  || COALESCE((sem).classes, 'NULL::VARCHAR[]') || ' AS _classes, '
+  COALESCE((sem).type, '''node''') || ' AS _type, ' || COALESCE((sem).key, 'NULL::VARCHAR') || ' AS _key, '
+  || COALESCE((sem).tags, 'NULL::VARCHAR[]') || ' AS _tags, '
   || CASE WHEN (sem).attr_map IS NULL THEN 'NULL::MAP(VARCHAR, VARCHAR)' ELSE 'CAST(' || (sem).attr_map || ' AS MAP(VARCHAR, VARCHAR))' END || ' AS _attr_map, '
   || 'COALESCE(' || COALESCE((sem).element, 'true') || ', false) AS _element, '
   || tree_sql_pseudo_map(sem) || ' AS _pseudo';
@@ -134,22 +134,22 @@ CREATE OR REPLACE MACRO tree_compile_projection(shape, source, attr_text) AS (
              ELSE tree_sql_parent_join() END
    ELSE
      'WITH RECURSIVE __src AS (SELECT * FROM ' || source || '), '
-     || '__walk USING KEY (__key, _root) AS (SELECT ' || tree_sql_root((shape).root, '') || ' AS _root, ' || (shape).key || ' AS __key, 0 AS _level, '
-     || '[row_number() OVER (PARTITION BY ' || tree_sql_root((shape).root, '') || ' ORDER BY ' || COALESCE((shape).sibling_order || ', ', '') || (shape).key || ' ' || tree_sql_encoder_tiebreak() || ')] AS __path '
+     || '__walk USING KEY (__key, _root) AS (SELECT ' || tree_sql_root((shape).root, '') || ' AS _root, ' || (shape).unique_key || ' AS __key, 0 AS _level, '
+     || '[row_number() OVER (PARTITION BY ' || tree_sql_root((shape).root, '') || ' ORDER BY ' || COALESCE((shape).sibling_order || ', ', '') || (shape).unique_key || ' ' || tree_sql_encoder_tiebreak() || ')] AS __path '
      || 'FROM __src WHERE ' || (shape).parent || ' IS NULL '
-     || 'UNION ALL SELECT ' || tree_sql_root((shape).root, 'c.') || ' AS _root, c.' || (shape).key || ', w._level + 1, '
+     || 'UNION ALL SELECT ' || tree_sql_root((shape).root, 'c.') || ' AS _root, c.' || (shape).unique_key || ', w._level + 1, '
      || 'w.__path || [row_number() OVER (PARTITION BY c.' || (shape).parent || ' ORDER BY '
      || COALESCE(list_aggregate(list_transform(tree_sql_list((shape).sibling_order), lambda x: 'c.' || x), 'string_agg', ', ') || ', ', '')
-     || 'c.' || (shape).key || ' ' || tree_sql_encoder_tiebreak() || ')] '
+     || 'c.' || (shape).unique_key || ' ' || tree_sql_encoder_tiebreak() || ')] '
      || 'FROM __src c JOIN __walk w ON c.' || (shape).parent || ' = w.__key AND ' || tree_sql_root((shape).root, 'c.') || ' = w._root), '
      || '__r0 AS (SELECT ' || (CASE WHEN attr_text = '' THEN '' WHEN attr_text = '*' THEN 's.*, ' ELSE attr_text || ', ' END)
      || 'w._root, CAST(row_number() OVER (PARTITION BY w._root ORDER BY w.__path) - 1 AS BIGINT) AS _pre, '
-     || 'CAST(w._level AS BIGINT) AS _level, s.' || (shape).key || ' AS __key, s.' || (shape).parent || ' AS __pkey, '
+     || 'CAST(w._level AS BIGINT) AS _level, s.' || (shape).unique_key || ' AS __key, s.' || (shape).parent || ' AS __pkey, '
      || tree_sql_sem_cols((shape).semantic)
      || (CASE WHEN (shape).size IS NOT NULL THEN ', s.' || (shape).size || ' AS __size_raw' ELSE '' END)
      || (CASE WHEN (shape).children IS NOT NULL THEN ', s.' || (shape).children || ' AS __children_raw' ELSE '' END)
      || (CASE WHEN (shape).next IS NOT NULL THEN ', s.' || (shape).next || ' AS __next_raw' ELSE '' END)
-     || ' FROM __src s JOIN __walk w ON s.' || (shape).key || ' = w.__key AND ' || tree_sql_root((shape).root, 's.') || ' = w._root), '
+     || ' FROM __src s JOIN __walk w ON s.' || (shape).unique_key || ' = w.__key AND ' || tree_sql_root((shape).root, 's.') || ' = w._root), '
      -- __key SURVIVES this stage (only __pkey is dropped): a declared NEXT in this basis is a
      -- value in KEY space, and __c translates it by joining __s on the key. It is EXCLUDEd from
      -- the FINAL select instead, where __order is excluded in the level basis.
