@@ -185,10 +185,35 @@ A ROOT partition with several level-0 rows is **not** refused. The handover allo
 
 Profiled on the corpus suites (2026-09-15): a 40_corpus record spends 67–107 ms in `tree_compile_match`, 29–59 ms in the printer and 2–10 ms executing the match; a `tree_steps` literal costs 28 ms. The suites are slow because DuckDB binds very large macro expansions, not because of the derivation or the joins. The C++ port removes this cost; M3 records the numbers and does not chase them (no compiled-selector cache: it would be state consulted by matching).
 
+*(amended 2026-10-07)* **In projection mode, declaring O is the optimisation, and it is worth 2.6×.** A projection-mode tree derives its O columns on every query, whether or not the selector reads one — a TYPE-only selector costs the same as a descendant selector, because the derivation runs either way. Measured on app.parquet, warmed, median of 13:
+
+| declared | projection body | TYPE-only |
+|---|---|---|
+| nothing (derive all) | 1656 chars | **17.65 ms** |
+| PARENT | 1679 | 12.99 ms |
+| SIZE | 1199 | 11.23 ms |
+| PARENT + SIZE | 1222 | 8.60 ms |
+| all three | 1088 | **6.78 ms** |
+| *(materialized, derive all)* | — | *0.95 ms* |
+
+Derive-parent ≈ 4.7 ms, derive-size ≈ 6.4 ms, derive-children ≈ 1.8 ms, and the overhead is near-constant in row count (22.1 ms on 54 rows, 31.1 ms on 14,265) — it is bind cost, as above. Note PARENT makes the body *longer* while being faster, so cost tracks the ASOF and window machinery rather than expansion size.
+
+There is no per-query prune to be had: the projection is a stored per-tree macro, identical for every query, and the match references it by name. Measured twice — narrowing the `__proj` CTE and the `EXCLUDE` list together leaves the plan and the time unchanged, because DuckDB does not push column pruning through the macro body's ASOF joins; and removing an unused CTE changes nothing either, because DuckDB already eliminates unreferenced CTEs. Pruning per query would mean two stored bodies per tree (full and lean, the match picking by name), which is the only route that works and is held until a tree that *cannot* declare O actually hurts.
+
+So the guidance is simply: **a projection-mode tree should declare the O columns its source has.** That is O doing exactly what this contract says it is for — cost only, never results — and for such a tree the derivation cost is the price of not declaring them.
+
 ## 9. Scope
 
-**In:** §2–§7. **Out:** planner-side use of O and the EXPLAIN-shape benchmark (C++ port); attachments and loaders (W); M-LANG (TREEQL text, D-N20 parameterized pseudo-classes); compile-cost caching.
+**In:** §2–§7. **Out:** planner-side use of O and the EXPLAIN-shape benchmark (C++ port); attachments and loaders (W); M-LANG (TREEQL text, D-N20 parameterized pseudo-classes); compile-cost caching; **an O5° `previous_sibling` override** *(added 2026-10-07)*.
+
+*(2026-10-07)* **On O5°.** The cost asymmetry between the two sibling directions is real and is recorded here rather than acted on. `tree_sql_next_sibling` is arithmetic on the subject's own row — `b._pre = a._pre + a._size + 1`, O(1), no lookup — while `tree_sql_prev_sibling` is keyed on the *candidate's* size, `a._pre = b._pre + b._size + 1`, which the subject cannot compute because it does not know how large the row before it is. So of the two, O4 `next_sibling` earns an override least and a `previous_sibling` would earn one most, which inverts how the slots are currently spent. The mechanism exists already: under a declared ELEMENT the projection computes `__prev_el`, and an O5° would let a vocabulary supply what that computes.
+
+It is deferred rather than added because adding a contract slot now would create a declared surface no vocabulary supplies and no fixture exercises — the defect class closed on 2026-10-06, where five declarations were recorded in the catalog and never verified. It belongs with the planner-side O work this section already defers, and with the composable vocabularies (filesystem, directory services) that would actually carry a previous pointer. Note the asymmetry is conditional on dense ranking: under a sparse key with stored interval bounds, `pre + size + 1` stops being the next sibling and both directions become lookups.
 
 ## 10. Open decisions carried
+
+*(2026-10-07)* **D-N24, how a W1 attachment composes two trees.** Recorded now because the measurements are in hand, with nothing to implement until attachments exist. The composite is a DERIVED relation: the child's LEVEL is offset by `level(d) + 1` and the composite's PRE is a re-rank over the union, with the constituents untouched — required by P18, since mutating a parent's stored SIZE would move a within-parent answer. Per column the composite differs on all of C for LEVEL, on `d` and its ancestors for SIZE, on `d` alone for CHILDREN, and on all of C plus every parent row after d's subtree for PRE.
+
+**Dense ranking is kept.** An earlier draft proposed a sparse or fractional key with stored interval bounds to avoid the PRE shift; that trade is worse. Counting rows overstates the cost — shifting PRE is one BIGINT column, one vectorized add over a contiguous range, no other column touched — while a sparse key costs the gap-free guarantee every O(1) form rests on and turns NEXT into a lookup. Projection-mode composition is free in the sense that PRE is already a per-query window (`02_projection.sql`), so composing is a union before the window; materialized trees pay the shift. Two DDL-time checks fall out and are specified but unbuilt, having nothing to guard yet: `order_source = 'frozen'` and splice participation are contradictory, since a frozen order cannot be re-ranked; and attaching must re-run O conformance on the parent, because an attachment changes what *conforming* means for it.
 
 D-N9, D-N10, D-N13, D-N15, D-N16, D-N19, D-N20 unchanged. New: **D-N21** whether projection-mode trees should run conformance at create as P13 does (M3 runs their ORDER check and P13 at create and conformance on demand only; the asymmetry is deliberate and one line to change). **D-N22** whether duckent models a block's body (duck_blocks spec-1.4 metadata and value subtrees) or leaves it to the vocabulary. **D-N23** whether materialized trees carry a `UNIQUE INDEX` on `(_root, _pre)`. Measured on 1.5.5: `ALTER TABLE ... ADD CONSTRAINT ... UNIQUE` is unimplemented, and both storage paths are CTAS (`03_ddl.sql:230`, `:359`), which cannot declare constraints — but `CREATE UNIQUE INDEX` works after the table is built and does enforce (`Duplicate key "a: 0, b: 0" violates unique constraint`), so it costs one extra statement per materialized tree. It would not replace the ingest checks: `tree_compile_key_check` and `tree_compile_order_check` run over the SOURCE before the walk, because that is where rows multiply or collapse, and by insert time the damage is renumbered and reads as a well-formed tree. What an index adds is the guarantee no ingest check gives — protection against later direct `INSERT`/`UPDATE` into a tree's own table — at the cost of an ART index per tree and a generic constraint message in place of duckent's named diagnostics.
