@@ -23,7 +23,7 @@
 CREATE OR REPLACE MACRO tree_compile_match(sch, nm, sel, semantic := NULL, language := NULL) AS (
 WITH t AS (
   SELECT tr.profile, tr.has_semantic OR semantic IS NOT NULL AS has_semantic,
-         (SELECT list(name) FROM tree_catalog.predicates p WHERE p.database_name = current_database() AND p.schema_name = sch AND p.tree_name = nm) AS known_pseudos,
+         (SELECT list(name) FROM tree_catalog.predicates p WHERE p.database_name = current_database() AND p.schema_name = sch AND p.tree_name = nm) AS known_predicates,
          -- whether any row can be a non-element: only then must the sibling and positional
          -- fragments scan for the nearest element neighbour instead of using the O(1) pre/size form
          EXISTS (SELECT 1 FROM tree_catalog.slots s WHERE s.database_name = current_database() AND s.schema_name = sch AND s.tree_name = nm AND s.slot = 'ELEMENT')
@@ -209,7 +209,7 @@ cfg AS (SELECT (SELECT p FROM proj) AS p, (SELECT has_element FROM t) AS elem,
 n AS (
   SELECT node_id, parent_id,
          CASE WHEN kind = 'pseudo' AND NOT list_contains(tree_builtin_predicates(), value)
-                   AND NOT list_contains(COALESCE((SELECT known_pseudos FROM t), []), value)
+                   AND NOT list_contains(COALESCE((SELECT known_predicates FROM t), []), value)
                    AND (semantic IS NULL OR NOT list_contains((SELECT names FROM ovp), value)) THEN 'pseudo_unknown' ELSE kind END AS kind,
          value, op, arg, COALESCE(alias, 's' || node_id) AS alias,
          -- The S-less refusal, with the built-in positional predicates exempted: they are
