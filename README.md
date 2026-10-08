@@ -97,7 +97,10 @@ Two things named `KEY` are deliberately distinguished by that rule. The S-block 
 Planted mutants are listed in the handover document and tracked in `test/mutants/manifest.yaml`.
 All must die before a milestone closes. Twenty are planted today and all twenty die; the
 remaining ids are deferred or reserved — the W block, the retired host-escape number, and one that
-waits on the selector-language work. A surviving mutant
+waits on the selector-language work. "Deferred" is not "undecided": W's four (MN9, MN10, MN11, MN16)
+are each specified against a named gate — P18, P19, P20 and the tri-state frontier — and blocked on
+machinery that does not exist yet rather than on a decision. MN10 and MN11 are *planner* mutants,
+and a prototype with one fixed compiled form cannot kill them. A surviving mutant
 is fixed by a test, never by a manifest edit, and a manifest states what a mutant does rather
 than what one hopes it does.
 
