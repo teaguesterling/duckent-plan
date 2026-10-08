@@ -5,7 +5,7 @@ statement ok
 CALL tree_ddl_create('main', 'app', tree_spec(
   tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
              semantic := tree_semantic(type := 'type', key := 'name', tags := '[CAST(semantic_type AS VARCHAR)]',
-                                       pseudo := [{name: 'leaf', body: 'descendant_count = 0'}, {name: 'def', body: '(flags & 6) = 6'}])),
+                                       predicate := [{name: 'leaf', body: 'descendant_count = 0'}, {name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 # the flagship: functions with no string anywhere in their body (the shipped-ast_select spelling), as a linear TREEQL chain is not expressible
@@ -506,7 +506,7 @@ INSERT INTO marks VALUES ('s1', 0, 0), ('§', 1, 1), ('other', 2, 1);
 
 statement ok
 CALL tree_ddl_create('main', 'marks', tree_spec(tree_shape("order" := 'node_id', level := 'depth',
-  semantic := tree_semantic(key := 'tag', pseudo := [{name: 'busy', body: 'depth > 0'}])), source := 'marks'));
+  semantic := tree_semantic(key := 'tag', predicate := [{name: 'busy', body: 'depth > 0'}])), source := 'marks'));
 
 query I rowsort
 FROM tree_match('main', 'marks', tree_steps([{"where": 'tag <> ''§'''}])) SELECT tag;
@@ -521,14 +521,14 @@ FROM tree_match('main', 'marks', tree_steps([{id: '§'}])) SELECT tag;
 
 # a per-query pseudo overlay adds to the catalog's pseudo-classes, it does not orphan them
 query II
-SELECT (SELECT count(*) FROM tree_match('main', 'marks', tree_steps([{pseudo: 'busy'}]), semantic := tree_semantic(pseudo := [{name: 'leaf', body: 'depth = 0'}]))),
-       (SELECT count(*) FROM tree_match('main', 'marks', tree_steps([{pseudo: 'leaf'}]), semantic := tree_semantic(pseudo := [{name: 'leaf', body: 'depth = 0'}])));
+SELECT (SELECT count(*) FROM tree_match('main', 'marks', tree_steps([{pseudo: 'busy'}]), semantic := tree_semantic(predicate := [{name: 'leaf', body: 'depth = 0'}]))),
+       (SELECT count(*) FROM tree_match('main', 'marks', tree_steps([{pseudo: 'leaf'}]), semantic := tree_semantic(predicate := [{name: 'leaf', body: 'depth = 0'}])));
 ----
 2	1
 
 # the overlay wins on a name the catalog also binds
 query I
-SELECT count(*) FROM tree_match('main', 'marks', tree_steps([{pseudo: 'busy'}]), semantic := tree_semantic(pseudo := [{name: 'busy', body: 'depth = 0'}]));
+SELECT count(*) FROM tree_match('main', 'marks', tree_steps([{pseudo: 'busy'}]), semantic := tree_semantic(predicate := [{name: 'busy', body: 'depth = 0'}]));
 ----
 1
 
@@ -563,7 +563,7 @@ cannot add attribute columns
 query I
 SELECT (tree_explain('main', 'app', tree_steps([{type: 'function_definition', "as": 'f'}, {comb: 'child', type: 'block'}]))).sql;
 ----
-WITH __proj AS (SELECT * FROM tree_catalog."proj_4_main_app"()) SELECT s3.* EXCLUDE (_root, _pre, _level, _parent, _size, _children, _next, _type, _key, _tags, _attr_map, _element, _pseudo), f AS f, 'main.app' AS _match_tree, 'treeql' AS _match_language, 0 AS _match_unknown_pseudos FROM __proj f JOIN __proj s3 ON s3._root = f._root AND s3._parent = f._pre AND (s3._type = 'block') WHERE f._type = 'function_definition'
+WITH __proj AS (SELECT * FROM tree_catalog."proj_4_main_app"()) SELECT s3.* EXCLUDE (_root, _pre, _level, _parent, _size, _children, _next, _type, _key, _tags, _attr_map, _element, _predicate), f AS f, 'main.app' AS _match_tree, 'treeql' AS _match_language, 0 AS _match_unknown_pseudos FROM __proj f JOIN __proj s3 ON s3._root = f._root AND s3._parent = f._pre AND (s3._type = 'block') WHERE f._type = 'function_definition'
 
 # Provenance: _match_language records the language the selector was WRITTEN in, which only the
 # caller knows. It is not read from tree_catalog.settings -- that row governs how the runner

@@ -18,7 +18,7 @@ CALL tree_ddl_create('main', 'rep_col', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
   semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
-    element := 'is_element', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
+    element := 'is_element', predicate := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 statement ok
@@ -26,7 +26,7 @@ CALL tree_ddl_create('main', 'rep_expr', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
   semantic := tree_semantic(type := 'lower(upper(type))', key := 'name', tags := 'css_classes',
-    element := 'is_element', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
+    element := 'is_element', predicate := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 # c01  function_definition  portable sitting_duck_supported
@@ -154,7 +154,7 @@ statement ok
 CALL tree_ddl_create('main', 'rep_pseudo', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
-  semantic := tree_semantic(type := 'type', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 statement ok
@@ -194,7 +194,7 @@ CALL tree_ddl_create('main', 'rep_class_none', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
   semantic := tree_semantic(type := 'type', tags := '[]::VARCHAR[]',
-    pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
+    predicate := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 query II
@@ -220,7 +220,7 @@ CALL tree_ddl_create('main', 'rep_elem_col', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
   semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
-    element := 'is_element', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
+    element := 'is_element', predicate := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 statement ok
@@ -228,7 +228,7 @@ CALL tree_ddl_create('main', 'rep_elem_stub', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
   semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
-    element := 'is_construct_stub(flags)', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
+    element := 'is_construct_stub(flags)', predicate := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 statement ok
@@ -236,7 +236,7 @@ CALL tree_ddl_create('main', 'rep_elem_expr', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count',
   semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
-    element := 'regexp_matches(type, ''^[a-z_]'')', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
+    element := 'regexp_matches(type, ''^[a-z_]'')', predicate := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 # c01  function_definition  portable sitting_duck_supported

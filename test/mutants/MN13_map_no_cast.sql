@@ -25,9 +25,9 @@ CREATE OR REPLACE MACRO tree_sql_clause(kind, value, op, arg, alias, attr_cols, 
     WHEN 'class'  THEN 'COALESCE(list_contains(' || alias || '._tags, ' || tree_sql_lit(value) || '), false)'
     -- The built-ins are compiled by tree_sql_builtin_pseudo, which returns NULL for every other
     -- name -- so this branch consults the one list rather than repeating it. A declared
-    -- pseudo-class is a lookup in the projection's _pseudo map.
+    -- pseudo-class is a lookup in the projection's _predicate map.
     WHEN 'pseudo' THEN COALESCE(tree_sql_builtin_pseudo(value, alias, elem),
-                                'COALESCE(' || alias || '._pseudo[' || tree_sql_lit(value) || '], false)')
+                                'COALESCE(' || alias || '._predicate[' || tree_sql_lit(value) || '], false)')
     -- An attribute resolves to a projected column first, then to ATTR MAP. The map is
     -- MAP(VARCHAR, VARCHAR), so a comparison against a number or a boolean has to cast the
     -- value ('3' > '10' is true as text); a quoted literal compares as text and needs none.

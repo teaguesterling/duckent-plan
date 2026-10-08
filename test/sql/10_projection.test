@@ -22,9 +22,9 @@ SELECT count(*) FILTER (WHERE _children <> children_count), count(*) FILTER (WHE
 query IIII
 WITH p AS (FROM query(tree_compile_projection(
   tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', parent := 'parent_id', size := 'descendant_count', children := 'children_count',
-             semantic := tree_semantic(type := 'type', key := 'name', pseudo := [{name: 'leaf', body: 'descendant_count = 0'}])),
+             semantic := tree_semantic(type := 'type', key := 'name', predicate := [{name: 'leaf', body: 'descendant_count = 0'}])),
   'read_parquet(''test/data/app.parquet'')', 'name, start_line')))
-SELECT _type, _key, _pseudo['leaf'], start_line FROM p WHERE _pre = 6;
+SELECT _type, _key, _predicate['leaf'], start_line FROM p WHERE _pre = 6;
 ----
 function_definition	greet	false	4
 

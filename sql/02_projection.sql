@@ -9,16 +9,16 @@ CREATE OR REPLACE MACRO tree_sql_root(root_csv, qual) AS
 
 -- MAP(VARCHAR, BOOLEAN) of expression-bodied predicates.
 -- 1.5.5 note: every struct dot-access (the "sem" parameter and the lambda-bound "p")
--- must be parenthesized -- (sem).pseudo, (p).name -- when this macro is ultimately
+-- must be parenthesized -- (sem).predicate, (p).name -- when this macro is ultimately
 -- inlined into a table function argument (query(tree_compile_projection(...))). Left
 -- unparenthesized, DuckDB's binder in that context silently misparses "p.name" as a
 -- table.column reference instead of a struct field access (it does not merely error;
 -- it can produce a wrong literal), so this is not just a style preference.
-CREATE OR REPLACE MACRO tree_sql_pseudo_map(sem) AS
-  CASE WHEN sem IS NULL OR (sem).pseudo IS NULL OR len(list_filter((sem).pseudo, lambda p: (p).name IS NOT NULL)) = 0
+CREATE OR REPLACE MACRO tree_sql_predicate_map(sem) AS
+  CASE WHEN sem IS NULL OR (sem).predicate IS NULL OR len(list_filter((sem).predicate, lambda p: (p).name IS NOT NULL)) = 0
        THEN 'MAP([]::VARCHAR[], []::BOOLEAN[])'
-       ELSE 'MAP([' || list_aggregate(list_transform(list_filter((sem).pseudo, lambda p: (p).name IS NOT NULL), lambda p: tree_sql_lit((p).name)), 'string_agg', ', ')
-            || '], [' || list_aggregate(list_transform(list_filter((sem).pseudo, lambda p: (p).name IS NOT NULL), lambda p: '(' || (p).body || ')'), 'string_agg', ', ')
+       ELSE 'MAP([' || list_aggregate(list_transform(list_filter((sem).predicate, lambda p: (p).name IS NOT NULL), lambda p: tree_sql_lit((p).name)), 'string_agg', ', ')
+            || '], [' || list_aggregate(list_transform(list_filter((sem).predicate, lambda p: (p).name IS NOT NULL), lambda p: '(' || (p).body || ')'), 'string_agg', ', ')
             || '])::MAP(VARCHAR, BOOLEAN)' END;
 
 -- The S columns of the projection, one definition for both bases, so the two branches of
@@ -31,7 +31,7 @@ CREATE OR REPLACE MACRO tree_sql_sem_cols(sem) AS
   || COALESCE((sem).tags, 'NULL::VARCHAR[]') || ' AS _tags, '
   || CASE WHEN (sem).attr_map IS NULL THEN 'NULL::MAP(VARCHAR, VARCHAR)' ELSE 'CAST(' || (sem).attr_map || ' AS MAP(VARCHAR, VARCHAR))' END || ' AS _attr_map, '
   || 'COALESCE(' || COALESCE((sem).element, 'true') || ', false) AS _element, '
-  || tree_sql_pseudo_map(sem) || ' AS _pseudo';
+  || tree_sql_predicate_map(sem) || ' AS _predicate';
 
 -- Derived parent for level basis: nearest prior row at level - 1 within the root (ASOF join). MN2 mutates this.
 -- It reads __rn, the stage that carries _pre: M3 §2.1 makes _pre the rank of ORDER within ROOT,

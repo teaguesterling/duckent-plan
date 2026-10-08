@@ -339,7 +339,7 @@ CALL tree_ddl_create('main', 'app', tree_spec(
   tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
              semantic := tree_semantic(type := 'type', key := 'name',
                                        tags := 'CASE WHEN type = ''function_definition'' AND (flags & 6) = 6 THEN [''fn''] ELSE [] END',
-                                       pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
+                                       predicate := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 # the flagship, and the thing a linear chain cannot say: functions with no string anywhere below.

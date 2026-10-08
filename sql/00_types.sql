@@ -1,7 +1,7 @@
 -- sql/00_types.sql
 CREATE TYPE TREE_SEMANTIC AS STRUCT(
-  type VARCHAR, key VARCHAR, tags VARCHAR, attr VARCHAR, attr_map VARCHAR, element VARCHAR, pseudo_args VARCHAR,
-  pseudo STRUCT(name VARCHAR, body VARCHAR, macro VARCHAR, args VARCHAR, prefix VARCHAR)[]);
+  type VARCHAR, key VARCHAR, tags VARCHAR, attr VARCHAR, attr_map VARCHAR, element VARCHAR, predicate_args VARCHAR,
+  predicate STRUCT(name VARCHAR, body VARCHAR, macro VARCHAR, args VARCHAR, prefix VARCHAR)[]);
 
 CREATE TYPE TREE_SHAPE AS STRUCT(
   root VARCHAR, "order" VARCHAR, unique_key VARCHAR, level VARCHAR, parent VARCHAR, sibling_order VARCHAR,
@@ -43,20 +43,20 @@ CREATE TYPE TREE_STEP_L2 AS STRUCT(
 CREATE OR REPLACE MACRO tree_err(msg) AS
   error(COALESCE(msg, 'duckent: internal: refusal with a NULL message; see FINDINGS on error(NULL) in 1.5.5'));
 
--- pseudo: a list of any of {name, body} | {name, macro, args} | {prefix, args}; pseudo_map: MAP of name -> macro
--- with pseudo_args shared by every entry; the constructor flattens the map into the list.
+-- predicate: a list of any of {name, body} | {name, macro, args} | {prefix, args}; predicate_map: MAP of name -> macro
+-- with predicate_args shared by every entry; the constructor flattens the map into the list.
 CREATE OR REPLACE MACRO tree_semantic(type := NULL, key := NULL, tags := NULL, attr := NULL, attr_map := NULL, element := NULL,
-                                      pseudo := NULL, pseudo_map := NULL, pseudo_args := NULL) AS
-  {type: type, key: key, tags: tags, attr: attr, attr_map: attr_map, element: element, pseudo_args: pseudo_args,
-   pseudo: CASE WHEN pseudo IS NULL AND pseudo_map IS NULL THEN NULL ELSE list_concat(
-     COALESCE(pseudo::STRUCT(name VARCHAR, body VARCHAR, macro VARCHAR, args VARCHAR, prefix VARCHAR)[], []),
-     CASE WHEN pseudo_map IS NULL THEN [] ELSE list_transform(map_entries(pseudo_map),
-       lambda e: {name: (e).key, body: NULL::VARCHAR, macro: (e).value, args: pseudo_args, prefix: NULL::VARCHAR}) END) END
+                                      predicate := NULL, predicate_map := NULL, predicate_args := NULL) AS
+  {type: type, key: key, tags: tags, attr: attr, attr_map: attr_map, element: element, predicate_args: predicate_args,
+   predicate: CASE WHEN predicate IS NULL AND predicate_map IS NULL THEN NULL ELSE list_concat(
+     COALESCE(predicate::STRUCT(name VARCHAR, body VARCHAR, macro VARCHAR, args VARCHAR, prefix VARCHAR)[], []),
+     CASE WHEN predicate_map IS NULL THEN [] ELSE list_transform(map_entries(predicate_map),
+       lambda e: {name: (e).key, body: NULL::VARCHAR, macro: (e).value, args: predicate_args, prefix: NULL::VARCHAR}) END) END
   }::TREE_SEMANTIC;
 
 -- The shared pseudo tier's prefix, spelled once: every reference to the literal "sel_" (and its
 -- length, for stripping it off a matched function_name) goes through this macro.
-CREATE OR REPLACE MACRO tree_shared_pseudo_prefix() AS 'sel_';
+CREATE OR REPLACE MACRO tree_shared_predicate_prefix() AS 'sel_';
 
 -- Expand macro, map, prefix and shared bindings to expression bodies. Prefix entries bind every
 -- catalog scalar macro whose name starts with the prefix; name = the remainder. A round-tripped
@@ -65,37 +65,37 @@ CREATE OR REPLACE MACRO tree_shared_pseudo_prefix() AS 'sel_';
 -- "prefix IS NULL OR name IS NOT NULL" -- only a freshly declared, not-yet-expanded prefix entry
 -- ({prefix, args}, no name) is routed to the scanning branch.
 -- After that, the shared tier: every catalog scalar macro named sel_<rest> becomes a binding
--- {name: rest, body: 'sel_' || rest || '(pseudo_args)', macro, args: pseudo_args, prefix: 'sel_'},
+-- {name: rest, body: 'sel_' || rest || '(predicate_args)', macro, args: predicate_args, prefix: 'sel_'},
 -- unless <rest> is already bound (by name) or the macro itself already underlies a local/prefix
 -- binding (by macro identity -- a prefix-bound macro like sel_ast_leaf also starts with the
 -- literal "sel_" the shared tier scans for, and must not be double-bound under a second name).
--- The shared tier binds nothing when pseudo_args is NULL, tree-wide (§7 of the M2 design doc:
--- "the shared tier's args default to the tree's pseudo_args slot"; there is no args source for a
+-- The shared tier binds nothing when predicate_args is NULL, tree-wide (§7 of the M2 design doc:
+-- "the shared tier's args default to the tree's predicate_args slot"; there is no args source for a
 -- shared binding otherwise). Reads duckdb_functions(), so this is called by the DDL compilers
 -- (runner-executed), never by tree_compile_projection.
-CREATE OR REPLACE MACRO tree_expand_pseudo(sem) AS (
+CREATE OR REPLACE MACRO tree_expand_predicate(sem) AS (
 WITH lp AS (
   SELECT list_concat(
-    list_transform(list_filter(COALESCE((sem).pseudo, []), lambda p: (p).prefix IS NULL OR (p).name IS NOT NULL),
+    list_transform(list_filter(COALESCE((sem).predicate, []), lambda p: (p).prefix IS NULL OR (p).name IS NOT NULL),
       lambda p: {name: (p).name, body: COALESCE((p).body, (p).macro || '(' || COALESCE((p).args, '') || ')'),
                  macro: (p).macro, args: (p).args, prefix: (p).prefix}),
     COALESCE((SELECT list({name: substr(f.function_name, length((x).px.prefix) + 1),
                            body: f.function_name || '(' || COALESCE((x).px.args, '') || ')',
                            macro: f.function_name, args: (x).px.args, prefix: (x).px.prefix} ORDER BY f.function_name)
-              FROM (SELECT unnest(list_filter(COALESCE((sem).pseudo, []), lambda p: (p).prefix IS NOT NULL AND (p).name IS NULL)) AS px) x
+              FROM (SELECT unnest(list_filter(COALESCE((sem).predicate, []), lambda p: (p).prefix IS NOT NULL AND (p).name IS NULL)) AS px) x
               JOIN (SELECT DISTINCT function_name FROM duckdb_functions() WHERE function_type = 'macro') f
                 ON starts_with(f.function_name, (x).px.prefix)), [])
   ) AS bound
 ),
 shared AS (
-  SELECT COALESCE((SELECT list({name: substr(f.function_name, length(tree_shared_pseudo_prefix()) + 1),
-                                body: f.function_name || '(' || COALESCE((sem).pseudo_args, '') || ')',
-                                macro: f.function_name, args: (sem).pseudo_args, prefix: tree_shared_pseudo_prefix()} ORDER BY f.function_name)
+  SELECT COALESCE((SELECT list({name: substr(f.function_name, length(tree_shared_predicate_prefix()) + 1),
+                                body: f.function_name || '(' || COALESCE((sem).predicate_args, '') || ')',
+                                macro: f.function_name, args: (sem).predicate_args, prefix: tree_shared_predicate_prefix()} ORDER BY f.function_name)
                     FROM (SELECT DISTINCT function_name FROM duckdb_functions() WHERE function_type = 'macro') f
-                    WHERE (sem).pseudo_args IS NOT NULL AND starts_with(f.function_name, tree_shared_pseudo_prefix())
+                    WHERE (sem).predicate_args IS NOT NULL AND starts_with(f.function_name, tree_shared_predicate_prefix())
                       -- a bare sel_ macro has an empty remainder: not an error, just not a
                       -- nameable pseudo-class, so it is left unbound rather than bound as ''
-                      AND substr(f.function_name, length(tree_shared_pseudo_prefix()) + 1) <> ''
+                      AND substr(f.function_name, length(tree_shared_predicate_prefix()) + 1) <> ''
                       -- spec §7, amended: identity dedup. The spec's literal text excludes a
                       -- candidate only by name collision; that alone double-binds a macro
                       -- already claimed by a prefix declaration (e.g. sel_ast_leaf, which also
@@ -103,13 +103,13 @@ shared AS (
                       -- A prefix declaration is a namespace claim: a macro already bound under
                       -- any name -- locally or via a prefix -- is not re-bound by the shared
                       -- tier under another one.
-                      AND NOT list_contains(list_transform(lp.bound, lambda y: (y).name), substr(f.function_name, length(tree_shared_pseudo_prefix()) + 1))
+                      AND NOT list_contains(list_transform(lp.bound, lambda y: (y).name), substr(f.function_name, length(tree_shared_predicate_prefix()) + 1))
                       AND NOT list_contains(list_transform(lp.bound, lambda y: (y).macro), f.function_name)
                    ), []) AS extra
   FROM lp
 )
-SELECT {type: (sem).type, key: (sem).key, tags: (sem).tags, attr: (sem).attr, attr_map: (sem).attr_map, element: (sem).element, pseudo_args: (sem).pseudo_args,
-  pseudo: CASE WHEN (sem).pseudo IS NULL AND (sem).pseudo_args IS NULL THEN NULL ELSE list_concat(lp.bound, shared.extra) END
+SELECT {type: (sem).type, key: (sem).key, tags: (sem).tags, attr: (sem).attr, attr_map: (sem).attr_map, element: (sem).element, predicate_args: (sem).predicate_args,
+  predicate: CASE WHEN (sem).predicate IS NULL AND (sem).predicate_args IS NULL THEN NULL ELSE list_concat(lp.bound, shared.extra) END
 }::TREE_SEMANTIC
 FROM lp, shared);
 
@@ -117,7 +117,7 @@ FROM lp, shared);
 -- tree_compile_create, tree_compile_alter (which both store it as tree_catalog.trees.has_semantic)
 -- and tree_compile_match (whose "semantic overlay is empty" refusal asks exactly the same thing of
 -- an overlay). It had been hand-copied into all three, and the copies had already drifted: the
--- compiler's forgot PSEUDO_ARGS, so a `tree_semantic(pseudo_args := ...)` overlay -- which DOES
+-- compiler's forgot PSEUDO_ARGS, so a `tree_semantic(predicate_args := ...)` overlay -- which DOES
 -- bind the shared pseudo tier -- was refused as empty.
 --
 -- It is a question about what the group DECLARES, one slot at a time, never about whether a group
@@ -134,7 +134,7 @@ FROM lp, shared);
 CREATE OR REPLACE MACRO tree_semantic_declares(sem) AS
   (sem).type IS NOT NULL OR (sem).key IS NOT NULL OR (sem).tags IS NOT NULL
     OR (sem).attr_map IS NOT NULL OR (sem).element IS NOT NULL
-    OR len(COALESCE((sem).pseudo, [])) > 0 OR (sem).pseudo_args IS NOT NULL;
+    OR len(COALESCE((sem).predicate, [])) > 0 OR (sem).predicate_args IS NOT NULL;
 
 -- The type a comparison literal implies: numbers and booleans cast the map value; quoted text compares as VARCHAR.
 CREATE OR REPLACE MACRO tree_sql_literal_type(arg) AS
@@ -190,16 +190,16 @@ CREATE OR REPLACE MACRO tree_sql_check_semantic(sem, attr_text, verb) AS
     -- A NULL name, or a body with no macro to derive one from, would compile the pseudo map
     -- and the predicates INSERT to NULL; both would then be dropped from the statement
     -- list instead of refusing. A macro-bound entry passes with a NULL body because the DDL
-    -- compilers run tree_expand_pseudo first, which fills the body in from macro(args);
+    -- compilers run tree_expand_predicate first, which fills the body in from macro(args);
     -- prefix entries are exempt entirely -- expansion is what gives them their names.
-    WHEN len(list_filter(COALESCE((sem).pseudo, []), lambda x: (x).prefix IS NULL AND ((x).name IS NULL OR ((x).body IS NULL AND (x).macro IS NULL)))) > 0
+    WHEN len(list_filter(COALESCE((sem).predicate, []), lambda x: (x).prefix IS NULL AND ((x).name IS NULL OR ((x).body IS NULL AND (x).macro IS NULL)))) > 0
       THEN tree_err(verb || ': every PSEUDO needs a name and a body or macro')
-    WHEN len(list_distinct(list_transform(COALESCE((sem).pseudo, []), lambda x: (x).name))) <> len(COALESCE((sem).pseudo, []))
-      THEN tree_err(verb || ': S-coherence: a pseudo-class is bound twice')
+    WHEN len(list_distinct(list_transform(COALESCE((sem).predicate, []), lambda x: (x).name))) <> len(COALESCE((sem).predicate, []))
+      THEN tree_err(verb || ': S-coherence: a predicate is bound twice')
     ELSE true END;
 
 -- The second half of the S validation ladder, and the one that has to read the UNEXPANDED
--- semantic: a PSEUDO prefix entry names a NAMESPACE of catalog macros, and tree_expand_pseudo
+-- semantic: a PREDICATE prefix entry names a NAMESPACE of catalog macros, and tree_expand_predicate
 -- replaces it with one binding per macro carrying that prefix. When none does, expansion replaces
 -- it with NOTHING -- so by the time tree_sql_check_semantic sees the group, a prefix that bound
 -- no macro is indistinguishable from one that was never written. The tree was created with an
@@ -210,36 +210,36 @@ CREATE OR REPLACE MACRO tree_sql_check_semantic(sem, attr_text, verb) AS
 -- Only a freshly declared entry ({prefix, args} with no name) is a prefix declaration; a
 -- round-tripped catalog row (tree_shape_from_catalog, for a LIKE child) carries a provenance-only
 -- prefix marker AND a name, and is not re-resolved. Reads duckdb_functions(), so this is called by
--- the DDL compilers (runner-executed), like tree_expand_pseudo itself. Returns true or raises;
+-- the DDL compilers (runner-executed), like tree_expand_predicate itself. Returns true or raises;
 -- both compilers call it alongside tree_sql_check_semantic so the two verbs cannot drift.
 CREATE OR REPLACE MACRO tree_sql_check_prefixes(sem, verb) AS (
-  WITH px AS (SELECT unnest(list_filter(COALESCE((sem).pseudo, []),
+  WITH px AS (SELECT unnest(list_filter(COALESCE((sem).predicate, []),
                                         lambda p: (p).prefix IS NOT NULL AND (p).name IS NULL)) AS p),
        m AS (SELECT DISTINCT function_name FROM duckdb_functions() WHERE function_type = 'macro'),
        bad AS (SELECT min((px.p).prefix) AS pre FROM px
                WHERE NOT EXISTS (SELECT 1 FROM m WHERE starts_with(m.function_name, (px.p).prefix))),
        -- The IMPLICIT shared tier needs the same check. PSEUDO_ARGS switches on every macro under
-       -- tree_shared_pseudo_prefix(), so it makes exactly the claim an explicit prefix entry makes
+       -- tree_shared_predicate_prefix(), so it makes exactly the claim an explicit prefix entry makes
        -- -- that there are predicates to bind -- and it was the one spelling that bypassed
        -- this. Unchecked, it bound none while tree_semantic_declares still counted it as an S
        -- group, so has_semantic went true and tree_match's S-less refusal stopped firing: a TYPE
        -- clause compiled against TYPE's 'node' default and returned zero rows where a refusal was
        -- owed, which is the failure the comment on tree_semantic_declares names.
        --
-       -- The emptiness rule is tree_expand_pseudo's, not a new one: its `shared` arm requires a
+       -- The emptiness rule is tree_expand_predicate's, not a new one: its `shared` arm requires a
        -- non-empty remainder, because a BARE prefix macro is "not an error, just not a nameable
        -- pseudo-class". So a tree whose only sel_ macro is the bare one binds nothing and must be
        -- refused too -- the check agrees with the expansion rather than approximating it.
-       shared_bad AS (SELECT (sem).pseudo_args IS NOT NULL
+       shared_bad AS (SELECT (sem).predicate_args IS NOT NULL
                         AND NOT EXISTS (SELECT 1 FROM m
-                                        WHERE starts_with(m.function_name, tree_shared_pseudo_prefix())
+                                        WHERE starts_with(m.function_name, tree_shared_predicate_prefix())
                                           AND substr(m.function_name,
-                                                     length(tree_shared_pseudo_prefix()) + 1) <> '') AS unbound)
+                                                     length(tree_shared_predicate_prefix()) + 1) <> '') AS unbound)
   SELECT CASE WHEN (SELECT pre FROM bad) IS NOT NULL
-              THEN tree_err(verb || ': PSEUDO prefix ' || (SELECT pre FROM bad) || ' binds no macro')
+              THEN tree_err(verb || ': PREDICATE prefix ' || (SELECT pre FROM bad) || ' binds no macro')
               WHEN (SELECT unbound FROM shared_bad)
-              THEN tree_err(verb || ': PSEUDO_ARGS binds no macro: no '
-                            || tree_shared_pseudo_prefix() || '* macro is in scope')
+              THEN tree_err(verb || ': PREDICATE_ARGS binds no macro: no '
+                            || tree_shared_predicate_prefix() || '* macro is in scope')
               ELSE true END);
 
 -- Structural companion to the ATTR-alias regex above: the regex only sees an explicit

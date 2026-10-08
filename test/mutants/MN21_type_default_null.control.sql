@@ -15,4 +15,4 @@ CREATE OR REPLACE MACRO tree_sql_sem_cols(sem) AS
   || COALESCE((sem).tags, 'NULL::VARCHAR[]') || ' AS _tags, '
   || CASE WHEN (sem).attr_map IS NULL THEN 'NULL::MAP(VARCHAR, VARCHAR)' ELSE 'CAST(' || (sem).attr_map || ' AS MAP(VARCHAR, VARCHAR))' END || ' AS _attr_map, '
   || 'COALESCE(' || COALESCE((sem).element, 'true') || ', false) AS _element, '
-  || tree_sql_pseudo_map(sem) || ' AS _pseudo';
+  || tree_sql_predicate_map(sem) || ' AS _predicate';

@@ -17,7 +17,7 @@ SELECT (tree_shape(level := 'depth', semantic := tree_semantic(type := 'kind')))
 kind
 
 query I
-SELECT (tree_semantic(pseudo := [{name: 'leaf', body: 'descendant_count = 0'}])).pseudo[1].prefix IS NULL;
+SELECT (tree_semantic(predicate := [{name: 'leaf', body: 'descendant_count = 0'}])).predicate[1].prefix IS NULL;
 ----
 true
 

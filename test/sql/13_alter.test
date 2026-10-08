@@ -73,7 +73,7 @@ CREATE MACRO is_leaf(n) AS n = 0;
 
 statement ok
 CALL tree_ddl_alter('main', 'app', tree_semantic(type := 'type', attr := 'name, depth',
-  element := 'depth > 0', pseudo := [{name: 'leaf', macro: 'is_leaf', args: 'descendant_count'}]));
+  element := 'depth > 0', predicate := [{name: 'leaf', macro: 'is_leaf', args: 'descendant_count'}]));
 
 query IIII
 SELECT (SELECT expression FROM tree_catalog_slots() WHERE tree_name = 'app' AND slot = 'ELEMENT'),
