@@ -84,6 +84,7 @@ Decision log + FINDINGS from day one, quay house style. When a design survives c
 2. `04-assertion-plan-v7.md` — laws P13–P19 + canonical (taxon, watermark) namespace form; the paper's evaluation section.
 3. `13-trees-to-rows-paper-v3.md` — the paper this extension is the artifact for; its instances are your integration targets.
 4. `12-tree-contract-lesson-v5.html` — public teaching layer; keep the README consistent with it.
+   (Frozen reference: the repo carries `docs/12-tree-contract-lesson-v19.html`, thirteen revisions on.)
 5. `9-verification-pass-v3.md` — what's real in sitting_duck today; the M2 differential oracle.
 
 *Handover note: v13 supersedes v10–v12, which were byte-identical — two edit passes silently no-opped on mismatched anchors (caught in review by md5). This file is escape-repaired and content-verified: R0/ROOT, two-tier S, S-coherence all present below by grep, not by intention.*
