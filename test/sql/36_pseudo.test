@@ -20,6 +20,92 @@ busy	is_busy(node_id)
 leaf	is_leaf(node_id)
 
 # prefix form: every catalog scalar macro starting with the prefix, name = the remainder
+# M4: PURITY. A predicate must give the same answer for the same row, or matching stops being a
+# function of the declarations (doctrine 2) -- the same selector would return different rows on two
+# runs. DuckDB's own catalog is authoritative for built-ins: `stability` is VOLATILE for random()
+# and friends and CONSISTENT_WITHIN_QUERY for now(), and both are impure here -- the first differs
+# within one query, the second between queries.
+#
+# The functions a body references come from DuckDB's PARSE TREE, not a text scan:
+# json_serialize_sql parses without binding, so a body full of columns it cannot resolve still
+# yields its calls, and a malformed body comes back as an error object rather than raising.
+statement ok
+CREATE MACRO pure_leaf(n) AS n = 0;
+
+statement ok
+CREATE MACRO impure_leaf(n) AS n + random();
+
+statement ok
+CREATE MACRO macro_of_macro(n) AS pure_leaf(n);
+
+# a pure body is accepted and recorded pure
+statement ok
+CALL tree_ddl_create('main', 'pur', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'leaf', body: 'descendant_count = 0'}])),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+
+query I
+SELECT purity FROM tree_catalog_predicates() WHERE tree_name = 'pur' AND name = 'leaf';
+----
+pure
+
+# a VOLATILE built-in is refused, naming the function and why
+statement error
+CALL tree_ddl_create('main', 'vol', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'r', body: 'descendant_count > random()'}])),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+----
+PREDICATE r is not pure
+
+# now() is CONSISTENT_WITHIN_QUERY, which is impure between queries and refused too
+statement error
+CALL tree_ddl_create('main', 'nw', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'n', body: 'now() IS NOT NULL'}])),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+----
+PREDICATE n is not pure
+
+# a macro whose own body is impure is refused -- one level of resolution
+statement error
+CALL tree_ddl_create('main', 'im', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'i', macro: 'impure_leaf', args: 'descendant_count'}])),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+----
+PREDICATE i is not pure
+
+# a macro whose body is pure records pure
+statement ok
+CALL tree_ddl_create('main', 'pm', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'p', macro: 'pure_leaf', args: 'descendant_count'}])),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+
+query I
+SELECT purity FROM tree_catalog_predicates() WHERE tree_name = 'pm' AND name = 'p';
+----
+pure
+
+# BEYOND one level the answer is UNKNOWN, and unknown is ACCEPTED rather than refused. Claiming
+# 'pure' for a body we did not resolve would be the false-positive verdict #39 was about; refusing
+# it would reject a predicate that is very likely fine. So it is recorded honestly and allowed.
+statement ok
+CALL tree_ddl_create('main', 'mm', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'm', macro: 'macro_of_macro', args: 'descendant_count'}])),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+
+query I
+SELECT purity FROM tree_catalog_predicates() WHERE tree_name = 'mm' AND name = 'm';
+----
+unknown
+
+# a body that does not parse is refused rather than recorded as pure, which a bare function scan
+# would have done: json_serialize_sql returns an error object and the extractor finds no calls
+statement error
+CALL tree_ddl_create('main', 'bad', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'b', body: 'descendant_count = )('}])),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+----
+PREDICATE b does not parse
+
 statement ok
 CREATE MACRO sel_ast_leafy(n) AS n = 0;
 

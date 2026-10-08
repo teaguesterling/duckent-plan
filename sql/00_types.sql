@@ -180,6 +180,61 @@ CREATE OR REPLACE MACRO tree_sql_like_arg(pattern) AS tree_sql_lit(pattern) || '
 CREATE OR REPLACE MACRO tree_sql_object_name(kind, sch, nm) AS
   tree_sql_ident(kind || '_' || length(sch) || '_' || sch || '_' || nm);
 
+-- M4 PURITY. A predicate must answer the same for the same row, or matching stops being a function
+-- of the declarations (doctrine 2): the same selector would return different rows on two runs.
+--
+-- The functions a body references come from DuckDB's own PARSE TREE, not a text scan.
+-- json_serialize_sql PARSES without binding, so a body full of column names it cannot resolve
+-- still yields its calls, and `random` appearing as a column name is not mistaken for the
+-- function. A malformed body comes back as an error OBJECT rather than raising, which is why
+-- parse-ability is asked separately: the extractor finds no calls in unparseable text, and
+-- "no calls" would otherwise read as "pure".
+CREATE OR REPLACE MACRO tree_sql_expr_parses(expr) AS
+  NOT COALESCE(json_serialize_sql('SELECT ' || COALESCE(expr, 'NULL')) ->> '$.error' = 'true', false);
+
+CREATE OR REPLACE MACRO tree_sql_expr_functions(expr) AS (
+  SELECT COALESCE(list(DISTINCT lower(regexp_extract(m, '"function_name":"([^"]+)"', 1))), [])
+  FROM (SELECT unnest(regexp_extract_all(
+                 json_serialize_sql('SELECT ' || COALESCE(expr, 'NULL')),
+                 '"function_name":"[^"]+"')) AS m));
+
+-- VOLATILE and CONSISTENT_WITHIN_QUERY are both impure here: the first differs within one query,
+-- the second between queries, and a predicate that moves between queries is the same defect.
+-- A MACRO reports stability NULL whatever it calls -- measured: a macro over random() and one over
+-- a constant are indistinguishable in duckdb_functions() -- so its own body is resolved, ONE level
+-- deep. Beyond that the answer is 'unknown', recorded rather than guessed: claiming 'pure' for a
+-- body nothing resolved is the false-positive verdict, and refusing it would reject a predicate
+-- that is very likely fine. Transitive resolution is the obvious extension and would turn some of
+-- today's 'unknown' into 'impure'.
+CREATE OR REPLACE MACRO tree_sql_purity(expr) AS (
+  WITH fns AS (SELECT DISTINCT function_name, function_type, stability, macro_definition FROM duckdb_functions()),
+       d AS (SELECT unnest(tree_sql_expr_functions(expr)) AS fn),
+       lvl1 AS (SELECT d.fn, f.function_type AS ft, f.stability AS st, f.macro_definition AS body
+                FROM d LEFT JOIN fns f ON lower(f.function_name) = d.fn),
+       lvl2 AS (SELECT unnest(tree_sql_expr_functions(body)) AS fn FROM lvl1
+                WHERE ft = 'macro' AND body IS NOT NULL),
+       lvl2c AS (SELECT l.fn, f.function_type AS ft, f.stability AS st
+                 FROM lvl2 l LEFT JOIN fns f ON lower(f.function_name) = l.fn)
+  SELECT CASE
+    WHEN NOT tree_sql_expr_parses(expr) THEN 'malformed'
+    WHEN (SELECT count(*) FROM lvl1  WHERE st IN ('VOLATILE', 'CONSISTENT_WITHIN_QUERY')) > 0 THEN 'impure'
+    WHEN (SELECT count(*) FROM lvl2c WHERE st IN ('VOLATILE', 'CONSISTENT_WITHIN_QUERY')) > 0 THEN 'impure'
+    WHEN (SELECT count(*) FROM lvl2c WHERE ft = 'macro') > 0 THEN 'unknown'
+    ELSE 'pure' END);
+
+-- Refuses the two decidable failures and lets 'unknown' through. Reads the EXPANDED list, so a
+-- macro- or prefix-bound entry is checked on the body it actually compiles to.
+CREATE OR REPLACE MACRO tree_sql_check_purity(sem, verb) AS (
+  WITH p AS (SELECT unnest(COALESCE((sem).predicate, [])) AS e),
+       bad AS (SELECT (p.e).name AS nm, tree_sql_purity((p.e).body) AS pur FROM p
+               WHERE tree_sql_purity((p.e).body) IN ('impure', 'malformed'))
+  SELECT CASE WHEN (SELECT count(*) FROM bad) = 0 THEN true
+              ELSE tree_err(verb || ': PREDICATE ' || (SELECT min(nm) FROM bad)
+                   || CASE WHEN (SELECT min(pur) FROM bad) = 'malformed'
+                           THEN ' does not parse'
+                           ELSE ' is not pure: its body reads a VOLATILE or CONSISTENT_WITHIN_QUERY'
+                                || ' function, so the same selector would not answer the same twice' END) END);
+
 -- The validation ladder for the S group, shared by tree_compile_create and tree_compile_alter
 -- so that altering a tree cannot bypass a check create enforces. `verb` prefixes the message.
 -- Returns true when the semantic is acceptable; raises otherwise.
