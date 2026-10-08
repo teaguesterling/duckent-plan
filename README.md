@@ -4,7 +4,7 @@ Tree semantics for ordered relations: the contract every duck sits on.
 
 duckent is a (planned) DuckDB extension that implements **tree semantics over ordered relations**: the layer *below* every parser. It defines what makes a set of rows a tree, what a CSS-style selector means over those rows, and how a `MATCH` compiles to ordinary SQL. Parsers such as [sitting_duck](https://github.com/teaguesterling/sitting_duck) (ASTs) and [duck_block_utils](https://github.com/teaguesterling/duckdb_duck_block_utils) (documents), and every adjacency list already in your warehouse (org charts, category trees, BOMs, file hierarchies), become *vocabularies over one contract*.
 
-> **Status: macro prototype, M2 runs.** `sql/` holds a macro-only reference implementation of M0, M1, M1½ and M2: the catalog, the projection compiler, both basis derivations, forest DML with P13 on ingest, TREEQL matching through `tree_steps`, and now nested `HAS`/`NOT` groups with a `SELF` relation, two css front-ends bound to each other by a row-level differential, a typed `ATTR MAP`, element rows, four pseudo-class binding forms with a shared `sel_*` tier, and a selector corpus checked against frozen sitting_duck references. It runs on DuckDB 1.5.5 with no extension dependency. `test/sql/` holds the sqllogictest suites and `test/mutants/` the planted mutants; both carry over unchanged to the C++ extension. The design is in [`docs/superpowers/specs/2026-09-13-duckent-core-design.md`](docs/superpowers/specs/2026-09-13-duckent-core-design.md) and, for M2, [`docs/superpowers/specs/2026-09-14-duckent-m2-design.md`](docs/superpowers/specs/2026-09-14-duckent-m2-design.md). Where the build differed from either, `FINDINGS.md` says so.
+> **Status: macro prototype, M2 runs.** `sql/` holds a macro-only reference implementation of M0, M1, M1½ and M2: the catalog, the projection compiler, both basis derivations, forest DML with P13 on ingest, TREEQL matching through `tree_steps`, and now nested `HAS`/`NOT` groups with a `SELF` relation, two css front-ends bound to each other by a row-level differential, a typed `ATTR MAP`, element rows, four predicate binding forms with a shared `sel_*` tier, and a selector corpus checked against frozen sitting_duck references. It runs on DuckDB 1.5.5 with no extension dependency. `test/sql/` holds the sqllogictest suites and `test/mutants/` the planted mutants; both carry over unchanged to the C++ extension. The design is in [`docs/superpowers/specs/2026-09-13-duckent-core-design.md`](docs/superpowers/specs/2026-09-13-duckent-core-design.md) and, for M2, [`docs/superpowers/specs/2026-09-14-duckent-m2-design.md`](docs/superpowers/specs/2026-09-14-duckent-m2-design.md). Where the build differed from either, `FINDINGS.md` says so.
 
 The name: Ents speak Tree, and Treebeard's policy of never saying anything unless it is worth taking a long time to say is bind-time checking's motto.
 
@@ -14,7 +14,7 @@ Your ASTs were rows all along. A tree stored as its own depth-first traversal ne
 
 ```sql
 -- Today, with sitting_duck (ast_select is a table macro; :docblock and
--- pseudo-classes inside :has() arrive with duckent's pseudo registry):
+-- pseudo-classes inside :has() arrive with duckent's predicate registry):
 FROM ast_select('src/**/*.py', '.fn:not(:has(string))')
 SELECT name, start_line;
 
@@ -26,8 +26,8 @@ CREATE TREE sitting_duck_ast (
   TYPE  semantic_type_to_string(semantic_type),
   ATTR  (name := name, start_line := start_line),    -- named, typed attributes
   ATTRS MAP extra,                                   -- long-tail catch-all
-  PSEUDO (docblock := has_docblock(file_path, node_id),
-          leaf     := descendant_count = 0),
+  PREDICATE (docblock := has_docblock(file_path, node_id),
+             leaf     := descendant_count = 0),
   SIZE descendant_count OPTIMIZE                     -- native column; test-equals its default
 );
 
@@ -138,7 +138,7 @@ Quick tour in a DuckDB session after loading `sql/*.sql` in order (the runner do
 ```sql
 CALL tree_ddl_create('main', 'app', tree_spec(
   tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
-             semantic := tree_semantic(type := 'type', id := 'name')),
+             semantic := tree_semantic(type := 'type', key := 'name')),
   source := 'read_parquet(''test/data/app.parquet'')'));
 FROM tree_match('main', 'app', tree_steps([{type: 'function_definition', "as": 'f'}, {comb: 'child', type: 'block'}])) SELECT f.name;
 ```

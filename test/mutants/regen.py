@@ -70,7 +70,7 @@ SPEC = {
          "    ELSE 'false' END;", 1),
         ("              WHEN (SELECT profile FROM t) = 'sibling_free'\n"
          "                   AND ((ir.kind = 'step' AND ir.op IN ('next', 'after'))\n"
-         "                        OR (ir.kind = 'pseudo' AND list_contains(tree_builtin_pseudos(), ir.value)))\n"
+         "                        OR (ir.kind = 'pseudo' AND list_contains(tree_builtin_predicates(), ir.value)))\n"
          "              THEN tree_err('tree_match: tree ' || sch || '.' || nm || ' is sibling-free"
          " (no SIBLING_ORDER declared); SIBLING, FOLLOWING, :first-child and :last-child are unavailable')\n",
          "              -- the mutation, half two: the sibling-free refusal branch is gone\n", 1)]),

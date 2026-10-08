@@ -74,7 +74,7 @@ Expressions and relations, used in a query:
 |---|---|---|
 | `tree_ancestors(sch, nm, root_key, pre)` | relation | walk up from a row |
 | `tree_apply(shape, source)` | relation | project a shape over a source without declaring a tree |
-| `tree_builtin_pseudos()` | scalar | predicates every tree has without declaring them |
+| `tree_builtin_predicates()` | scalar | predicates every tree has without declaring them |
 | `tree_canonical_columns()` | scalar | the columns projection adds |
 | `tree_children(sch, nm, root_key, pre)` | relation | the row's immediate children |
 | `tree_derive_parent(source, root_csv, order_col, level_col)` | relation | derive PARENT from an ORDER/LEVEL pair |
@@ -104,7 +104,7 @@ Expressions and relations, used in a query:
 | `tree_catalog_predicates()` | `database_name`, `schema_name`, `tree_name`, `name`, `kind`, `body`, `origin`, `purity` |
 | `tree_catalog_assertions()` | `database_name`, `schema_name`, `tree_name`, `artifact`, `status`, `checked_epoch`, `detail` |
 | `tree_catalog_languages()` | `language`, `parser`, `printer`, `bare_safe` |
-| `tree_catalog_tags(sch, nm)` | `class`, `row_count` |
+| `tree_catalog_tags(sch, nm)` | `tag`, `row_count` |
 
 The columns whose values come from a fixed set, as the reference declarations exercise them:
 

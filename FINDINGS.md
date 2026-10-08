@@ -776,10 +776,19 @@ and the wave added a few of its own.)*
 - ~~The printer's own unknown-kind check reads `min(kind)`, which is NULL when the offending
   node's `kind` is NULL.~~ **Closed** in the final fix wave (I5): the COALESCE is inside the
   aggregate and the node is named `<NULL>`.
-- The shadow check (`tree_sql_shadow_check`) enumerates thirteen canonical columns in its regex
+- ~~The shadow check (`tree_sql_shadow_check`) enumerates thirteen canonical columns in its regex
   and **only `_size` is exercised by a test** (11_ddl, 12_dml, 13_alter all use it). `_element` in
   particular was added in M2 and its arm has never fired in a test; a typo in that alternative
-  would reopen the back door F3 closed, silently.
+  would reopen the back door F3 closed, silently.~~ **Closed** by the vocabulary-leftover sweep,
+  which first found the predicted failure had already happened: the `classes` → `tags` and
+  `pseudo` → `predicate` renames left the regex naming `id`, `classes` and `pseudo` while the
+  projection emitted `_key`, `_tags` and `_predicate`, so a source column with one of those three
+  names silently displaced the canonical column — measured, all three were ACCEPTED. A rename is
+  the typo nobody types. The alternation is no longer written out: it is built from
+  `tree_canonical_columns()`, the same list the projection's `EXCLUDE` reads, so the check cannot
+  disagree with the projection again. 11_ddl now has one record per canonical column (thirteen,
+  not one) plus a record pinning the derivation, so a new canonical column is guarded the moment
+  it joins the list.
 
 **Language and front-end.**
 

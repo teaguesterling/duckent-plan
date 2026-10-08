@@ -210,7 +210,7 @@ false
 
 # LIKE provenance: a child that does not redeclare 'leaf' inherits shadow's prefix-bound entry
 # (not a fresh local one) and predicate_args, so the shared tier still applies at the child too.
-# The child ALSO gaining :deep (absent from the parent's own row set) is correct by design: PSEUDO
+# The child ALSO gaining :deep (absent from the parent's own row set) is correct by design: PREDICATE
 # is resolved against the live catalog at create time, and sel_deep already existed by then.
 statement ok
 CALL tree_ddl_create('main', 'shadow_like', tree_spec(tree_shape(), "like" := 'shadow', source := 'read_parquet(''test/data/app.parquet'')'));
@@ -222,7 +222,7 @@ busy	local	children_count > 2
 deep	shared	sel_deep(descendant_count)
 leaf	prefix	sel_ast_leaf(descendant_count)
 
-# tree_ddl_alter can add PSEUDO_ARGS to an existing tree: the S/PSEUDO_ARGS slot is stored,
+# tree_ddl_alter can add PREDICATE_ARGS to an existing tree: the S/PREDICATE_ARGS slot is stored,
 # has_semantic stays true, and (since altpseudo declares no local/prefix pseudo) the shared
 # tier binds every live sel_* macro
 statement ok
@@ -277,7 +277,7 @@ module	0
 # sel_* macro from it -- the record just above, with `type :=` alongside, is the same expansion --
 # so refusing it as empty denied the query the one thing it was asking for. The emptiness test now
 # asks the question create and alter ask (does this SEMANTIC declare an S slot?) through the one
-# predicate all three share, and PSEUDO_ARGS is an S slot in all three.
+# predicate all three share, and PREDICATE_ARGS is an S slot in all three.
 query II rowsort
 FROM tree_match('main', 'bare', tree_steps([{pseudo: 'deep'}]), semantic := tree_semantic(predicate_args := 'descendant_count'))
 SELECT type, _match_unknown_pseudos;
@@ -298,7 +298,7 @@ semantic overlay is empty
 #
 # A prefix entry names a NAMESPACE of catalog macros, and expansion replaces it with one
 # binding per macro that carries the prefix. When none does, expansion replaces it with
-# nothing: the tree was created, the S/PSEUDO rows were empty, and every `:name` the author
+# nothing: the tree was created, the S/PREDICATE rows were empty, and every `:name` the author
 # meant to mint was an unknown pseudo-class compiling to false. Nothing said so -- not at
 # create, not at match -- so `predicate := [{prefix: 'sel_ats_', ...}]` read as a tree with no
 # pseudo-classes rather than as a misspelling of `sel_ast_`. It is checked against the live

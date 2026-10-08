@@ -54,7 +54,7 @@ CREATE OR REPLACE MACRO tree_semantic(type := NULL, key := NULL, tags := NULL, a
        lambda e: {name: (e).key, body: NULL::VARCHAR, macro: (e).value, args: predicate_args, prefix: NULL::VARCHAR}) END) END
   }::TREE_SEMANTIC;
 
--- The shared pseudo tier's prefix, spelled once: every reference to the literal "sel_" (and its
+-- The shared predicate tier's prefix, spelled once: every reference to the literal "sel_" (and its
 -- length, for stripping it off a matched function_name) goes through this macro.
 CREATE OR REPLACE MACRO tree_shared_predicate_prefix() AS 'sel_';
 
@@ -117,14 +117,14 @@ FROM lp, shared);
 -- tree_compile_create, tree_compile_alter (which both store it as tree_catalog.trees.has_semantic)
 -- and tree_compile_match (whose "semantic overlay is empty" refusal asks exactly the same thing of
 -- an overlay). It had been hand-copied into all three, and the copies had already drifted: the
--- compiler's forgot PSEUDO_ARGS, so a `tree_semantic(predicate_args := ...)` overlay -- which DOES
--- bind the shared pseudo tier -- was refused as empty.
+-- compiler's forgot PREDICATE_ARGS, so a `tree_semantic(predicate_args := ...)` overlay -- which DOES
+-- bind the shared predicate tier -- was refused as empty.
 --
 -- It is a question about what the group DECLARES, one slot at a time, never about whether a group
 -- was written: `tree_semantic(attr := 'x')` declares no S slot (ATTR names the projected columns;
 -- it binds nothing structural) and must not mark a tree S-ful, or a TYPE step would compile
 -- against TYPE's 'node' default and return zero rows -- a refusal owed and an empty result
--- delivered. Every other slot counts: ELEMENT, ATTR MAP, PSEUDO and PSEUDO_ARGS are S declarations
+-- delivered. Every other slot counts: ELEMENT, ATTR MAP, PREDICATE and PREDICATE_ARGS are S declarations
 -- as much as TYPE is, and a slot added later must be added here.
 --
 -- ATTR is the one that must NOT appear: every tree stores an S/ATTR slot ('' closed, '*' open),
@@ -242,13 +242,13 @@ CREATE OR REPLACE MACRO tree_sql_check_semantic(sem, attr_text, verb) AS
   CASE
     WHEN regexp_matches(COALESCE(attr_text, ''), '(?i)\bAS\s+"?_')
       THEN tree_err(verb || ': ATTR alias collides with the canonical prefix: ' || regexp_extract(attr_text, '(?i)\bAS\s+("?_[A-Za-z0-9_]*)', 1))
-    -- A NULL name, or a body with no macro to derive one from, would compile the pseudo map
+    -- A NULL name, or a body with no macro to derive one from, would compile the predicate map
     -- and the predicates INSERT to NULL; both would then be dropped from the statement
     -- list instead of refusing. A macro-bound entry passes with a NULL body because the DDL
     -- compilers run tree_expand_predicate first, which fills the body in from macro(args);
     -- prefix entries are exempt entirely -- expansion is what gives them their names.
     WHEN len(list_filter(COALESCE((sem).predicate, []), lambda x: (x).prefix IS NULL AND ((x).name IS NULL OR ((x).body IS NULL AND (x).macro IS NULL)))) > 0
-      THEN tree_err(verb || ': every PSEUDO needs a name and a body or macro')
+      THEN tree_err(verb || ': every PREDICATE needs a name and a body or macro')
     WHEN len(list_distinct(list_transform(COALESCE((sem).predicate, []), lambda x: (x).name))) <> len(COALESCE((sem).predicate, []))
       THEN tree_err(verb || ': S-coherence: a predicate is bound twice')
     ELSE true END;
@@ -258,7 +258,7 @@ CREATE OR REPLACE MACRO tree_sql_check_semantic(sem, attr_text, verb) AS
 -- replaces it with one binding per macro carrying that prefix. When none does, expansion replaces
 -- it with NOTHING -- so by the time tree_sql_check_semantic sees the group, a prefix that bound
 -- no macro is indistinguishable from one that was never written. The tree was created with an
--- empty PSEUDO block and every `:name` its author meant to mint was an unknown pseudo-class
+-- empty PREDICATE block and every `:name` its author meant to mint was an unknown pseudo-class
 -- compiling to false, silently: `{prefix: 'sel_ats_'}` read as "this tree has no predicates"
 -- rather than as a misspelling of `sel_ast_`.
 --
@@ -273,7 +273,7 @@ CREATE OR REPLACE MACRO tree_sql_check_prefixes(sem, verb) AS (
        m AS (SELECT DISTINCT function_name FROM duckdb_functions() WHERE function_type = 'macro'),
        bad AS (SELECT min((px.p).prefix) AS pre FROM px
                WHERE NOT EXISTS (SELECT 1 FROM m WHERE starts_with(m.function_name, (px.p).prefix))),
-       -- The IMPLICIT shared tier needs the same check. PSEUDO_ARGS switches on every macro under
+       -- The IMPLICIT shared tier needs the same check. PREDICATE_ARGS switches on every macro under
        -- tree_shared_predicate_prefix(), so it makes exactly the claim an explicit prefix entry makes
        -- -- that there are predicates to bind -- and it was the one spelling that bypassed
        -- this. Unchecked, it bound none while tree_semantic_declares still counted it as an S
@@ -301,7 +301,22 @@ CREATE OR REPLACE MACRO tree_sql_check_prefixes(sem, verb) AS (
 -- "AS _x", so an implicit or quoted alias still reaches the projection. DESCRIBE the
 -- compiled relation instead -- DuckDB renames the displaced duplicate of a canonical
 -- column to _size_1 (etc.), so its presence is the proof that an attribute shadowed one.
+--
+-- The alternation is BUILT from tree_canonical_columns(), not spelled out. It used to be a
+-- hand-maintained list of thirteen names, and it drifted: the catalog's vocabulary renames left
+-- it naming `id`, `classes` and `pseudo` after the projection had moved to `_key`, `_tags` and
+-- `_predicate`, so a source column with one of those three names displaced the canonical column
+-- and the check that exists to catch exactly that said nothing. FINDINGS predicted this shape --
+-- "a typo in that alternative would reopen the back door F3 closed, silently" -- and a rename is
+-- a typo nobody types. Derived from the one list, the check cannot disagree with the projection,
+-- and the next canonical column is covered the moment it is added there.
+--
+-- Forward reference: tree_canonical_columns() lives in sql/07_match.sql, which loads after this
+-- file. DuckDB binds a macro body at CALL time, and this macro is only ever called by the DDL
+-- compilers (runner-executed, long after every file is loaded), so the order is not a problem.
 CREATE OR REPLACE MACRO tree_sql_shadow_check(rel_sql, verb) AS
   'SELECT CASE WHEN count(*) > 0 THEN error(''' || verb || ': attribute column shadows a canonical column: '' || string_agg(DISTINCT regexp_replace(column_name, ''_[0-9]+$'', ''''), '', '')) END'
   || ' FROM (DESCRIBE ' || rel_sql || ')'
-  || ' WHERE regexp_matches(column_name, ''^_(root|pre|level|parent|size|children|next|type|id|classes|attr_map|element|pseudo)_[0-9]+$'')';
+  || ' WHERE regexp_matches(column_name, ''^_('
+  || list_aggregate(list_transform(tree_canonical_columns(), lambda c: substr(c, 2)), 'string_agg', '|')
+  || ')_[0-9]+$'')';

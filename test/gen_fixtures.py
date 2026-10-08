@@ -45,7 +45,7 @@ def pinned_commit(fixture, directory):
 
 # The corpus aliases: sitting_duck's `.<alias>` class filter is `is_semantic_type(semantic_type,
 # upper(alias))` restricted to construct rows. Baking the result into the fixture as a plain
-# VARCHAR[] is what lets every corpus tree declare CLASSES and every frozen-reference test run
+# VARCHAR[] is what lets every corpus tree declare TAGS and every frozen-reference test run
 # WITHOUT sitting_duck loaded.
 ALIASES = ["fn", "class", "call", "try", "catch", "throw", "finally", "import",
            "loop", "if", "comp", "mod", "jump", "coll", "comment", "str", "def"]
@@ -151,7 +151,7 @@ and the fixture drifts whenever it is edited. The other fixtures are pinned to e
 cannot move under you; this one can, and used to do so with nothing recording it.
 
 The three AST parquets carry three derived columns beyond `read_ast`'s own, so the corpus trees can
-declare CLASSES, ELEMENT and the `params` attribute without sitting_duck at query time:
+declare TAGS, ELEMENT and the `params` attribute without sitting_duck at query time:
 
 | column | type | derivation |
 |---|---|---|

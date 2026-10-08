@@ -411,17 +411,17 @@ SELECT tree_selector_to_treeql(tree_parse_css(':not(.fn:has(string))'));
 statement error
 SELECT tree_parse_css('.fn[WHERE x > 2]');
 ----
-css has no host escape: mint a PSEUDO, or MATCH USING TREEQL
+css has no host escape: mint a PREDICATE, or MATCH USING TREEQL
 
 statement error
 SELECT tree_parse_css('[WHERE x = 2]');
 ----
-css has no host escape: mint a PSEUDO, or MATCH USING TREEQL
+css has no host escape: mint a PREDICATE, or MATCH USING TREEQL
 
 statement error
 SELECT tree_parse_css('.fn[WHERE="x"]');
 ----
-css has no host escape: mint a PSEUDO, or MATCH USING TREEQL
+css has no host escape: mint a PREDICATE, or MATCH USING TREEQL
 
 statement error
 SELECT tree_parse_css('.fn[name="main"');

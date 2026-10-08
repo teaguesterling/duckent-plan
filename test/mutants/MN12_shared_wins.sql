@@ -1,10 +1,10 @@
 -- test/mutants/MN12_shared_wins.sql
--- The shared pseudo tier shadows the tree's own bindings instead of the other way round: every
+-- The shared predicate tier shadows the tree's own bindings instead of the other way round: every
 -- catalog macro named sel_<name> is bound first and a local or prefix declaration of the same
 -- name is dropped as a duplicate. A tree that declares `:leaf` -- by name or through a PREFIX
 -- namespace claim -- then silently answers some other schema's sel_leaf.
 --
--- Copied from sql/00_types.sql's tree_expand_pseudo with two edits, both in service of one
+-- Copied from sql/00_types.sql's tree_expand_predicate with two edits, both in service of one
 -- claim (spec S7: the shared tier is a fallback, not an override):
 --   (1) the two dedup filters in `shared` -- NOT list_contains(... name) and NOT
 --       list_contains(... macro) -- are removed, so a shared candidate is kept even when the
@@ -12,7 +12,7 @@
 --   (2) the concatenation is list_concat(shared.extra, lp.bound) instead of
 --       list_concat(lp.bound, shared.extra), and the result is deduped keeping the FIRST
 --       occurrence of each name -- which is now the shared one. The dedup is needed because
---       tree_sql_pseudo_map builds a MAP, and a MAP with a repeated key raises.
+--       tree_sql_predicate_map builds a MAP, and a MAP with a repeated key raises.
 -- vvv GENERATED BELOW by test/mutants/regen.py from sql/00_types.sql -- do not edit by hand vvv
 -- Regenerate with: python3 test/mutants/regen.py   (--check verifies, writes nothing)
 -- Expand macro, map, prefix and shared bindings to expression bodies. Prefix entries bind every

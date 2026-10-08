@@ -337,7 +337,7 @@ class Parser:
         # through an attribute name would make `[WHERE ...]` mean something very different from
         # what it looks like, so it is refused by name.
         if name.upper() == "WHERE":
-            self.error("css has no host escape: mint a PSEUDO, or MATCH USING TREEQL")
+            self.error("css has no host escape: mint a PREDICATE, or MATCH USING TREEQL")
         self.skip_ws()
         if not self.at("=", "^=", "$=", "*="):
             self.error("expected one of = ^= $= *= after attribute " + name)
