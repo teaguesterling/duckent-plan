@@ -49,7 +49,7 @@ Rules encoded by the schema:
 
 ### 2.3 Introspection views
 
-`tree_catalog_trees()`, `tree_catalog_slots()`, `tree_catalog_predicates()`, `tree_catalog_assertions()`, `tree_catalog_languages()`, and `tree_catalog_tags(sch, nm)` which enumerates distinct S2 values per tree and epoch. *(amended 2026-10-08, PR #48: the two the design named `tree_catalog_pseudo_classes()` and `tree_catalog_classes(schema, tree)` are `tree_catalog_predicates()` and `tree_catalog_tags(sch, nm)`; neither old name exists in `duckdb_functions()`. `tree_catalog_tags` returns `(class, row_count)` — the column keeps the selector-side word.)* No view enumerates predicate truths: tags are data, predicates are code (Delta 2 §4). The M4 cheatsheet is generated from these views — see §7.
+`tree_catalog_trees()`, `tree_catalog_slots()`, `tree_catalog_predicates()`, `tree_catalog_assertions()`, `tree_catalog_languages()`, and `tree_catalog_tags(sch, nm)` which enumerates distinct S2 values per tree and epoch. *(amended 2026-10-08, PR #48: the two the design named `tree_catalog_pseudo_classes()` and `tree_catalog_classes(schema, tree)` are `tree_catalog_predicates()` and `tree_catalog_tags(sch, nm)`; neither old name exists in `duckdb_functions()`. `tree_catalog_tags` returns `(tag, row_count)`: #48 renamed the macro and left its output column `class`, which commit `8216eb5` finished — so this is **not** a place where a selector-side word was deliberately kept, as an earlier draft of this amendment had it. The catalog's vocabulary wins in the catalog's own view.)* No view enumerates predicate truths: tags are data, predicates are code (Delta 2 §4). The M4 cheatsheet is generated from these views — see §7.
 
 ## 3. Types
 
@@ -243,13 +243,26 @@ Suites by milestone:
 | M0 | create, LIKE, SHAPE ONLY, ATTR defaults and collisions, R-only trees and `tree_ddl_alter` adding the S group later, S-clause refusals on S-less trees, ORDER rules (declared, frozen, refused), P13 per partition on ingest, DML granularity, introspection | MN14, MN15, MN17, MN18, MN21 |
 | M1 | `level → parent → level` and `parent → (order, level) → parent` identities on every fixture; sibling-free refusals | MN1, MN2, MN6 |
 | M1½ | `tree_steps` semantics on `app` and `employees`; printer round trip; captures and multiplicity; step WHERE against projection only; NULL-definite semantics; unknown attr refuses | MN19 (re-scoped) |
-| M2 | CSS front-end; differential versus `ast_select_from` on the `sitting_duck_supported` subset (key sets equal by `EXCEPT` both ways); second differential (`SIZE` declared versus derived); P22 normal-form equality; P23 representation swaps; unknown pseudo counted; S-coherence | MN3, MN5, MN7, MN8, MN12, MN13, MN22, MN24, MN25 |
-| M3 | generated assertions per declared O slot; corruption flagged as corruption; phantom-join benchmark on a large parse kept out of the repo (`EXPLAIN` must show no join from `not`/`has` branches for a simple selector) | MN4, MN26 |
+| M2 | CSS front-end; differential versus `ast_select_from` on the `sitting_duck_supported` subset (key sets equal by `EXCEPT` both ways); second differential (`SIZE` declared versus derived); P22 normal-form equality; P23 representation swaps; unknown pseudo counted; S-coherence | MN5, MN7, MN8, MN12, MN13, MN22, MN24, MN25 (plus the declared-SIZE mutant M2 planted as MN3, which is **MN4** today) |
+| M3 | generated assertions per declared O slot; corruption flagged as corruption; phantom-join benchmark on a large parse kept out of the repo (`EXPLAIN` must show no join from `not`/`has` branches for a simple selector) | MN3 (re-planted, a different mutant), MN4, MN26 |
 | M4 | cheatsheet generated from the catalog and diffed in CI | none |
 | deferred | W: MN9, MN10, MN11, MN16. Host-escape MN20 retired, number reserved. MN23 with M-LANG | *(amended 2026-10-08: **not** in the manifest. `test/mutants/manifest.yaml` carries the 20 planted ids and nothing else — the deferred ones are listed here and in the handover's mutant catalogue, which is the record to read for them. The M3 design §7.9 claimed this had been changed; it had not)* |
 
-*(amended 2026-10-08 — three rows of the table above.)*
+*(amended 2026-10-08 — four rows of the table above.)*
 
+- **The ids in the right-hand column mean what they mean *now*, and MN3 and MN4 changed hands.**
+  M2 used **MN3** for "a declared SIZE override returns `size + 1`". M3 Task 6 retired that file —
+  its edit was textual, on the `__s` line of `tree_compile_projection`, and that line was
+  restructured into `tree_sql_size_join()`, so `regen.py` could no longer find the text to plant.
+  The number was **not** reused for the same claim: Task 7 re-planted the claim as **MN4**
+  against the restructured line, and Task 9 planted **MN3** as a *different* mutant — the
+  module-boundary one M3's gate asks for, where a semantics-path function reads an O accessor and
+  the compiler picks its sibling form by whether SIZE is declared. That one is not a wrong answer
+  but a wrong **dependency**, and no result differential can see it, which is why 42 compares
+  `tree_explain(...).sql` across an ELEMENT-less pair. So a reader grepping `MN3` today should
+  land in M3, and `MN4` carries M2's claim. This spec is maintained, so the column is corrected
+  rather than annotated in place; `FINDINGS.md` keeps its dated layering of the same renumber,
+  because it is a record of what was true when, and the two conventions are deliberate.
 - **The M3 row said "generated assertions per `OPTIMIZE`", which §2.1 contradicts.** `OPTIMIZE` is
   the future DDL spelling of the O block; there is no `optimize` column and never was one, and
   "declaring `SIZE`, `CHILDREN` or `NEXT` *is* declaring an override" is how the catalog records

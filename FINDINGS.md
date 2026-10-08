@@ -9,9 +9,15 @@ entry: catalog-side, `ID` → `KEY`, `CLASSES` → `TAGS`, `KEY` (the R slot) �
 `PSEUDO`/`PSEUDO_ARGS` → `PREDICATE`/`PREDICATE_ARGS`, `tree_catalog.pseudo_classes` →
 `tree_catalog.predicates`, the projection's `_id`/`_classes`/`_pseudo` → `_key`/`_tags`/
 `_predicate`, and `tree_catalog_classes`/`tree_catalog_pseudo_classes` →
-`tree_catalog_tags`/`tree_catalog_predicates`. Selector-side spellings did **not** move and are
-correct wherever they appear: `.x`, `#x`, `[a=b]`, `:x`, the IR kinds `id`/`class`/`pseudo`/
-`pseudo_unknown`, and TREEQL's `ID`/`CLASS`/`PSEUDO` clause keywords. `docs/cheatsheet.md` is
+`tree_catalog_tags`/`tree_catalog_predicates`. Three identifiers escaped all three of those PRs
+and were finished by commit `8216eb5`: `tree_builtin_pseudos()` → `tree_builtin_predicates()`,
+`tree_sql_pseudo_insert` → `tree_sql_predicate_insert`, and `tree_catalog_tags`' **output
+column**, which #48 left as `class` and which is now `tag`. Selector-side spellings did **not**
+move and are correct wherever they appear: `.x`, `#x`, `[a=b]`, `:x`, the IR kinds
+`id`/`class`/`pseudo`/`pseudo_unknown`, TREEQL's `ID`/`CLASS`/`PSEUDO` clause keywords, and
+`tree_sql_builtin_pseudo`, which compiles a `pseudo` clause. So a bare `class` below may be the IR
+kind (current), the old S slot, or the old `tree_catalog_tags` column — the surrounding sentence
+says which. `docs/cheatsheet.md` is
 generated from a live catalog and CI-gated, so it is the authority for any name. Where a stale
 *identifier* in an entry below would defeat a grep for live code it carries an inline note; stale
 *prose* vocabulary is left as written, because the entry records what was true then.
@@ -90,7 +96,8 @@ recorded `pure`; it is refused with `tree_ddl_create: PREDICATE p does not parse
 - **The predicate insert is built over list *indices*, not `list_transform`.** `tree_sql_purity`
   is a subquery macro, and DuckDB refuses a subquery inside a `lambda` (the same 1.5.5 constraint
   recorded below for `tree_sql_predicate_map` and `tree_sql_chain`), so
-  `tree_sql_pseudo_insert` iterates `generate_series(1, len(pseudo))` and indexes the list.
+  `tree_sql_predicate_insert` — `tree_sql_pseudo_insert` when the purity work landed, renamed by
+  `8216eb5` — iterates `generate_series(1, len(predicate))` and indexes the list.
 - **`ORDER BY i` matters.** `list_aggregate` gave list order for free; a hand-rolled
   `string_agg` does not. The expanded predicate list is **not name-ordered** — the shared tier is
   sorted, the local entries are in the order written — so ordering by name here would have

@@ -82,7 +82,7 @@ New fragment macros in `sql/07_match.sql`, each returning predicate text over tw
 - **`tree_sql_comb(op, a, b, p, elem)`** and **`tree_sql_clause(kind, value, op, arg, alias, attr_cols, has_map, p, elem)`**. Both were widened by `p` (the projection relation text) and `elem` (the tree's ELEMENT flag) so that `first-child` and `last-child` compile *through the fragments* rather than being spelled out a second time in the clause compiler. That is the fragment discipline: a tree that declares ELEMENT gets the first *element* child from the same definition `tree_first_child` uses.
 - **`tree_sql_chain(p, steps, anchor, elem)`** renders one step chain as FROM text; **`tree_sql_group(kind, p, steps, anchor, elem)`** wraps it in `[NOT] EXISTS`. The group renderer exists because the two group kinds differed by one keyword and had been written twice.
 - **The traversal macros pass `elem := true` unconditionally.** That is always *correct* — it selects the element-aware form, which degenerates to the O(1) form on a tree whose every row is an element. Only the compiler consults its `has_element` flag, and only to pick the cheaper spelling when it is safe. Cost, never results.
-- **Built-in pseudo-classes: `first-child`, `last-child`.** They are structural, so every tree has them whatever its SEMANTIC group binds, they are listed once in `tree_builtin_pseudos()`, and they are never reported as unknown. *(amended 2026-09-15, PR #2 fix wave — three consequences of "structural" that had not been drawn. They read no S slot, so the S-less refusal does **not** cover them: they work on an R-only tree. They mean nothing where siblings have no order, so the **sibling-free** refusal **does** cover them, and its sentence now reads "SIBLING, FOLLOWING, `:first-child` and `:last-child` are unavailable". And `tree_builtin_pseudos()` is consulted rather than re-listed: `tree_sql_builtin_pseudo(name, alias, p, elem)` returns the predicate or NULL, so the list and the dispatch cannot fall out of step.)*
+- **Built-in pseudo-classes: `first-child`, `last-child`.** They are structural, so every tree has them whatever its SEMANTIC group binds, they are listed once in `tree_builtin_pseudos()` (**`tree_builtin_predicates()`** since `8216eb5`), and they are never reported as unknown. *(amended 2026-09-15, PR #2 fix wave — three consequences of "structural" that had not been drawn. They read no S slot, so the S-less refusal does **not** cover them: they work on an R-only tree. They mean nothing where siblings have no order, so the **sibling-free** refusal **does** cover them, and its sentence now reads "SIBLING, FOLLOWING, `:first-child` and `:last-child` are unavailable". And `tree_builtin_pseudos()` is consulted rather than re-listed: `tree_sql_builtin_pseudo(name, alias, p, elem)` returns the predicate or NULL, so the list and the dispatch cannot fall out of step.)*
 - **A partition's first root is a first child, in both forms** *(amended 2026-09-15, PR #2 fix wave)*. The O(1) spelling was `a._pre = a._parent + 1`, which is NULL — and so false — on a level-0 row, while the element-aware scan called that row a first child (no earlier level-0 sibling; `tree_sql_siblings` relates level-0 rows through `IS NOT DISTINCT FROM`, deliberately). Two spellings of one relation disagreeing is the thing the fragment discipline exists to prevent, so the O(1) form is now `COALESCE(a._pre = a._parent + 1, a._pre = 0)`. `last-child` needed nothing — its O(1) form is the scan with the element conjunct dropped — and `33_navigation.test` pins both against a tree declaring `element := 'true'`, where the two spellings must answer identically.
 
 *(amended 2026-10-08 — the `p` parameter is gone.)* Every signature in this section that carries
@@ -95,6 +95,13 @@ elem)` — eight arguments, not nine — `tree_sql_chain(steps, anchor, elem)`,
 `tree_sql_first_child(a, elem)`, `tree_sql_last_child(a, elem)`,
 `tree_sql_next_sibling(a, b, elem)`, `tree_sql_prev_sibling(a, b, elem)`. The relations the table
 names are unchanged; only how the relation text reaches them is.
+
+One name in this section also moved: the built-in list is **`tree_builtin_predicates()`**, renamed
+from `tree_builtin_pseudos()` by commit `8216eb5`, which finished the vocabulary pass #48 and #49
+had left three identifiers short of done. The dispatch macro beside it keeps the selector-side
+word, `tree_sql_builtin_pseudo(name, alias, elem)` — it compiles a `pseudo` clause, so that is the
+right half of the boundary for it to sit on. Both still answer only `:first-child` and
+`:last-child`.
 
 This is the complete set of relations the basis can express with `_pre`, `_level`, `_parent`, `_size`: containment in both directions, parenthood in both directions, and sibling order in both directions, plus the two positional predicates and the root test. CSS v0 uses subtree, children, next, after, and first-child; the reverse axes (parent, ancestors, before, prev) exist so that TREEQL's `PARENT` and `ANCESTOR` steps and xpath's reverse axes cost nothing later, and so that `tree_ancestors` shares its definition with everything else.
 
@@ -161,7 +168,7 @@ Separately, and not a divergence in result: two inputs of trailing junk where bo
 | #141 | `A + B` counts punctuation as siblings | element rows (§4, D-N18); corpus row **`c12`** (`identifier + identifier`) on `py_variety` *(amended 2026-10-08: one row on one fixture, not "both fixtures", and it is not in 41 — it carries no `sitting_duck_supported` tag, so only 40 and 44 run it)* |
 | astcss-eval | captures `@f` silently ignored by `ast_select` | the differential strips captures before comparing key sets; capture semantics are tested only on duckent's side *(amended 2026-10-08: **no corpus row uses a capture** — `@` appears nowhere in `selectors.tsv` — so there is nothing for 40 to strip. Captures are covered by `31_match.test`, 37 and 38, not by the corpus)* |
 | astcss-eval | attribute filters and pseudo-classes inside `:has` refused upstream | excluded from the `sitting_duck_supported` subset; tested on duckent's side only |
-| astcss-eval | an unknown `.class` silently matches nothing | correct by the data/code doctrine (tags are data), and `tree_catalog_tags(sch, nm)` is how you learn what exists *(renamed from `tree_catalog_classes` by PR #48; the view's output column is still `class`)* *(amended 2026-09-15, M2 build: the original row also claimed `tree_explain` reports classes named in the selector that occur nowhere in the tree. It does not — `tree_explain` returns `{treeql, sql, language}` and nothing else. Reporting them is an M-LANG item, not a shipped behaviour)* |
+| astcss-eval | an unknown `.class` silently matches nothing | correct by the data/code doctrine (tags are data), and `tree_catalog_tags(sch, nm)` is how you learn what exists *(renamed from `tree_catalog_classes` by PR #48; its output column, which that pass left as `class`, is `tag` as of commit `8216eb5`)* *(amended 2026-09-15, M2 build: the original row also claimed `tree_explain` reports classes named in the selector that occur nowhere in the tree. It does not — `tree_explain` returns `{treeql, sql, language}` and nothing else. Reporting them is an M-LANG item, not a shipped behaviour)* |
 
 *(added 2026-09-15, PR #2 fix wave: nine more, from the sitting_duck issues opened since the table was written. Every one of them is a place where duckent's answer comes out of a declaration rather than out of engine behaviour, which is the whole reason the table exists.)*
 
@@ -277,7 +284,7 @@ Divergences are recorded in `FINDINGS.md` with adjudication before any test chan
 
 | id | wrong implementation, as built | `expect_fail` | also verified |
 |---|---|---|---|
-| MN3 | a **declared** SIZE compiles to a subtree range one short of a derived one | 42 | nothing else. 40 and 41 **pass** under it, although both declare SIZE |
+| MN3 — **today's MN4**, see below | a **declared** SIZE compiles to a subtree range one short of a derived one | 42 | nothing else. 40 and 41 **pass** under it, although both declare SIZE |
 | MN5 | a group's first inner step is joined as a CHILD whatever its op, so `:has()` is child-only | 40 | 34_groups, 41 |
 | MN7 | an unknown pseudo-class raises instead of selecting nothing | 40 | 37, 31, 34, 36 |
 | MN8 | the runner parser records a child combinator as a descendant, so `a > b c` groups as `a b c` | 44, 37 | — |
@@ -286,6 +293,15 @@ Divergences are recorded in `FINDINGS.md` with adjudication before any test chan
 | MN22 | the css lowering consults `tree_state` and refuses while a partition is not P13-clean | 44_parsers | nothing: 40's css goes through the **runner** parser and never reaches `tree_css_lower` |
 | MN24 | the printer omits NOT groups, so `.fn:not(:has(string))` prints as `.fn` | 34_groups, 38_css_lower | — |
 | MN25 | a CLASS clause is answered from the pseudo-class of the same name when CLASSES is empty | 43 | — |
+
+*(amended 2026-10-08 — the MN3 row's id.)* The preamble above says the manifest is the live record,
+and for that row it has not been since M3. **M2's MN3 is today's MN4.** M3 Task 6 retired M2's
+file (its edit was textual, on a `tree_compile_projection` line that `tree_sql_size_join()`
+replaced, so `regen.py` could no longer plant it), Task 7 re-planted the same claim as MN4 against
+the restructured line, and Task 9 gave **MN3** to a different mutant entirely — the module-boundary
+one, in `sql/07_match.sql`. The row above describes what M2 planted, which is why it keeps its
+number; the id to grep is MN4. The M3 design §6 and the core design's milestone table carry the
+renumber.
 
 Three of those corrections are one lesson, and it is the one to carry: **a differential suite cannot see a mutation that moves both of its sides.** 40_corpus compares two *spellings* of one selector against each other on *one* tree, so a symmetric mutation — the printer (MN24), a shortened `_size` (MN3) — cancels exactly. Only a comparison against something frozen catches those.
 
