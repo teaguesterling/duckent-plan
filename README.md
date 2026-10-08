@@ -4,7 +4,9 @@ Tree semantics for ordered relations: the contract every duck sits on.
 
 duckent is a (planned) DuckDB extension that implements **tree semantics over ordered relations**: the layer *below* every parser. It defines what makes a set of rows a tree, what a CSS-style selector means over those rows, and how a `MATCH` compiles to ordinary SQL. Parsers such as [sitting_duck](https://github.com/teaguesterling/sitting_duck) (ASTs) and [duck_block_utils](https://github.com/teaguesterling/duckdb_duck_block_utils) (documents), and every adjacency list already in your warehouse (org charts, category trees, BOMs, file hierarchies), become *vocabularies over one contract*.
 
-> **Status: macro prototype, M2 runs.** `sql/` holds a macro-only reference implementation of M0, M1, M1½ and M2: the catalog, the projection compiler, both basis derivations, forest DML with P13 on ingest, TREEQL matching through `tree_steps`, and now nested `HAS`/`NOT` groups with a `SELF` relation, two css front-ends bound to each other by a row-level differential, a typed `ATTR MAP`, element rows, four predicate binding forms with a shared `sel_*` tier, and a selector corpus checked against frozen sitting_duck references. It runs on DuckDB 1.5.5 with no extension dependency. `test/sql/` holds the sqllogictest suites and `test/mutants/` the planted mutants; both carry over unchanged to the C++ extension. The design is in [`docs/superpowers/specs/2026-09-13-duckent-core-design.md`](docs/superpowers/specs/2026-09-13-duckent-core-design.md) and, for M2, [`docs/superpowers/specs/2026-09-14-duckent-m2-design.md`](docs/superpowers/specs/2026-09-14-duckent-m2-design.md). Where the build differed from either, `FINDINGS.md` says so.
+> **Status: macro prototype, M4 runs.** `sql/` holds a macro-only reference implementation of M0, M1, M1½, M2, M3 and M4: the catalog, the projection compiler, both basis derivations, forest DML with P13 on ingest, TREEQL matching through `tree_steps`, nested `HAS`/`NOT` groups with a `SELF` relation, two css front-ends bound to each other by a row-level differential, a typed `ATTR_MAP`, element rows, four `PREDICATE` binding forms with a shared `sel_*` tier, and a selector corpus checked against frozen sitting_duck references. M3 added the O layer: a declared `SIZE`, `CHILDREN` or `NEXT` must test-equal the default R derives, checked on ingest and re-runnable with `CALL tree_check`; the frozen-order guard, for a tree that declares no `ORDER` and so takes the row set's own order as its traversal; the per-root `UNIQUE KEY` check a `PARENT` basis resolves against; and the sibling and positional relations, over one window. M4 computes each `PREDICATE`'s purity and refuses a body that is decidably impure, and generates [`docs/cheatsheet.md`](docs/cheatsheet.md) from catalog queries behind a CI drift gate. It runs on DuckDB 1.5.5 with no extension dependency. `test/sql/` holds the sqllogictest suites and `test/mutants/` the planted mutants; both carry over unchanged to the C++ extension. The design is in [`docs/superpowers/specs/2026-09-13-duckent-core-design.md`](docs/superpowers/specs/2026-09-13-duckent-core-design.md) and, per milestone, the [M2](docs/superpowers/specs/2026-09-14-duckent-m2-design.md) and [M3](docs/superpowers/specs/2026-09-15-duckent-m3-design.md) design documents. Where the build differed from any of them, `FINDINGS.md` says so.
+
+> **Looking for a name, a macro, or a refusal message?** [`docs/cheatsheet.md`](docs/cheatsheet.md) is generated from a live catalog by `test/gen_cheatsheet.py` and gated in CI (`--check` fails the build on drift), so every slot, macro, canonical column and error string in it is measured rather than remembered. It is the authoritative reference for names; prose, this README included, follows it.
 
 The name: Ents speak Tree, and Treebeard's policy of never saying anything unless it is worth taking a long time to say is bind-time checking's motto.
 
@@ -25,7 +27,7 @@ CREATE TREE sitting_duck_ast (
   ORDER node_id,  LEVEL depth,
   TYPE  semantic_type_to_string(semantic_type),
   ATTR  (name := name, start_line := start_line),    -- named, typed attributes
-  ATTRS MAP extra,                                   -- long-tail catch-all
+  ATTR_MAP extra,                                    -- long-tail catch-all
   PREDICATE (docblock := has_docblock(file_path, node_id),
              leaf     := descendant_count = 0),
   SIZE descendant_count OPTIMIZE                     -- native column; test-equals its default
@@ -91,10 +93,12 @@ Two things named `KEY` are deliberately distinguished by that rule. The S-block 
 | M0 | Shape and tree registry, projection compiler, per-partition well-formedness | Property tests over generated level sequences; sitting_duck output as oracle fixture |
 | M1 | Basis derivations (level to parent, parent to order and level), sibling-free profile | Round-trip identities; legible refusals |
 | M2 | Matcher core over R and S | Differential oracle against sitting_duck's shipped `ast_select` — **met**: 107 of 108 frozen references asserted and passing, the 108th adjudicated against upstream in `FINDINGS.md` (sitting_duck's bare type selector prefix-matches) |
-| M3 | O layer and planner use of it | Auto-generated conformance assertions; module-boundary mutant |
-| M4 | Pseudo-class dispatch, profiles, introspection, docs | Cheatsheet generated from catalog queries |
+| M3 | O layer and planner use of it | Auto-generated conformance assertions; module-boundary mutant — **met**: `CALL tree_check` records `assert_o_size`, `assert_o_children`, `assert_o_next` and `assert_p13` into `tree_catalog_assertions()`, and the same assertions refuse a divergent override at ingest; MN03 is the module-boundary mutant, and it dies by compiled plan text, not by a wrong answer |
+| M4 | Predicate dispatch, profiles, introspection, docs | Cheatsheet generated from catalog queries — **met**: [`docs/cheatsheet.md`](docs/cheatsheet.md) is written by `test/gen_cheatsheet.py` out of `tree_catalog_*()` and `duckdb_functions()`, and `--check` is a CI step, so the document cannot drift from the catalog without failing the build |
 
-Planted mutants are listed in the handover document and tracked in `test/mutants/manifest.yaml`.
+Planted mutants are tracked in `test/mutants/manifest.yaml`, which is the only complete list:
+the handover document describes MN1–MN21, MN22/MN24/MN25 are assigned by the M2 design document,
+and MN26 is described in the manifest alone.
 All must die before a milestone closes. Twenty are planted today and all twenty die; the
 remaining ids are deferred or reserved — the W block, the retired host-escape number, and one that
 waits on the selector-language work. "Deferred" is not "undecided": W's four (MN9, MN10, MN11, MN16)
@@ -152,18 +156,20 @@ In the macro phase `CALL tree_ddl_*`, the DML verbs, and `tree_match` are execut
 
 | File | What it is |
 |---|---|
-| [`docs/11-duckent-handover-v21.md`](docs/11-duckent-handover-v21.md) | The build brief. Identity, doctrine, the normative contract, API surface, milestones, planted mutants, open decisions. Usable verbatim as an engineer brief or a Claude Code session prompt. |
-| [`docs/14-shape-syntax-options-v13.md`](docs/14-shape-syntax-options-v13.md) | The settled DDL and DML family, with the design-space enumeration, verdicts, and the experiment log showing every ingredient verified on DuckDB 1.x. |
-| [`docs/12-tree-contract-lesson-v18.html`](docs/12-tree-contract-lesson-v18.html) | The public teaching layer: a hands-on lesson from `grep` to `CREATE TREE`. Self-contained HTML. Published at <https://teaguesterling.github.io/pages/static/tree-contract-lesson.html>. |
+| [`docs/cheatsheet.md`](docs/cheatsheet.md) | **The reference for names.** Every slot, verb, macro, canonical column, catalog view and refusal message, generated from a live catalog by `test/gen_cheatsheet.py` and gated in CI. Measured, not written; when prose and the cheatsheet disagree, the cheatsheet is right. |
+| [`docs/11-duckent-handover-v21.md`](docs/11-duckent-handover-v21.md) | The historical build brief, frozen at v21 and kept for the record: identity, doctrine, the normative contract, API surface, milestones, planted mutants, open decisions. It still calls the project `duck_nest`, names introspection functions that were never built, and uses the pre-rename vocabulary throughout, so it is no longer usable verbatim as a prompt — read it for intent and the cheatsheet for names. |
+| [`docs/14-shape-syntax-options-v13.md`](docs/14-shape-syntax-options-v13.md) | The settled DDL and DML family for the future `CREATE TREE` surface, with the design-space enumeration, verdicts, and the experiment log showing every ingredient verified on DuckDB 1.x. Its slot names track the catalog's. |
+| [`docs/12-tree-contract-lesson-v19.html`](docs/12-tree-contract-lesson-v19.html) | The public teaching layer: a hands-on lesson from `grep` to `CREATE TREE`. Self-contained HTML. Published at <https://teaguesterling.github.io/pages/static/tree-contract-lesson.html>. |
 | [`docs/superpowers/specs/2026-09-13-duckent-core-design.md`](docs/superpowers/specs/2026-09-13-duckent-core-design.md) | The implementation architecture: catalog schema, types, operations, the projection, match evaluation, what the C++ port replaces. Amended at the close of M2. |
 | [`docs/superpowers/specs/2026-09-14-duckent-m2-design.md`](docs/superpowers/specs/2026-09-14-duckent-m2-design.md) | The M2 design: nesting, the two css front-ends, the differential harness, the mutants. Marked "built"; the amended paragraphs say where the build and the design differ. |
-| [`FINDINGS.md`](FINDINGS.md) | Every oracle divergence with its adjudication, every DuckDB 1.5.5 constraint the design had to bend around, the spike numbers, and the open items after M2. |
+| [`docs/superpowers/specs/2026-09-15-duckent-m3-design.md`](docs/superpowers/specs/2026-09-15-duckent-m3-design.md) | The M3 design: an honest, cheap O layer — derived structure, conformance at ingest, one projection per query, the mutants and their evidence, and the well-formedness question duck_block_utils raised. |
+| [`FINDINGS.md`](FINDINGS.md) | Every oracle divergence with its adjudication, every DuckDB 1.5.5 constraint the design had to bend around, the spike numbers, and the open items each milestone carried forward. |
 
 The handover names other companion documents (the assertion plan, the trees-to-rows paper, the sitting_duck verification pass) that are not yet in this repository.
 
 ## Related repositories
 
 - [sitting_duck](https://github.com/teaguesterling/sitting_duck): ASTs as rows across 27 tree-sitter grammars, with `ast_select`. The M2 differential oracle.
-- [duck_block_utils](https://github.com/teaguesterling/duckdb_duck_block_utils): documents as ordered, leveled block rows. Conforms by construction.
+- [duck_block_utils](https://github.com/teaguesterling/duckdb_duck_block_utils): documents as ordered, leveled block rows. Conforms once a root row is prepended: it puts top-level blocks at level 1 by design, leaving level 0 for an explicit document row, so a duck_block_utils relation does *not* conform as it stands — and does not need its levels shifted either. `test/sql/45_duck_blocks.test` declares one as a tree and pins the prepend.
 - [squackit](https://github.com/teaguesterling/squackit), [pluckit](https://github.com/teaguesterling/pluckit), [fledgling](https://github.com/teaguesterling/fledgling): consumers of the same selector semantics from Python, the shell, and a code index.
 - [umwelt](https://github.com/teaguesterling/umwelt): CSS as a policy engine, the layer above.
