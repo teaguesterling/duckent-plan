@@ -1,6 +1,6 @@
 # duckent M3 design: an honest, cheap O layer
 
-*Status: approved design, 2026-09-15. Scope: milestone M3 as a macro prototype on DuckDB 1.5.5, on top of M2 (PR #2, merge `4bdd207`). Baseline documents: the core design (`2026-09-13-duckent-core-design.md`), the M2 design (`2026-09-14-duckent-m2-design.md`, amended to what was built), handover v21 §O and §M3. Where this document and an earlier one disagree, this document wins for M3 and the earlier one is amended at the end of the milestone.*
+*Status: built; see FINDINGS for deviations, and the dated amendments inline. Designed 2026-09-15, built 2026-09/10. Scope: milestone M3 as a macro prototype on DuckDB 1.5.5, on top of M2 (PR #2, merge `4bdd207`). Baseline documents: the core design (`2026-09-13-duckent-core-design.md`), the M2 design (`2026-09-14-duckent-m2-design.md`, amended to what was built), handover v21 §O and §M3. Where this document and an earlier one disagree, this document wins for M3 and the earlier one is amended at the end of the milestone.*
 
 ## 1. Decisions
 

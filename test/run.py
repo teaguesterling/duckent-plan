@@ -171,15 +171,16 @@ class Session:
         it to, leaving every other argument alone. A selector already handed over as IR is not
         text and is left untouched.
 
-        When the call names no language, the default from `tree_catalog.settings` is applied AND
-        WRITTEN BACK as `language := '<default>'`. That is the front-end recording the language it
-        used: the compiler reports `_match_language = COALESCE(language, 'treeql')` and sees only
-        IR, so without this a selector parsed as css reported `treeql` -- provenance naming a
-        language nothing had parsed. Here the parse and the provenance are the same decision, made
-        once, by the thing that made it. A call that names its language keeps the one it named --
-        and so does one that names it with an expression rather than a literal: the parse-time
-        lookup cannot read that, so the default front-end parses it as before, but nothing is
-        appended, because a second `language :=` would be a duplicate named parameter."""
+        When the call names no language, the default from `tree_catalog.settings` decides which
+        front-end parses the text -- and nothing is written back. ONE MECHANISM carries the
+        provenance: the parser that parsed the text stamps its name on the IR's root row
+        (`value: 'css'`, see css_parser.to_sql), tree_selector_language reads it back, and
+        `_match_language` is `COALESCE(language, <that stamp>)`. This used to append
+        `language := '<default>'` as a second, parallel record of the same decision, which was
+        redundant once the stamp existed and had to be suppressed whenever the caller named a
+        language -- including with an expression the parse-time lookup could not read. A call that
+        names its language still keeps the one it named; the stamp is what speaks when it does
+        not."""
         for fname in ("tree_match", "tree_explain"):
             pos = 0
             while True:
@@ -193,8 +194,6 @@ class Session:
                 named, lang = self.language_arg(args)
                 if lang is None:
                     lang = self.default_language()
-                    if not named:
-                        args.append(" language := '" + lang.replace("'", "''") + "'")
                 if lang != "css":
                     raise RuntimeError("tree_match: TREEQL text parsing arrives with M-LANG; pass tree_steps(...)")
                 args[2] = " " + css_parser.to_sql(css_parser.parse(text))

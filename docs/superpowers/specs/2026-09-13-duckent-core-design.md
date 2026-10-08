@@ -1,6 +1,6 @@
 # duckent core design: catalog, operations, match evaluation
 
-*Status: approved design, 2026-09-13. Scope: the implementation architecture for M0 through M1½, plus the seams M2 onward will use. This document does not restate the ROWS contract; it says how the contract is realized. Where it names a handover rule it cites it. Baseline: handover v26, TREEQL proposal v2, Builder Delta 2.*
+*Status: built; see FINDINGS for deviations. Designed 2026-09-13, built through M3 (2026-10). Scope: the implementation architecture for M0 through M1½, plus the seams M2 onward will use. This document does not restate the ROWS contract; it says how the contract is realized. Where it names a handover rule it cites it. Baseline: handover v26, TREEQL proposal v2, Builder Delta 2.*
 
 ## 1. Decisions that frame everything
 
