@@ -111,8 +111,8 @@ SIZE_DERIV = "tree_shape(root := 'file_path', \"order\" := 'node_id', level := '
 
 SHAPE = """tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
-  semantic := tree_semantic(type := 'type', id := 'name', classes := 'css_classes',
-    element := 'is_element', pseudo := [{name: 'def', body: '(flags & 6) = 6'}]))"""
+  semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
+    element := 'is_element', predicate := [{name: 'def', body: '(flags & 6) = 6'}]))"""
 
 SELECTORS = [".fn:has(string)", ".fn:not(:has(string))"]
 
@@ -152,7 +152,7 @@ LIST_BODY = """SELECT count(*), md5(string_agg(k, ',' ORDER BY k)) FROM (
   FROM {p} a
   LEFT JOIN {sub} sub ON sub._root = a._root AND sub._pre = a._pre
   LEFT JOIN {st} st ON st._root = a._root
-  WHERE COALESCE(list_contains(a._classes, 'fn'), false) AND {neg}{test})"""
+  WHERE COALESCE(list_contains(a._tags, 'fn'), false) AND {neg}{test})"""
 LIST_TEST = "COALESCE(list_has_any(COALESCE(sub.subtree, []), COALESCE(st.pres, [])), false)"
 
 

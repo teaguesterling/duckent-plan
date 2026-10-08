@@ -23,7 +23,7 @@ CREATE TABLE sd_py_variety AS SELECT * REPLACE (regexp_replace(file_path, '.*/',
 statement ok
 CREATE TABLE sd_scripts AS SELECT * REPLACE (regexp_replace(file_path, '.*/', '') AS file_path) FROM read_ast('~/Projects/astcss-eval/fixtures/repo-small-py/*.py');
 
-# The corpus trees. CLASSES, ELEMENT and `params` are columns test/gen_fixtures.py
+# The corpus trees. TAGS, ELEMENT and `params` are columns test/gen_fixtures.py
 # derived from sitting_duck at fixture time, so nothing here needs the extension.
 
 statement ok

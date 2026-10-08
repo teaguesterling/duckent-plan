@@ -25,7 +25,7 @@ WITH base AS (
 ),
 -- Macro-, map- and prefix-bound predicates become expression bodies here, before validation
 -- and before anything is stored: tree_sql_predicate_map reads (p).body only, so an unexpanded
--- binding would compile the pseudo map -- and with it the projection -- to NULL. The catalog
+-- binding would compile the predicate map -- and with it the projection -- to NULL. The catalog
 -- then holds the expanded body, so nothing downstream has to re-expand (and a prefix binding
 -- is resolved once, against the macros that existed at create time).
 expanded AS (
@@ -36,7 +36,7 @@ expanded AS (
     {root: (merged).root, "order": (merged)."order", unique_key: (merged).unique_key, level: (merged).level, parent: (merged).parent,
      sibling_order: (merged).sibling_order, size: (merged).size, children: (merged).children, next: (merged).next,
      semantic: tree_expand_predicate((merged).semantic)}::TREE_SHAPE AS shape,
-    -- Tested against this create's own declared PSEUDO, never the LIKE-merged one: a parent's
+    -- Tested against this create's own declared PREDICATE, never the LIKE-merged one: a parent's
     -- already-resolved shared/prefix rows round-trip with a provenance marker of their own
     -- (tree_shape_from_catalog), and that marker must never be mistaken for a fresh explicit
     -- declaration by this tree.
@@ -145,7 +145,7 @@ built AS (
      || tree_sql_lit(storage) || ', ' || tree_sql_lit(order_source) || ', ' || has_semantic || ', NULL)' AS s_trees,
    'INSERT INTO tree_catalog.slots VALUES ' || list_aggregate(list_transform(rows, lambda x:
        '(' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ' || tree_sql_lit((x).b) || ', ' || tree_sql_lit((x).s) || ', ' || tree_sql_lit((x).e) || ')'), 'string_agg', ', ') AS s_slots,
-   tree_sql_pseudo_insert(db, sch, nm, (shape).semantic.predicate, explicit_sel_prefix) AS s_pseudo,
+   tree_sql_predicate_insert(db, sch, nm, (shape).semantic.predicate, explicit_sel_prefix) AS s_predicate,
    -- ORDER first, and over the SOURCE rather than the projection: it must precede every statement
    -- that evaluates proj_sql, because a tie is numbered away by row_number() and, under a declared
    -- PARENT, multiplies rows through the __order join (M3 §3.2). Emitted for projection-mode trees
@@ -179,5 +179,5 @@ SELECT CASE WHEN s_begin IS NULL OR s_trees IS NULL OR s_slots IS NULL OR s_comm
             -- plain tree_err(), not (SELECT tree_err(...)): an uncorrelated scalar subquery is
             -- evaluated once, eagerly, and would refuse every valid create
             THEN tree_err('tree_ddl_create: internal: a required statement compiled to NULL')
-            ELSE list_filter([s_begin, s_trees, s_slots, s_pseudo, s_order, s_key, s_reach, s_shadow, s_p13, s_conform, s_table, s_macro, s_partitions, s_compiled, s_attr_cols, s_commit], lambda x: x IS NOT NULL) END
+            ELSE list_filter([s_begin, s_trees, s_slots, s_predicate, s_order, s_key, s_reach, s_shadow, s_p13, s_conform, s_table, s_macro, s_partitions, s_compiled, s_attr_cols, s_commit], lambda x: x IS NOT NULL) END
 FROM built);

@@ -45,7 +45,7 @@ SELECT artifact FROM tree_catalog.compiled WHERE tree_name = 'app';
 attribute_columns
 projection
 
-# classes introspection is empty for a tree without CLASSES
+# tags introspection is empty for a tree without TAGS
 query I
 SELECT count(*) FROM tree_catalog_tags('main', 'app');
 ----
@@ -106,8 +106,8 @@ SELECT count(*), max(_level), max(_size) FROM tree_project('main', 'flat_default
 ----
 54	0	0
 
-# PSEUDO_ARGS declares the arguments every shared-tier (sel_) pseudo-class is bound with, so it
-# asserts that there ARE shared-tier pseudo-classes. With no sel_ macro in scope it binds none --
+# PREDICATE_ARGS declares the arguments every shared-tier (sel_) predicate is bound with, so it
+# asserts that there ARE shared-tier predicates. With no sel_ macro in scope it binds none --
 # and tree_semantic_declares counted it as an S group regardless, so has_semantic went true and the
 # S-less refusal in tree_match stopped firing: a TYPE clause then compiled against TYPE's 'node'
 # default and returned zero rows where a refusal was owed. That is verbatim the failure the comment
@@ -120,7 +120,7 @@ CALL tree_ddl_create('main', 'pa_unbound', tree_spec(tree_shape(root := 'file_pa
 PREDICATE_ARGS binds no macro
 
 # With a shared-tier macro in scope the same declaration is accepted and binds it, so the refusal
-# above is about binding nothing rather than about PSEUDO_ARGS itself.
+# above is about binding nothing rather than about PREDICATE_ARGS itself.
 statement ok
 CREATE MACRO sel_leafy(n) AS n = 0;
 
@@ -288,22 +288,108 @@ CALL tree_ddl_create('main', 'bad10', tree_spec(tree_shape("order" := 'node_id',
 ----
 shadows a canonical column: _size
 
+# ... and so does every OTHER canonical column. The check's alternation used to be a
+# hand-written list of the thirteen names, and only _size was ever exercised (FINDINGS said
+# so); the catalog's vocabulary renames then left it naming `id`, `classes` and `pseudo` while
+# the projection emitted _key, _tags and _predicate, so a source column called _key, _tags or
+# _predicate DISPLACED the canonical column and this check -- the one whose whole job is to
+# catch that -- said nothing. One record per canonical column, so no arm is untested again.
+#
+# The shadow column is typed BIGINT on purpose. A VARCHAR one makes the projection's own
+# arithmetic over _pre, _level and _size fail to BIND first (No function matches '+(VARCHAR,
+# INTEGER_LITERAL)'), which refuses for the wrong reason and would not exercise the regex;
+# measured both ways.
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_root', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_root" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _root
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_pre', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_pre" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _pre
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_level', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_level" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _level
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_parent', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_parent" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _parent
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_size', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_size" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _size
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_children', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_children" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _children
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_next', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_next" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _next
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_type', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_type" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _type
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_key', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_key" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _key
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_tags', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_tags" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _tags
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_attr_map', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_attr_map" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _attr_map
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_element', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_element" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _element
+
+statement error
+CALL tree_ddl_create('main', 'bad_shadow_predicate', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := '(SELECT *, 1::BIGINT AS "_predicate" FROM read_parquet(''test/data/app.parquet''))'));
+----
+shadows a canonical column: _predicate
+
+# ... and the thirteen records above cannot fall behind the list, because the alternation is
+# BUILT from tree_canonical_columns() rather than written out. This pins that derivation: a
+# hand-written list that drops a name (or a rename that moves one) stops matching here, and a
+# canonical column added to the one list is guarded the moment it is added.
+query I
+SELECT tree_sql_shadow_check('(SELECT 1)', 'tree_ddl_create') LIKE '%' || list_aggregate(list_transform(tree_canonical_columns(), lambda c: substr(c, 2)), 'string_agg', '|') || '%';
+----
+true
+
 # NULL abstract refuses: it is interpolated into the trees INSERT, which would compile to NULL
 statement error
 CALL tree_ddl_create('main', 'bad14', tree_spec(tree_shape("order" := 'node_id', level := 'depth'), source := 'read_parquet(''test/data/app.parquet'')', abstract := NULL));
 ----
 abstract must be true or false
 
-# a PSEUDO with no body refuses: the pseudo map and the pseudo_classes INSERT both go NULL
+# a PREDICATE with no body refuses: the predicate map and the predicates INSERT both go NULL
 statement error
 CALL tree_ddl_create('main', 'bad15', tree_spec(tree_shape("order" := 'node_id', level := 'depth', semantic := tree_semantic(predicate := [{name: 'p', body: NULL}])), source := 'read_parquet(''test/data/app.parquet'')'));
 ----
-every PSEUDO needs a name and a body
+every PREDICATE needs a name and a body
 
 statement error
 CALL tree_ddl_create('main', 'bad16', tree_spec(tree_shape("order" := 'node_id', level := 'depth', semantic := tree_semantic(predicate := [{name: NULL, body: 'true'}])), source := 'read_parquet(''test/data/app.parquet'')'));
 ----
-every PSEUDO needs a name and a body
+every PREDICATE needs a name and a body
 
 # none of the three left a partial catalog behind
 query IIII
@@ -417,7 +503,7 @@ SELECT has_semantic, (SELECT _type FROM tree_project('main', 'bare') WHERE _pre 
 true	function_definition
 
 query II
-SELECT class, row_count FROM tree_catalog_tags('main', 'bare') WHERE class = 'function_definition';
+SELECT tag, row_count FROM tree_catalog_tags('main', 'bare') WHERE tag = 'function_definition';
 ----
 function_definition	2
 
@@ -457,7 +543,10 @@ SELECT count(*) FROM tree_apply(tree_shape("order" := 'node_id', level := 'depth
 54
 
 # object names are injective: ('a_b','c') and ('a','b_c') must not compile to the same macro.
-# Underscores in the parts are doubled, so a single underscore is only ever the separator.
+# The SCHEMA's LENGTH is prefixed, not the underscores doubled -- doubling is NOT injective and
+# sql/00_types.sql says why (it maps ('a_','c') and ('a','_c') both to a__c). Decoding reads the
+# number, then that many characters, then the separator, then the rest: proj_3_a_b_c against
+# proj_1_a_b_c here, and proj_2_a__c against proj_1_a__c for the pair doubling collapses.
 statement ok
 CREATE TABLE tiny(node_id INT, depth INT);
 
@@ -521,7 +610,7 @@ SELECT * FROM tree_project('main', 'app');
 proj_4_main_app
 
 # ELEMENT reaches the catalog as an S slot and the projection as a per-row predicate; a
-# macro-bound PSEUDO is expanded to its call expression before it is stored
+# macro-bound PREDICATE is expanded to its call expression before it is stored
 statement ok
 CREATE MACRO is_leaf(n) AS n = 0;
 
@@ -550,7 +639,7 @@ SELECT sql_text FROM tree_catalog.compiled WHERE tree_name = 'elem' AND artifact
 ----
 [{"name":"node_id","type":"BIGINT"},{"name":"type","type":"VARCHAR"},{"name":"semantic_type","type":"UTINYINT"},{"name":"flags","type":"UTINYINT"},{"name":"name","type":"VARCHAR"},{"name":"qualified_name","type":"STRUCT(semantic_type UTINYINT, \"name\" VARCHAR, \"index\" INTEGER)[]"},{"name":"signature_type","type":"VARCHAR"},{"name":"parameters","type":"STRUCT(\"name\" VARCHAR, \"type\" VARCHAR)[]"},{"name":"modifiers","type":"VARCHAR[]"},{"name":"annotations","type":"VARCHAR"},{"name":"file_path","type":"VARCHAR"},{"name":"language","type":"VARCHAR"},{"name":"start_line","type":"UINTEGER"},{"name":"end_line","type":"UINTEGER"},{"name":"parent_id","type":"BIGINT"},{"name":"depth","type":"UINTEGER"},{"name":"sibling_index","type":"INTEGER"},{"name":"children_count","type":"UINTEGER"},{"name":"descendant_count","type":"UINTEGER"},{"name":"scope","type":"STRUCT(\"current\" BIGINT, \"function\" BIGINT, \"class\" BIGINT, module BIGINT, stack STRUCT(id BIGINT, kind UTINYINT)[])"},{"name":"peek","type":"VARCHAR"},{"name":"css_classes","type":"VARCHAR[]"},{"name":"is_element","type":"BOOLEAN"},{"name":"params","type":"INTEGER"}]
 
-# a prefix-bound PSEUDO binds every catalog macro carrying that prefix, is stored expanded
+# a prefix-bound PREDICATE binds every catalog macro carrying that prefix, is stored expanded
 # with origin = prefix, and is selectable like any other pseudo-class
 statement ok
 CREATE MACRO sel_x_top(d) AS d = 0;

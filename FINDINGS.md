@@ -2,6 +2,140 @@
 
 What first contact showed. Newest first. Every oracle divergence gets an entry with adjudication before any test changes.
 
+**Reading the older entries, after the renames of 2026-10 (PRs #29, #48, #49).** Entries are dated
+and are not rewritten, so one written before those PRs uses the vocabulary of its day and a grep
+for a name it mentions can come back empty. The map, once, so it does not have to be repeated per
+entry: catalog-side, `ID` → `KEY`, `CLASSES` → `TAGS`, `KEY` (the R slot) → `UNIQUE KEY`,
+`PSEUDO`/`PSEUDO_ARGS` → `PREDICATE`/`PREDICATE_ARGS`, `tree_catalog.pseudo_classes` →
+`tree_catalog.predicates`, the projection's `_id`/`_classes`/`_pseudo` → `_key`/`_tags`/
+`_predicate`, and `tree_catalog_classes`/`tree_catalog_pseudo_classes` →
+`tree_catalog_tags`/`tree_catalog_predicates`. Three identifiers escaped all three of those PRs
+and were finished by commit `8216eb5`: `tree_builtin_pseudos()` → `tree_builtin_predicates()`,
+`tree_sql_pseudo_insert` → `tree_sql_predicate_insert`, and `tree_catalog_tags`' **output
+column**, which #48 left as `class` and which is now `tag`. Selector-side spellings did **not**
+move and are correct wherever they appear: `.x`, `#x`, `[a=b]`, `:x`, the IR kinds
+`id`/`class`/`pseudo`/`pseudo_unknown`, TREEQL's `ID`/`CLASS`/`PSEUDO` clause keywords, and
+`tree_sql_builtin_pseudo`, which compiles a `pseudo` clause. So a bare `class` below may be the IR
+kind (current), the old S slot, or the old `tree_catalog_tags` column — the surrounding sentence
+says which. `docs/cheatsheet.md` is
+generated from a live catalog and CI-gated, so it is the authority for any name. Where a stale
+*identifier* in an entry below would defeat a grep for live code it carries an inline note; stale
+*prose* vocabulary is left as written, because the entry records what was true then.
+
+## M4: predicate purity, and a cheatsheet that cannot rot (2026-10-08)
+
+Two merged commits that left no entry here until now: `941e6ba` (predicate purity) and `399ed3c`
+(the generated cheatsheet and its drift gate). Everything below was re-measured on DuckDB v1.5.5
+for this entry rather than copied out of the commit messages.
+
+### `duckdb_functions().stability` is authoritative for built-ins, and useless for macros
+
+The whole verdict rests on DuckDB's own catalog rather than on a text scan of the body. For
+built-ins it is exact — measured on a bare 1.5.5 connection, **16 `VOLATILE`**, **11
+`CONSISTENT_WITHIN_QUERY`**, **2,614 `CONSISTENT`**, and 307 NULL (every macro, plus table
+functions). Both impure classes are refused and for different reasons, which is worth keeping
+distinct: `VOLATILE` (`random`, `uuid`, `nextval`) differs **within** one query, and
+`CONSISTENT_WITHIN_QUERY` (`now`, `current_timestamp`) differs **between** them. A predicate that
+moves between queries is the same defect as one that moves within a query — the same selector
+would not answer the same twice, which is doctrine 2 — so the two are one refusal:
+
+```
+tree_ddl_create: PREDICATE p is not pure: its body reads a VOLATILE or
+CONSISTENT_WITHIN_QUERY function, so the same selector would not answer the same twice
+```
+
+*(`941e6ba`'s message says 2,610 `CONSISTENT`; re-measured it is 2,614, the same in every slicing
+tried — bare connection, with `json` loaded, scalar-only, non-table. The two counts that decide
+anything, 16 and 11, are unchanged.)*
+
+**And then the hole.** A macro reports `stability` NULL **whatever it calls** — measured, a macro
+over `random()` and a macro over a constant are indistinguishable in `duckdb_functions()`. So the
+catalog answers nothing about exactly the bodies a predicate is most likely to have, and
+`tree_sql_purity` resolves one level through `macro_definition` and then stops. Measured verdicts:
+
+| body | verdict |
+|---|---|
+| `descendant_count = 0` | `pure` |
+| `contains(type, 'mod')` | `pure` (a CONSISTENT built-in) |
+| `docs_pure_m(depth)`, a macro over CONSISTENT built-ins | `pure` |
+| `docs_rand_m(depth)`, a macro over `random()` | `impure` — one level is enough to catch it |
+| `docs_outer_m(depth)`, a macro calling a macro | `unknown` |
+| `random() < 0.5`, `now() > TIMESTAMP '2020-01-01'` | `impure` |
+| `descendant_count = )(` | `malformed` |
+
+### The judgement call: `unknown` exists, and is accepted
+
+This is the decision in the work worth recording, because it could have gone either way and the
+losing option is the tempting one. `unknown` is **recorded and allowed**. Refusing it would refuse
+a pure body on no evidence — a macro calling a macro is beyond one level of resolution, and since
+DuckDB reports every macro's stability as NULL whatever it calls, *nothing can be proven either
+way*. Claiming `pure` would be worse still: that is the false-positive verdict, the same shape of
+wrong answer as #39's `assert_o_next = ok` for a declaration nothing had compared. So one honest
+level of resolution, then an honest `unknown`, and only the two **decidable** failures are
+refused. Transitive resolution is the obvious extension and would turn some of today's `unknown`
+into `impure`; `36_pseudo` carries the case that would move.
+
+Of the four verdicts `tree_sql_purity` returns, only two are ever stored: `impure` and `malformed`
+are refused at declare time by `tree_sql_check_purity`, so `tree_catalog.predicates.purity` only
+ever reads `pure` or `unknown`.
+
+### `json_serialize_sql` does not raise on malformed input, which is why parse-ability is a separate question
+
+The functions a body references come from DuckDB's own **parse tree**, via `json_serialize_sql`,
+which parses **without binding** — so a body full of column names it cannot resolve still yields
+its calls, and a *column* named `random` is not mistaken for the function. Measured before
+building on it: a malformed body comes back as an error **object**, not an exception —
+`json_serialize_sql('SELECT )(')` returns
+`{"error":true,"error_type":"parser","error_message":"syntax error at or near \")\"",…}`. The
+extractor therefore finds **no calls** in unparseable text, and "no calls found" looks exactly
+like purity. Without asking parse-ability separately, `descendant_count = )(` would have been
+recorded `pure`; it is refused with `tree_ddl_create: PREDICATE p does not parse`.
+
+### Two implementation constraints that shaped the insert
+
+- **The predicate insert is built over list *indices*, not `list_transform`.** `tree_sql_purity`
+  is a subquery macro, and DuckDB refuses a subquery inside a `lambda` (the same 1.5.5 constraint
+  recorded below for `tree_sql_predicate_map` and `tree_sql_chain`), so
+  `tree_sql_predicate_insert` — `tree_sql_pseudo_insert` when the purity work landed, renamed by
+  `8216eb5` — iterates `generate_series(1, len(predicate))` and indexes the list.
+- **`ORDER BY i` matters.** `list_aggregate` gave list order for free; a hand-rolled
+  `string_agg` does not. The expanded predicate list is **not name-ordered** — the shared tier is
+  sorted, the local entries are in the order written — so ordering by name here would have
+  silently reordered what the catalog records.
+
+### The cheatsheet's drift gate: authored prose, measured names
+
+`test/gen_cheatsheet.py` generates `docs/cheatsheet.md` out of a live database — the six
+introspection views, `duckdb_functions()`, and the `TREE_SHAPE` / `TREE_SEMANTIC` types — and
+`python3 test/gen_cheatsheet.py --check` runs in CI (`.github/workflows/tests.yml`). The division
+is the point: **every name is measured, every gloss is authored**, and the generator checks the
+prose against the catalog in both directions. A gloss naming something the catalog no longer has
+is a hard error; a measured name with no gloss renders as `_(not described)_` rather than being
+quietly dropped. Three coverage assertions make the fixture's job explicit rather than hopeful:
+every shape slot must be exercised by some reference declaration, every body listed as refused
+must actually be refused, and every body listed with a purity verdict must actually get one.
+
+Four drift modes were verified to fail rather than assumed to: a hand-edited file, a stale gloss,
+an unexercised slot, and an accepted declaration the file claims is refused. That is what makes
+this different from a document: the renames in PRs #48 and #49 would have **failed this
+generator** instead of rotting the doc, which is why `docs/cheatsheet.md` is the authority for a
+name and this file is not.
+
+Writing it measured three things no document carried before, each now in the generated file:
+`tree_match` is absent from `duckdb_functions()` while `tree_explain` is present, because the
+runner replaces the call with the query `tree_compile_match` returns; the shared predicate tier
+binds **nothing** unless the tree declares `PREDICATE_ARGS`, since it has no other source of
+arguments, so a tree without it gets zero shared predicates however many `sel_` macros exist; and
+a macro already bound under one name is not bound again under another — with both a `pre_` binding
+and a `sel_shallow` macro present, `shallow` is bound once, by the prefix. The first draft of the
+fixture hit that last one by accident and lost its shared row to it.
+
+An enumerated domain in the file is what the **reference declarations** produce, not what the code
+can produce, and the file says so about itself: add a basis or a storage mode without adding a
+reference declaration and the cheatsheet under-claims rather than lying (doctrine 5). `status` is
+only ever `ok` there, and that is the point — the structural conditions a check would otherwise
+record as violated are refused at declaration instead.
+
 ## DuckDB 1.5.5 constraints met in M2 (2026-09-15)
 
 Each of these changed the shape of the code, not just a line of it. The design-phase section at
@@ -363,6 +497,11 @@ is a cost decision the O layer's design should make, not a review follow-up.
 
 ## Inbound: duck_block_utils v3.5.0 and Task 13's document shape (2026-10-03)
 
+*(2026-10-03, same day: **the three "not started / cannot be written / left open" judgements in
+this entry are closed.** `test/sql/45_duck_blocks.test` exists (commit `41599ee`), it decides for
+the explicit `document` root, and it needed no extension update to do it. The closure is at the
+foot of the entry; the measurement table below still holds exactly as written.)*
+
 Reported by the duck_block_utils build (a peer session, second-hand — recorded as an input to be
 decided, not as a settled ruling), and relevant to **Task 13**, which is not started:
 
@@ -411,6 +550,47 @@ The second also interacts with R0: a relation holding several rooted documents n
 them apart, where the forest reading needs none. Left open deliberately — it is a design call, and
 the plan's text and the hint message both point the other way, so it should not be changed by
 inference from a relayed message.
+
+### Closed the same day, by `test/sql/45_duck_blocks.test` (commit `41599ee`)
+
+The measurements above stand — the installed extension really does return 43 type names with no
+`document`, and `readme_blocks.parquet` really has no level-0 row (`min(level) = 1` over 172 rows,
+which suite 45 now asserts as a premise rather than assuming). Three conclusions drawn from them
+do not:
+
+- **"Task 13 is not started."** It is written. Suite 45 declares the fixture as a tree and pins
+  `h2` → 9 rows, `document > table` → `[69, 132, 150]`, `h2 + table` → `[132, 150]`, and
+  `section h2 + table` → 0 rows. Expected answers were computed independently in Python from the
+  parquet (nearest-preceding-lower-level parent, then adjacent siblings) *before* being run
+  through duckent, and the two agreed.
+- **"Task 13 cannot be written against a `document` root until the extension is updated."** It
+  can, and was, with the extension exactly as measured above. The level-0 row is synthesized in
+  the declaration's own source SQL — `SELECT 'block' AS kind, 'document' AS element_type, …, 0 AS
+  level, …, -1 AS element_order UNION ALL BY NAME SELECT * FROM readme_blocks.parquet`. The
+  blocker was read as "the extension must emit the root"; the actual requirement is only that the
+  *relation handed to duckent* have one, and a relation is something you can write. This is the
+  lesson worth carrying out of the entry: an inbound report's blocker is a claim about the
+  upstream, not about what you can declare over it.
+- **"Left open deliberately" — the design call is made, for the explicit `document` root.** Suite
+  45's own header states the reasoning and rejects the `level - 1` road in writing: shifting the
+  levels "also happens to pass today, but only because P13 then sees every top-level block as its
+  own level-0 root; that is issue #9's territory, not a second valid encoding". The prepend is
+  also what makes `document > table` expressible at all — without the root row those three tables
+  have no parent and the selector has nothing to anchor to, which is the positive case for the
+  root rather than an argument against the alternative.
+
+So the "second-hand, needs confirming" row in the table above is settled, and by the right route:
+not by accepting the relayed ruling, but by building both shapes far enough to see that only one
+of them is an encoding. The verification doctrine worked — the ruling was held as unconfirmed
+until something in this repository could decide it.
+
+One thing the suite adds that this entry did not anticipate: the fixture's provenance now moves.
+`gen_readme()` returns the markdown extension version *and* a sha256 of `README.md`, because
+unlike the two astcss-eval fixtures pinned to external commits, this one drifts whenever the
+README is edited — which it had been doing with nothing recording it. `test/data/FIXTURES.md`
+carries both as `unrecorded` rather than values filled in by hand, and says why: the committed
+parquet predates the provenance, and regenerating just to populate the fields would rewrite it
+from today's README and move the row counts other suites assert.
 
 ## M2 differential adjudications
 
@@ -565,7 +745,9 @@ commented in place with the mutant it serves:
   that an empty match FAILS rather than passing vacuously.
 - **MN25** — 43's two promotion records cannot discriminate: on `rep_class` every `def` row already
   has a non-empty CLASSES list, so a fallback that fires only on an empty one never fires. Tree
-  `rep_class_none` (binds `def` as a PSEUDO, declares `classes := '[]::VARCHAR[]'`) was added, with
+  `rep_class_none` (binds `def` as a PSEUDO, declares `classes := '[]::VARCHAR[]'` — the live
+  declaration in `test/sql/43_representation.test` reads `tags := '[]::VARCHAR[]'` since the
+  rename) was added, with
   a record asserting `.def` selects nothing there while `:def` still selects every def.
 
 And one mechanism: **MN08** mutates the runner's css parser, which is Python, not a macro, so no
@@ -608,6 +790,11 @@ position identifies the row unambiguously either way.
 
 ### A declared NEXT that names no row is invisible to conformance — deliberately
 
+*(2026-10-06: **this entry's decision was reversed.** Commit `6a53d37` (#44, closing #39) makes
+such a NEXT a violation. The measurement and the three options below are kept as the record of
+what was true and what was considered — the closure, and the one option that turned out to be
+reachable after all, are at the foot of the entry.)*
+
 `sql/02_projection.sql` compiles a declared NEXT as `COALESCE(nx._pre, a._pre + a._size + 1)`.
 When the declared value names no row, the COALESCE substitutes the structural successor — which
 is exactly what a *conforming* NEXT produces — so the two are indistinguishable in the
@@ -636,6 +823,52 @@ encoding §3.1 is about. `sql/02_projection.sql` previously claimed "§3.1 then 
 disagreement"; that was false and could not be made true without one of the above. The comment now
 says what actually happens.
 
+**Closed 2026-10-06, commit `6a53d37` (#44, closing #39): it IS a violation, and the route taken
+is the one rejected above as "not reachable".** The second option — compare against the source
+relation — was rejected here on the grounds that "ingest passes the projection as `rel_sql`, so
+this needs a signature change at every call site". That reasoning confused two things: the
+comparison does not need the *source*, it needs the source **columns**, and the projection carries
+them whenever ATTR is open. So a second NEXT arm reads the raw declared value straight off
+`rel_sql`, with no signature change, no new projection column, and `tree_canonical_columns()`
+untouched. The commit message quotes this entry's sentence to argue against it, which is the
+honest way to reverse a finding.
+
+**What the cost argument got wrong** was not the cost but the claim that there was nothing to buy:
+"a diagnostic for a case that cannot produce a wrong answer" is true of the *projection output*
+and false of `tree_state.assertions`. `tree_check` was recording `assert_o_next = 'ok'`,
+`'0 disagreeing rows'` for a declaration nothing had compared — a positive verdict published to a
+table whose whole purpose is to be read back. That is a wrong answer, in the only place the user
+sees one.
+
+**The discriminator is structural, and it is why "refuse an unresolvable NEXT" would have been
+wrong.** Unresolved is not itself false: `with_next`, the suite's own *conforming* declared-NEXT
+fixture, declares `node_id + descendant_count + 1`, and seven of its rows name no row — the root's
+last row and every ancestor whose subtree ends with it — all correctly. The violation is
+unresolved **and** the derivation naming a real row of the same root (`__dnext <= the root's max
+_pre`): the declaration says nothing follows while the structure says row N does. Measured, an
+all-`999` `next_id` on the 4-row reference tree:
+
+```
+O conformance violated in tree docs.n999: NEXT disagrees with its derived default at root
+{'file_path': f.py}, ORDER 2 (position 1): declared names no row (999), derived 3
+(a corrupted encoding, not a fast path)
+```
+
+**The residue this does not close, and it is the right answer rather than a gap.** Where neither
+the declared nor the derived NEXT names a row, the two agree and `ok` is honest — the last row of
+a root has no successor to disagree about. The same residue `assert_o_parent` carries on ROOT
+rows, where the derived parent is NULL too. So no third assertion status: once the derived default
+is in the comparison the harmful case is verifiable and *false*, which `violated` already says,
+and a third status would advertise a gap that no longer exists.
+
+Two gates, both narrowing rather than weakening: the arm runs only when ATTR is open and the NEXT
+and key expressions are plain identifiers (`tree_sql_o_next_readable`), exactly as
+`tree_sql_o_order_col` already gates naming the ORDER value — a level-basis tree with no ORDER
+resolves against `__seq`, which is not a source column. No declared-NEXT tree in the suite has a
+closed ATTR, so the gate costs nothing today; where it is off the arm simply does not run. And it
+is **strict on NULL**, consistent with SIZE and CHILDREN, which refuse a NULL override outright: a
+declared O column is total.
+
 ### Plan defect found and corrected
 
 The brief's `__bad` CTE aliased only its FIRST arm (`SIZE`) — `AS slot, AS k, AS pos, …` — and
@@ -662,7 +895,7 @@ three artifacts.
 Where the prototype knowingly differs from `docs/superpowers/specs/2026-09-13-duckent-core-design.md`. Each is a deviation to carry forward or close in M2, not an accident. *(2026-09-15: both specs were amended at the close of M2 and now carry the surviving items in place, marked "(amended 2026-09-15, M2 build)". This list stays as the record of what moved and why — a spec that has been corrected no longer shows where it was wrong.)*
 
 - `tree_state.partitions.root_key` is `VARCHAR` (the ROOT struct cast to text), not the STRUCT §2.2 describes; one column type serves every tree's ROOT shape. Tests compare against `{...}::VARCHAR` renderings.
-- `tree_catalog.compiled` records only the `projection` artifact. `encoder`, `ingest`, `assert_p13` and `assert_o_<slot>` rows are not written.
+- `tree_catalog.compiled` records only the `projection` artifact. `encoder`, `ingest`, `assert_p13` and `assert_o_<slot>` rows are not written. *(2026-10-08: **two** artifacts are written, not one — `attribute_columns` has been written beside `projection` since M2 added it (M2 design §10), and `SELECT DISTINCT artifact FROM tree_catalog.compiled` after one create returns both. The four §2.1 artifacts named above are still not written, which is what this deviation is about. The M3 design §7.9 listed correcting this line as done; it was not, until now.)*
 - `tree_compile_encoder`, `tree_compile_ingest` and `tree_compile_assertions` do not exist as separate compilers: the encoder is a branch of `tree_compile_projection`, ingest is `tree_compile_insert`/`_replace`, and the P13 assertion is `tree_compile_p13` called from create, the DML compilers and `tree_compile_check`.
 - ~~`tree_explain` and `tree_compile_match` take no `language` parameter; `_match_language` is the constant `'treeql'`.~~ Closed in M2: both take `language :=`, and `_match_language` is `COALESCE(language, 'treeql')`. The compiler does not read `tree_catalog.settings` for it -- that row governs how a front-end parses selector *text*, and a selector handed over as IR was never parsed.
 - The levels fixtures §7 names (`levels_*.csv`) are an inline `walks` table in `test/sql/20_derivations.test` instead of generated CSVs.
@@ -671,7 +904,7 @@ Where the prototype knowingly differs from `docs/superpowers/specs/2026-09-13-du
 - `tree_ddl_alter` refuses outright when a materialized tree holds partitions ingested after create (C1 below), which §4 does not mention.
 - ~~An unknown attribute name in a match refuses through DuckDB's binder, not through a compile-time check against `_attr_map`.~~ Closed in M2: `tree_sql_clause` resolves an attribute against the `attribute_columns` artifact first, then against `ATTR MAP` with a cast implied by the comparison literal, and refuses at compile time naming the attribute when neither serves it. Note the limit of "neither serves the name": a map's keys are data, so on a tree that declares `ATTR MAP` every name is servable and an absent key reads as no match. §6.1's compile-time refusal can only ever mean "no projected column and no map".
 - Coverage note (M2 task 11, `test/sql/42_second_differential.test`): a wrong SIZE or CHILDREN is all but invisible through selectors. `_children` is read by no fragment in `sql/07_match.sql` or `sql/08_traversal.sql` (it appears only in `tree_canonical_columns()`), and `_size` is read by `tree_sql_subtree` plus the O(1) sibling/positional forms — which a tree that declares ELEMENT never uses, because those fragments then scan for the nearest *element* neighbour instead. On `app.parquet` that leaves exactly one selector whose answer moves when SIZE is perturbed by one (`attribute identifier`: app.py:50 is the last descendant of its `attribute`). 42 therefore compares the declared and derived *projections* column for column as well as running the corpus selectors; a suite that only ran selectors would not have caught a broken derivation of either column. **Updated by M3 Task 8:** `tree_sql_last_child`'s non-ELEMENT branch used to scan for a later sibling and read no `_size`; it now asks whether the row at `_pre + _size + 1` is a sibling, so `:last-child` on a tree that declares no ELEMENT is size-sensitive where it was not before. That widens selector visibility of a wrong SIZE slightly — the count of app.parquet selectors whose answer moves under a one-off perturbation was measured before this change and is no longer known to be one. It does not weaken the reason 42 compares projections column for column.
-- Mutant coverage: the derived parent join's `a._root = b._root` scoping is now covered by a test in `test/sql/10_projection.test` over `scripts.parquet`, but no mutant id is reserved for it (MN22–MN25 are already assigned by the handover). It is recorded as `also_kills` under MN02 in `test/mutants/manifest.yaml`; if the convention later allows a new id, that is the mutant to plant.
+- Mutant coverage: the derived parent join's `a._root = b._root` scoping is now covered by a test in `test/sql/10_projection.test` over `scripts.parquet`, but no mutant id is reserved for it (MN22–MN25 are already assigned by the handover). It is recorded as `also_kills` under MN02 in `test/mutants/manifest.yaml`; if the convention later allows a new id, that is the mutant to plant. *(2026-10-08: the parenthetical names the wrong source. **The handover's mutant catalogue stops at MN21** — `docs/11-duckent-handover-v21.md` lists MN1 through MN21 and no further id. MN22, MN24 and MN25 are assigned by the **M2 design §9**; MN26 was assigned by M3 on 2026-10-03. So the "if the convention later allows a new id" has since been answered yes — MN26 is one — and the derived-parent root scoping is still the candidate it names.)*
 
 ## 2026-09-14 review of PR #1
 
@@ -691,7 +924,7 @@ Sixteen defects, each confirmed by live reproduction before the fix and covered 
 - **F12 `tree_compile_match` returned NULL for an empty selector or an empty overlay, and ignored an overlay's ATTR.** All three refuse: "selector has no steps", "semantic overlay is empty", and a per-query overlay cannot add attribute columns (`sql/07_match.sql`).
 - **F13 a user alias `s<N>` collided with the generated step aliases.** `tree_steps` refuses an `as` matching `^s[0-9]+$` (`sql/06_selector.sql`).
 - **F14 MN02's manifest claim was false for `20_derivations.test`, and `tree_encode` qualified only the first sibling_order column.** `tree_derive_parent` held its own copy of the parent-join text, out of the mutant's reach; it now builds the join from `tree_sql_parent_join()` and MN02 is killed by both listed tests. `tree_encode` qualifies every sibling key column, so a second column no longer binds to the walk relation (`sql/05_derivations.sql`).
-- **F15 a `semantic :=` pseudo overlay replaced the whole `_pseudo` map.** Every catalog pseudo-class was orphaned for that query; the overlay is `map_concat(_pseudo, <overlay>)`, which keeps the catalog's bindings and lets the overlay win on a shared name (`sql/07_match.sql`).
+- **F15 a `semantic :=` pseudo overlay replaced the whole `_pseudo` map.** Every catalog pseudo-class was orphaned for that query; the overlay is `map_concat(_pseudo, <overlay>)`, which keeps the catalog's bindings and lets the overlay win on a shared name (`sql/07_match.sql`). *(The column is now `_predicate`, so the live fragment reads `map_concat(_predicate, <overlay>)`.)*
 - **F16 DML verbs on an abstract tree failed with a raw catalog error.** An abstract tree records `storage = materialized` but owns no table; `tree_dml_context` refuses first, naming SHAPE ONLY (`sql/04_dml.sql`).
 
 Deferred cleanups the review named, not addressed here:
@@ -717,7 +950,7 @@ Deferred cleanups the review named, not addressed here:
 - `query()` refuses text from a macro whose body contains any SELECT, even `(SELECT 'x')` with no FROM; only pure expression macros (CASE, COALESCE, string concatenation, list functions) can feed it. `tree_compile_projection` is written that way for this reason; `tree_compile_match` and the DDL compilers read the catalog and are executed by the runner instead.
 - `row_number() OVER (PARTITION BY x)` with no ORDER BY does not preserve scan order on 1.5.5; `row_number() OVER ()` does. Frozen order therefore computes `__seq` with the empty window first and orders the partitioned row_number by it.
 - Inside macro bodies, struct field access must be parenthesized: `(shape).level`, not `shape.level`, or the binder may resolve it as table.column; inside lambdas an unparenthesized `p.name` was observed to yield the literal string 'p.name'.
-- A subquery anywhere inside an expression that carries a lambda is refused ("Binder Error: subqueries in lambda expressions are not supported"), and macro inlining puts an argument's text inside the lambda. So a macro whose body uses `list_transform`/`list_filter`/`list_aggregate` (`tree_sql_pseudo_map`, `tree_sql_chain`) may not be handed `(SELECT ... FROM cte)` — nor an aggregate. `tree_compile_match` therefore carries its one-row settings as CTEs joined in (`cfg`, `ovp`) and aggregates a group's inner chain into a list column one CTE before rendering it.
+- A subquery anywhere inside an expression that carries a lambda is refused ("Binder Error: subqueries in lambda expressions are not supported"), and macro inlining puts an argument's text inside the lambda. So a macro whose body uses `list_transform`/`list_filter`/`list_aggregate` (`tree_sql_pseudo_map`, since renamed `tree_sql_predicate_map`; `tree_sql_chain`) may not be handed `(SELECT ... FROM cte)` — nor an aggregate. `tree_compile_match` therefore carries its one-row settings as CTEs joined in (`cfg`, `ovp`) and aggregates a group's inner chain into a list column one CTE before rendering it.
 - Declared O columns (parent, size, children, next) must be carried through the projection stages under hidden aliases (`__size_raw` etc.) because a closed or explicit ATTR list otherwise drops the source column before the stage that reads it.
 - A runner-level lesson: a stub macro in a smoke test must be CREATE OR REPLACE because the real macro of the same name exists once the suite matures.
 - Mutant lessons: a fragment macro can be shadowed by an earlier guard (MN17's delete predicate was already ROOT-restricted by the gone-partition computation), so the mutant had to override the whole compiler; and a mutant with no test surface survives silently (MN14 needed a multi-root match test).
@@ -776,10 +1009,19 @@ and the wave added a few of its own.)*
 - ~~The printer's own unknown-kind check reads `min(kind)`, which is NULL when the offending
   node's `kind` is NULL.~~ **Closed** in the final fix wave (I5): the COALESCE is inside the
   aggregate and the node is named `<NULL>`.
-- The shadow check (`tree_sql_shadow_check`) enumerates thirteen canonical columns in its regex
+- ~~The shadow check (`tree_sql_shadow_check`) enumerates thirteen canonical columns in its regex
   and **only `_size` is exercised by a test** (11_ddl, 12_dml, 13_alter all use it). `_element` in
   particular was added in M2 and its arm has never fired in a test; a typo in that alternative
-  would reopen the back door F3 closed, silently.
+  would reopen the back door F3 closed, silently.~~ **Closed** by the vocabulary-leftover sweep,
+  which first found the predicted failure had already happened: the `classes` → `tags` and
+  `pseudo` → `predicate` renames left the regex naming `id`, `classes` and `pseudo` while the
+  projection emitted `_key`, `_tags` and `_predicate`, so a source column with one of those three
+  names silently displaced the canonical column — measured, all three were ACCEPTED. A rename is
+  the typo nobody types. The alternation is no longer written out: it is built from
+  `tree_canonical_columns()`, the same list the projection's `EXCLUDE` reads, so the check cannot
+  disagree with the projection again. 11_ddl now has one record per canonical column (thirteen,
+  not one) plus a record pinning the derivation, so a new canonical column is guarded the moment
+  it joins the list.
 
 **Language and front-end.**
 
@@ -800,7 +1042,10 @@ and the wave added a few of its own.)*
   generator that regeneration is what makes the freeze meaningless.
 - **File size.** The Task 4 review noted `sql/06_selector.sql` at ~200 lines and suggested
   splitting the printer out in Task 5; it was not done, and the file is ~340 lines now.
-  `sql/09_css.sql` is ~500 and `test/import_astcss_eval.py` ~620. None of them is confusing yet —
+  `sql/09_css.sql` is ~500 and `test/import_astcss_eval.py` ~620. *(2026-10-08, `wc -l`: all
+  three have grown past those figures — `sql/06_selector.sql` **378**, `sql/09_css.sql` **561**,
+  `test/import_astcss_eval.py` **737**. The argument is unchanged and the case for splitting the
+  printer out is slightly stronger than the numbers said.)* None of them is confusing yet —
   each is one subject — but the printer really is a separate subject from the constructor, and
   the split gets more expensive the longer it waits.
 
@@ -809,15 +1054,52 @@ and the wave added a few of its own.)*
 - `test/gen_fixtures.py` is not byte-reproducible for `scripts.parquet` and `py_variety.parquet`:
   the row *order* moves between runs although the content is equal. Regenerating them produces a
   diff that is not a change.
-- Derived `_size` is O(n²) **within a root**, and `test/spike_listspace.py` says where that
+- ~~Derived `_size` is O(n²) **within a root**, and `test/spike_listspace.py` says where that
   starts to matter: 13× the declared cost on a 142,650-row input whose roots hold ~9,510 rows
   each, and only 2.6× on the same rows spread over ten times as many roots. The M3 replacement is
-  the per-level ASOF form (and the C++ port's stack walk).
+  the per-level ASOF form (and the C++ port's stack walk).~~ **Closed by M3 Task 6**, which
+  shipped exactly that form (`tree_sql_size_join()`): the realistic shape — 142,651 rows under
+  ONE root, which is what a whole-repository parse looks like — goes from **26.9 s to 0.28 s**,
+  i.e. **1.2×** a declared SIZE rather than 167×, and `flat 200k` is 467× faster. The numbers are
+  in "M3 derivation cost" above. **Two costs are carried out of the change, not closed by it**,
+  and they are the honest price of it: a pure deep chain got **21× slower** (0.044 s → 0.908 s on
+  5,000 levels, because the candidate expansion is Σ(max level − level + 1) ≈ n²/2 — the quadratic
+  moved from the correlated subquery into the candidate relation), and the **deep-spine-beside-
+  shallow-rows shape did not improve at all** (21.5 s → 21.0 s, still 316× declared, because 100k
+  shallow rows each expand over the spine's 2,000 levels for ~200M candidate rows). That second
+  shape is the one the core design §2.3 already names as the worst case, and it remains the worst
+  case; `tree_sql_size_join()`'s comment says what to do about it — **declare SIZE** — and the
+  C++ stack walk is O(n) on every shape here. So the derivation is a convenience, not a
+  guarantee.
 - Create and alter still run the compiled projection more than once (once per guard, plus the
   materialization). Named in the PR #1 review and still open.
-- The projection macro is spliced once **per step alias**, so an n-step selector inlines it n
+- ~~The projection macro is spliced once **per step alias**, so an n-step selector inlines it n
   times; a `WITH __p AS MATERIALIZED` would compute it once. Measured as roughly linear in the
-  number of references, so it is a cost item rather than a correctness one.
+  number of references, so it is a cost item rather than a correctness one.~~ **Closed by M3
+  Task 7, by exactly that mechanism.** `sql/07_match.sql` opens every compiled match with
+  `WITH __proj AS (SELECT * FROM <projection macro call>)` (`tree_sql_nav_ctes`), and the
+  relation text handed to every fragment is `__proj`: step aliases, HAS/NOT subqueries and
+  element scans all read the one CTE, and `tree_nav` builds its `query()` text the same way. A
+  per-query `semantic` overlay moved inside the CTE as a `SELECT * REPLACE (…)` instead of being
+  repeated at each reference. Two refinements on the bullet's own proposal, both measured on
+  1.5.5: it is a **plain** CTE, not `MATERIALIZED`, because a CTE referenced more than once is
+  materialized without being asked — 0.34 s through repeated macro references, 0.16 s plain,
+  0.15 s `MATERIALIZED`, 0.33 s `NOT MATERIALIZED` on a projection-mode `scripts` tree, and
+  0.00–0.03 s for every form on a 285k-row stored tree, so a plain CTE neither helps nor hurts
+  there and does not block scan pushdown. And it bought a second CTE the bullet did not
+  anticipate: `__sib`, a `lead`/`lag` window over element rows per `(_root, _parent)`, read from
+  `__proj` rather than from the projection a second time, which is what turned the sibling and
+  positional relations from range scans into equality lookups (262 s → 0.01 s for the next
+  element sibling at 10k siblings; 14.9 s → 0.03 s for last child at 40k). **What stays open is
+  the other half of the cost**, and the M3 design §8 is its record: the suites are slow because
+  DuckDB *binds* very large macro expansions, not because of the joins — 67–107 ms per
+  40_corpus record in `tree_compile_match`, 29–59 ms in the printer, 2–10 ms executing the
+  match — and there is no per-query prune to be had, because the projection is one stored macro
+  per tree, identical for every query. Narrowing the `__proj` CTE and the `EXCLUDE` list
+  together leaves the plan and the time unchanged (DuckDB does not push column pruning through
+  the macro body's ASOF joins), and removing an unused CTE changes nothing either. For
+  projection-mode trees the available win is the declaration, not the compiler: declaring all
+  three O columns takes a TYPE-only selector on `app.parquet` from 17.65 ms to 6.78 ms, 2.6×.
 - `test/run_mutants.py --verify` re-runs a full baseline per control (~246 s each). The baseline
   for a given suite is the same for every control that copies the same macro, so memoizing it per
   suite would cut the harness roughly in half. (`suite_passes` already memoizes per

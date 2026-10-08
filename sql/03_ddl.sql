@@ -20,12 +20,12 @@ CREATE OR REPLACE MACRO tree_shape_from_catalog(db, sch, nm) AS (
       attr_map: max(expression) FILTER (WHERE slot = 'ATTR_MAP'),
       element: max(expression) FILTER (WHERE slot = 'ELEMENT'),
       predicate_args: max(expression) FILTER (WHERE slot = 'PREDICATE_ARGS'),
-      -- kind = 'macro' rows store body as 'macro_name(args)' (tree_sql_pseudo_insert), so both
+      -- kind = 'macro' rows store body as 'macro_name(args)' (tree_sql_predicate_insert), so both
       -- are recoverable by parsing instead of dropped: without macro, a LIKE child's shared-tier
       -- scan cannot recognize that an inherited entry already claims a catalog macro (the
       -- identity exclusion in tree_expand_predicate needs (x).macro), and re-binds it a second time
       -- under a different derived name. origin is carried back as a provenance-only prefix
-      -- marker, so a LIKE child re-inserting this entry (tree_sql_pseudo_insert) records the
+      -- marker, so a LIKE child re-inserting this entry (tree_sql_predicate_insert) records the
       -- right origin instead of flattening every inherited row to 'local'. tree_shared_predicate_prefix()
       -- specifically reuses tree_expand_predicate's own shared-tier marker; any other non-NULL value
       -- just needs to be distinct from it so the origin CASE falls through to 'prefix'.
@@ -37,7 +37,7 @@ CREATE OR REPLACE MACRO tree_shape_from_catalog(db, sch, nm) AS (
     }::TREE_SEMANTIC }::TREE_SHAPE END
   FROM tree_catalog.slots WHERE database_name = db AND schema_name = sch AND tree_name = nm);
 
--- Child fields win; pseudo lists union with the child shadowing by name.
+-- Child fields win; predicate lists union with the child shadowing by name.
 CREATE OR REPLACE MACRO tree_shape_merge(p, c) AS
   CASE WHEN p IS NULL THEN c ELSE {
     root: COALESCE((c).root, (p).root), "order": COALESCE((c)."order", (p)."order"), unique_key: COALESCE((c).unique_key, (p).unique_key),
@@ -54,7 +54,7 @@ CREATE OR REPLACE MACRO tree_shape_merge(p, c) AS
         COALESCE((c).semantic.predicate, []))
     }::TREE_SEMANTIC }::TREE_SHAPE END;
 
--- The predicates rows for an already expanded pseudo list, shared by create and alter so the
+-- The predicates rows for an already expanded predicate list, shared by create and alter so the
 -- two cannot record a binding differently. NULL when there is nothing to insert (the caller's
 -- statement list drops NULLs). kind and origin record how the body was bound: macro when a macro
 -- name was named, prefix when the entry came from a prefix binding, shared when it came from the
@@ -64,7 +64,7 @@ CREATE OR REPLACE MACRO tree_shape_merge(p, c) AS
 -- expression/macro row, was already local at the parent). A prefix of exactly 'sel_' is
 -- ambiguous on its own: it also marks the case where the tree itself declared an explicit
 -- {prefix: 'sel_'} binding (a legitimate, if unusual, prefix form). `explicit_sel_prefix` --
--- computed by the caller from the tree's own unexpanded PSEUDO declaration, never from a
+-- computed by the caller from the tree's own unexpanded PREDICATE declaration, never from a
 -- merged/inherited one -- breaks the tie: shared only when the tree did not itself ask for that
 -- literal prefix. purity is computed by tree_sql_purity (M4): pure, impure, unknown or
 -- malformed, with the first two decidable and refused by tree_sql_check_purity before this runs.
@@ -73,20 +73,20 @@ CREATE OR REPLACE MACRO tree_shape_merge(p, c) AS
 -- order identical to the list's, which list_aggregate gave for free -- the expanded list is not
 -- name-ordered (the shared tier is, the local entries are as written), so ordering by name here
 -- would have quietly reordered what the catalog records.
-CREATE OR REPLACE MACRO tree_sql_pseudo_insert(db, sch, nm, pseudo, explicit_sel_prefix) AS
-  CASE WHEN len(COALESCE(pseudo, [])) = 0 THEN NULL ELSE
+CREATE OR REPLACE MACRO tree_sql_predicate_insert(db, sch, nm, predicate, explicit_sel_prefix) AS
+  CASE WHEN len(COALESCE(predicate, [])) = 0 THEN NULL ELSE
   'INSERT INTO tree_catalog.predicates VALUES ' || (
     SELECT string_agg(r, ', ' ORDER BY i) FROM (
       SELECT i,
         '(' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', '
-        || tree_sql_lit((pseudo[i]).name) || ', '
-        || CASE WHEN (pseudo[i]).macro IS NULL THEN '''expression''' ELSE '''macro''' END || ', '
-        || tree_sql_lit((pseudo[i]).body) || ', '
-        || CASE WHEN (pseudo[i]).prefix IS NULL THEN '''local'''
-                WHEN (pseudo[i]).prefix = tree_shared_predicate_prefix() AND NOT explicit_sel_prefix THEN '''shared'''
+        || tree_sql_lit((predicate[i]).name) || ', '
+        || CASE WHEN (predicate[i]).macro IS NULL THEN '''expression''' ELSE '''macro''' END || ', '
+        || tree_sql_lit((predicate[i]).body) || ', '
+        || CASE WHEN (predicate[i]).prefix IS NULL THEN '''local'''
+                WHEN (predicate[i]).prefix = tree_shared_predicate_prefix() AND NOT explicit_sel_prefix THEN '''shared'''
                 ELSE '''prefix''' END || ', '
-        || tree_sql_lit(tree_sql_purity((pseudo[i]).body)) || ')' AS r
-      FROM generate_series(1, len(pseudo)) t(i))) END;
+        || tree_sql_lit(tree_sql_purity((predicate[i]).body)) || ')' AS r
+      FROM generate_series(1, len(predicate)) t(i))) END;
 
 -- The attribute_columns artifact: the projection's non-canonical columns -- name AND declared
 -- type -- in projection order, as a JSON list of `{"name": ..., "type": ...}` objects. Recorded
@@ -129,7 +129,7 @@ WITH base AS (
 ),
 -- Macro-, map- and prefix-bound predicates become expression bodies here, before validation
 -- and before anything is stored: tree_sql_predicate_map reads (p).body only, so an unexpanded
--- binding would compile the pseudo map -- and with it the projection -- to NULL. The catalog
+-- binding would compile the predicate map -- and with it the projection -- to NULL. The catalog
 -- then holds the expanded body, so nothing downstream has to re-expand (and a prefix binding
 -- is resolved once, against the macros that existed at create time).
 expanded AS (
@@ -140,7 +140,7 @@ expanded AS (
     {root: (merged).root, "order": (merged)."order", unique_key: (merged).unique_key, level: (merged).level, parent: (merged).parent,
      sibling_order: (merged).sibling_order, size: (merged).size, children: (merged).children, next: (merged).next,
      semantic: tree_expand_predicate((merged).semantic)}::TREE_SHAPE AS shape,
-    -- Tested against this create's own declared PSEUDO, never the LIKE-merged one: a parent's
+    -- Tested against this create's own declared PREDICATE, never the LIKE-merged one: a parent's
     -- already-resolved shared/prefix rows round-trip with a provenance marker of their own
     -- (tree_shape_from_catalog), and that marker must never be mistaken for a fresh explicit
     -- declaration by this tree.
@@ -249,7 +249,7 @@ built AS (
      || tree_sql_lit(storage) || ', ' || tree_sql_lit(order_source) || ', ' || has_semantic || ', NULL)' AS s_trees,
    'INSERT INTO tree_catalog.slots VALUES ' || list_aggregate(list_transform(rows, lambda x:
        '(' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ' || tree_sql_lit((x).b) || ', ' || tree_sql_lit((x).s) || ', ' || tree_sql_lit((x).e) || ')'), 'string_agg', ', ') AS s_slots,
-   tree_sql_pseudo_insert(db, sch, nm, (shape).semantic.predicate, explicit_sel_prefix) AS s_pseudo,
+   tree_sql_predicate_insert(db, sch, nm, (shape).semantic.predicate, explicit_sel_prefix) AS s_predicate,
    -- ORDER first, and over the SOURCE rather than the projection: it must precede every statement
    -- that evaluates proj_sql, because a tie is numbered away by row_number() and, under a declared
    -- PARENT, multiplies rows through the __order join (M3 §3.2). Emitted for projection-mode trees
@@ -283,7 +283,7 @@ SELECT CASE WHEN s_begin IS NULL OR s_trees IS NULL OR s_slots IS NULL OR s_comm
             -- plain tree_err(), not (SELECT tree_err(...)): an uncorrelated scalar subquery is
             -- evaluated once, eagerly, and would refuse every valid create
             THEN tree_err('tree_ddl_create: internal: a required statement compiled to NULL')
-            ELSE list_filter([s_begin, s_trees, s_slots, s_pseudo, s_order, s_key, s_reach, s_shadow, s_p13, s_conform, s_table, s_macro, s_partitions, s_compiled, s_attr_cols, s_commit], lambda x: x IS NOT NULL) END
+            ELSE list_filter([s_begin, s_trees, s_slots, s_predicate, s_order, s_key, s_reach, s_shadow, s_p13, s_conform, s_table, s_macro, s_partitions, s_compiled, s_attr_cols, s_commit], lambda x: x IS NOT NULL) END
 FROM built);
 
 -- A missing tree refuses outright: without this check, dropping a mistyped or never-created
@@ -325,7 +325,7 @@ WITH t AS (
          tree_shape_from_catalog(current_database(), sch, nm) AS old_shape
   FROM tree_catalog.trees tr WHERE tr.database_name = current_database() AND tr.schema_name = sch AND tr.tree_name = nm
 ),
--- Same expansion create does, for the same reason: the stored body and the compiled pseudo
+-- Same expansion create does, for the same reason: the stored body and the compiled predicate
 -- map are expression text, never a macro name (00_types.sql, tree_expand_predicate). Tested
 -- against this alter's own `semantic` argument (never `sem`, its expansion): an explicit
 -- {prefix: 'sel_'} declaration is what this flag means, not the shared tier's own marker.
@@ -416,7 +416,7 @@ SELECT CASE WHEN semantic IS NULL THEN tree_err('tree_ddl_alter: semantic is NUL
    'DELETE FROM tree_catalog.predicates WHERE database_name = ' || tree_sql_lit(db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
    'INSERT INTO tree_catalog.slots VALUES ' || list_aggregate(list_transform(rows, lambda x:
        '(' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ' || tree_sql_lit((x).b) || ', ' || tree_sql_lit((x).s) || ', ' || tree_sql_lit((x).e) || ')'), 'string_agg', ', '),
-   tree_sql_pseudo_insert(db, sch, nm, (sem).predicate, explicit_sel_prefix),
+   tree_sql_predicate_insert(db, sch, nm, (sem).predicate, explicit_sel_prefix),
    'UPDATE tree_catalog.trees SET has_semantic = ' || has_semantic || ' WHERE database_name = ' || tree_sql_lit(db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
    CASE WHEN is_abstract OR storage <> 'materialized' THEN NULL ELSE 'CREATE OR REPLACE TABLE ' || tbl_name || ' AS ' || proj_sql END,
    CASE WHEN is_abstract THEN NULL WHEN storage = 'materialized' THEN 'CREATE OR REPLACE MACRO ' || proj_name || '() AS TABLE SELECT * FROM ' || tbl_name
@@ -443,4 +443,4 @@ CREATE OR REPLACE MACRO tree_apply(shape, source) AS TABLE
 -- produces a plain column that GROUP BY ALL can group on; the compiled result is the
 -- same set of (class, row_count) pairs the brief's version intended.
 CREATE OR REPLACE MACRO tree_catalog_tags(sch, nm) AS TABLE
-  SELECT class, count(*) AS row_count FROM tree_project(sch, nm), UNNEST(_tags) AS u(class) WHERE _tags IS NOT NULL GROUP BY ALL ORDER BY class;
+  SELECT tag, count(*) AS row_count FROM tree_project(sch, nm), UNNEST(_tags) AS u(tag) WHERE _tags IS NOT NULL GROUP BY ALL ORDER BY tag;

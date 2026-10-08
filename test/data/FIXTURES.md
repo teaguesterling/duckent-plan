@@ -22,7 +22,7 @@ basename (`scripts.parquet` keeps the `scripts/` directory it was read from; eve
 lives in one directory, so ordering by `file_path` is ordering by basename either way).
 
 The three AST parquets carry three derived columns beyond `read_ast`'s own, so the corpus trees can
-declare CLASSES, ELEMENT and the `params` attribute without sitting_duck at query time:
+declare TAGS, ELEMENT and the `params` attribute without sitting_duck at query time:
 
 | column | type | derivation |
 |---|---|---|

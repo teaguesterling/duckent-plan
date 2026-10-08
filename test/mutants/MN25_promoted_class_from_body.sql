@@ -1,15 +1,15 @@
 -- test/mutants/MN25_promoted_class_from_body.sql
--- A CLASS clause falls back to the pseudo-class of the same name when the row's CLASSES list
--- is empty: the promoted class is recomputed from the PSEUDO body at match time instead of
+-- A CLASS clause falls back to the pseudo-class of the same name when the row's TAGS list
+-- is empty: the promoted class is recomputed from the PREDICATE body at match time instead of
 -- being read from the column the tree actually declared. It looks like a convenience -- P23
--- says a predicate promoted from a PSEUDO body to a CLASSES list must select the same rows,
+-- says one predicate, written as a PREDICATE body or promoted to a TAGS list, must select the same rows,
 -- so why not answer either from whichever is bound? -- and it is a semantics change: a tree
--- that declares `def` only as a pseudo-class then answers `.def` too, so a class nothing
--- declares is silently served, and the projection's CLASSES stops being the only source of
--- truth for what a row's classes are.
+-- that declares `def` only as a pseudo-class then answers `.def` too, so a tag nothing
+-- declares is silently served, and the projection's TAGS stops being the only source of
+-- truth for what a row's tags are.
 --
 -- Copied from sql/07_match.sql's tree_sql_clause with one edit: the 'class' branch emits a
--- CASE that reads _pseudo[value] when _classes is NULL or empty. The copy is GENERATED
+-- CASE that reads _predicate[value] when _tags is NULL or empty. The copy is GENERATED
 -- verbatim from the source macro by test/mutants/regen.py; .control.sql is the same copy with
 -- the edit left out, so a diff between the two IS the mutation.
 -- vvv GENERATED BELOW by test/mutants/regen.py from sql/07_match.sql -- do not edit by hand vvv
@@ -26,10 +26,10 @@ CREATE OR REPLACE MACRO tree_sql_clause(kind, value, op, arg, alias, attr_cols, 
     WHEN 'class'  THEN 'CASE WHEN COALESCE(len(' || alias || '._tags), 0) = 0'
                        || ' THEN COALESCE(' || alias || '._predicate[' || tree_sql_lit(value) || '], false)'
                        || ' ELSE COALESCE(list_contains(' || alias || '._tags, ' || tree_sql_lit(value) || '), false) END'
-    -- The built-ins are compiled by tree_sql_builtin_pseudo, which returns NULL for every other
+    -- The built-ins are compiled by tree_sql_builtin_predicate, which returns NULL for every other
     -- name -- so this branch consults the one list rather than repeating it. A declared
-    -- pseudo-class is a lookup in the projection's _predicate map.
-    WHEN 'pseudo' THEN COALESCE(tree_sql_builtin_pseudo(value, alias, elem),
+    -- predicate is a lookup in the projection's _predicate map.
+    WHEN 'pseudo' THEN COALESCE(tree_sql_builtin_predicate(value, alias, elem),
                                 'COALESCE(' || alias || '._predicate[' || tree_sql_lit(value) || '], false)')
     -- An attribute resolves to a projected column first, then to ATTR MAP. The map is
     -- MAP(VARCHAR, VARCHAR), so a comparison against a number or a boolean has to cast the

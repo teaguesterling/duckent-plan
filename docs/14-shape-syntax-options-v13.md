@@ -1,9 +1,11 @@
 # SHAPE Syntax Exploration — semantics without CREATE, applied ad hoc
 *Method: enumerate the design space, then execute it — all candidate ingredients tested against DuckDB 1.x tonight (log in §4). Status: **settled reference** — §2e–§2j amended §1–§2d, and the sketches below are kept current with them; the appended sections carry the rationale.*
 
+*Slot names here are the catalog's, as [`cheatsheet.md`](cheatsheet.md) measures them: `TYPE`, `KEY`, `TAGS`, `ATTR`, `ATTR_MAP`, `PREDICATE`. Selector spellings stay CSS's — `.x`, `#x`, `[a=b]`, `:x` — per the one naming rule. The clause spellings in this document are the proposed 2.0 surface; the shipped macro spellings are the cheatsheet's.*
+
 ## 1. The decomposition
 The ask splits into two orthogonal objects, and naming that split is most of the design:
-- **SHAPE** = the ROWS slot bundle *without data*: basis, TYPE/ID/CLASSES, ATTR tiers, PSEUDO bindings, O declarations. Pure semantics, catalog-resident, reusable.
+- **SHAPE** = the ROWS slot bundle *without data*: basis, TYPE/KEY/TAGS, ATTR tiers, PREDICATE bindings, O declarations. Pure semantics, catalog-resident, reusable.
 - **TREE** = SHAPE × source (× lifetime). `CREATE TREE` stops being primitive and becomes composition: *register a shaped source*.
 
 ```sql
@@ -14,9 +16,9 @@ CREATE TREE ast (                                    -- abstract: §2c
   TYPE  semantic_type_to_string(semantic_type),      -- optional: S0°, defaults 'node' (§2h)
   ATTR  (name := name, start_line := start_line),    -- named/typed tier
   ATTR  (COLUMNS('attr_(.*)') AS '\\1'),              -- bulk-bind: verified ✓
-  ATTRS MAP extra,                                    -- catch-all tier
-  PSEUDO (docblock := has_docblock(file_path, node_id),
-          leaf     := descendant_count = 0),          -- row-scope expressions (§2j)
+  ATTR_MAP extra,                                     -- catch-all tier
+  PREDICATE (docblock := has_docblock(file_path, node_id),
+             leaf     := descendant_count = 0),       -- row-scope expressions (§2j)
   SIZE descendant_count OPTIMIZE                      -- O overrides (§2i: CHILDREN/NEXT provisional)
 );
 ```
@@ -37,9 +39,9 @@ Candidates: `USING SHAPE ast` · `USING TREE SHAPE ast` · `USING TREE ast` · `
 ### 2c. Supersession: LIKE instead of a SHAPE catalog kind (decided this pass, Teague's design)
 Shapes are not a second catalog kind; they are **abstract trees**. One kind, existing keywords:
 ```sql
-CREATE TREE sitting_duck_ast ( SHAPE ONLY, LEVEL depth, TYPE …, PSEUDO … );  -- abstract
+CREATE TREE sitting_duck_ast ( SHAPE ONLY, LEVEL depth, TYPE …, PREDICATE … );  -- abstract
 CREATE TREE t LIKE sitting_duck_ast AS FROM 'code.parquet';                    -- instantiate
-CREATE TREE py_ast LIKE sitting_duck_ast ( SHAPE ONLY, PSEUDO (docstring := …) ); -- refine, still abstract
+CREATE TREE py_ast LIKE sitting_duck_ast ( SHAPE ONLY, PREDICATE (docstring := …) ); -- refine, still abstract
 FROM 'code.parquet' USING TREE sitting_duck_ast MATCH '.fn:not(:has(:docblock))';
 FROM 'code.parquet' USING TREE (LEVEL depth) MATCH '.fn';                      -- anonymous; TYPE defaults 'node'
 FROM code MATCH .fn:not(:has(:docblock)) SELECT name;                          -- bare MATCH in the pipeline (§2g)
@@ -53,13 +55,13 @@ Multi-tree sources need the column(s) that delimit independent trees declared �
 CREATE TREE sitting_duck_ast (
   SHAPE ONLY,
   ROOT (file_path),                -- the forest key: delimits, identifies, and attaches
-  LEVEL depth, TYPE …, PSEUDO … );
+  LEVEL depth, TYPE …, PREDICATE … );
 
 INSERT INTO t FROM read_ast('new.py');            -- append trees (new key values)
 DELETE FROM t WHERE file_path = 'old.py';          -- drop a tree
 INSERT OR REPLACE INTO t FROM read_ast('mod.py');  -- re-derive that tree, by key
 ```
-Semantics: the entire R block is **scoped by the forest key** — order, the level invariant, basis derivations, O defaults, and P13 all hold per partition; cross-partition adjacency is *ill-typed* (the old cross-file LEAD guard graduates from verify-list caution to law). DML is **tree-granular**: appending and dropping whole partitions is safe and P13-checked on ingest; within-tree mutation is re-derivation (epoch bump), never row surgery — the forest key is a primary key at tree granularity, `INSERT OR REPLACE` is re-derivation spelled in shipped syntax, and renumbering never crosses a partition you didn't wholly replace. **Spelling decided (this pass): `ROOT (col, …)`** over PARTITION BY (names only the delimiting role; storage connotations) and IDENTIFIED BY (Oracle auth smell). ROOT names all three roles the key plays — delimit / identify / attach — with the semantics: *ROOT columns are the tree's identity, constant on every row.* Two dividends: (1) **W1's root-restriction becomes structural** — the only cross-tree reference a row can express is its ROOT value, identical across the tree, so interior-node FKs are impossible by schema shape, not forbidden by review; (2) **ATTACH inference** — with ROOT on the child and an ID accessor (S1) on the parent, `ATTACH ast TO fs` defaults to the ROOT ↔ parent-ID join; `USING (…)` covers mismatches only. Default when unspecified: **the relation is one tree** (one partition; multiple roots still legal — R2 permits level returning to 0). Per-tree order resets without a declared key are non-monotone order, rejected by P13 — the key isn't bureaucracy; it's what makes resets legal. This is also why SHAPE ONLY is *required* for abstract trees: the key slot must exist before any row does.
+Semantics: the entire R block is **scoped by the forest key** — order, the level invariant, basis derivations, O defaults, and P13 all hold per partition; cross-partition adjacency is *ill-typed* (the old cross-file LEAD guard graduates from verify-list caution to law). DML is **tree-granular**: appending and dropping whole partitions is safe and P13-checked on ingest; within-tree mutation is re-derivation (epoch bump), never row surgery — the forest key is a primary key at tree granularity, `INSERT OR REPLACE` is re-derivation spelled in shipped syntax, and renumbering never crosses a partition you didn't wholly replace. **Spelling decided (this pass): `ROOT (col, …)`** over PARTITION BY (names only the delimiting role; storage connotations) and IDENTIFIED BY (Oracle auth smell). ROOT names all three roles the key plays — delimit / identify / attach — with the semantics: *ROOT columns are the tree's identity, constant on every row.* Two dividends: (1) **W1's root-restriction becomes structural** — the only cross-tree reference a row can express is its ROOT value, identical across the tree, so interior-node FKs are impossible by schema shape, not forbidden by review; (2) **ATTACH inference** — with ROOT on the child and a KEY accessor (S1) on the parent, `ATTACH ast TO fs` defaults to the ROOT ↔ parent-KEY join; `USING (…)` covers mismatches only. Default when unspecified: **the relation is one tree** (one partition; multiple roots still legal — R2 permits level returning to 0). Per-tree order resets without a declared key are non-monotone order, rejected by P13 — the key isn't bureaucracy; it's what makes resets legal. This is also why SHAPE ONLY is *required* for abstract trees: the key slot must exist before any row does.
 
 Pipe composability falls out of A for free: `FROM 'code.parquet' |> USING TREE ast |> MATCH '.fn' |> AGGREGATE count(*)`.
 
@@ -73,16 +75,16 @@ Pipe composability falls out of A for free: `FROM 'code.parquet' |> USING TREE a
 - `query_table('src')` → name-to-relation indirection for the macro bridge.
 - `shape_toy` / `match_toy` nested TABLE macros → shape application and matching compose today.
 - `SELECT COLUMNS('attr_(.*)') AS '\\1'` → bulk ATTR binding with rename, shipped.
-- `x -> x + 1` lambdas → tested viable at the time; **superseded by §2j** (PSEUDO takes row-scope expressions; lambdas removed — DuckDB's own lambda syntax also migrated to Python style).
+- `x -> x + 1` lambdas → tested viable at the time; **superseded by §2j** (PREDICATE takes row-scope expressions; lambdas removed — DuckDB's own lambda syntax also migrated to Python style).
 - Bridge limitation: TABLE macros take names/scalars, not subqueries → pre-2.0 ad hoc form requires a named view or file path (acceptable: files and views are the ad hoc cases anyway).
 
 ## 5. Answers to the direct questions
-- **ATTR/ATTRS/PSEUDO as expressions:** yes, normative — every slot is an arbitrary scalar expression over the row; macro use is an ordinary call expression (§2j); the earlier macro-name and inline-lambda forms are removed.
+- **ATTR/ATTR_MAP/PREDICATE as expressions:** yes, normative — every slot is an arbitrary scalar expression over the row; macro use is an ordinary call expression (§2j); the earlier macro-name and inline-lambda forms are removed.
 - **COLUMNS expressions in ATTR:** yes, verified — `ATTR (COLUMNS('attr_(.*)') AS '\\1')` bulk-declares the named tier from column patterns; the DuckDB star-expression machinery is exactly the right borrowed tool.
 - **Semantics without creation:** `CREATE TREE (SHAPE ONLY, …)` (named, reusable; §2c) + `USING TREE (…)` (anonymous, inline) + form E (functional, today).
 
 ## 6. Ripple (on adoption — not yet applied)
-CREATE TREE recomposes as `CREATE [VIRTUAL|TEMP] TREE t LIKE s AS FROM … [ATTACH …]` (§2c spelling); duckent build prompt M0 gains "SHAPE registry + projection compiler" as the actual first milestone; lesson examples carry the `USING TREE` spelling. Gate passed; all of this landed (lesson v13, handover v21).
+CREATE TREE recomposes as `CREATE [VIRTUAL|TEMP] TREE t LIKE s AS FROM … [ATTACH …]` (§2c spelling); duckent build prompt M0 gains "SHAPE registry + projection compiler" as the actual first milestone; lesson examples carry the `USING TREE` spelling. Gate passed; all of this landed (lesson v18, handover v21).
 
 
 ## §2e — The FILTER question, dissolved (decided)
@@ -115,5 +117,9 @@ R1+R2 are the minimal treeness set. TYPE moves out of R into **S0°** — total,
 Teaching and definition order is **R → S → O → W** (structure, speech, speed, world) — dependency strata, each leaning only on earlier ones; the *name* stays **ROWS**, revealed as a rearrangement at the end (found, not planned). Honest wrinkle: O's staleness namespace cites W2's load watermark, so the layering is pedagogical, not a strict DAG — acceptable, since O is inert either way. O3/O4 DDL clause spellings **provisional (D-N8)**: `CHILDREN col OPTIMIZE`, `NEXT col OPTIMIZE` (consistent with settled `PARENT`/`SIZE … OPTIMIZE`).
 
 
-## §2j — PSEUDO values are expressions, not lambdas (decided)
-The PSEUDO clause value is an ordinary **expression in the tree's row scope** — the generated-column / CHECK-constraint precedent: SQL already evaluates expressions per row in table scope, so no lambda syntax and no binding machinery are needed. Macro use is just a call expression: `PSEUDO (docblock := has_docblock(file_path, node_id))`. Inline lambdas are removed from the design entirely — also prudent because DuckDB's lambda syntax itself migrated (arrow style deprecated in favor of Python-style `lambda x: …`), and a shape spec shouldn't sit on a moving target. `PSEUDO PREFIX 'sel_…'` still imports a shared tier, shadowed by tree-local bindings.
+## §2j — PREDICATE values are expressions, not lambdas (decided)
+The PREDICATE clause value is an ordinary **expression in the tree's row scope** — the generated-column / CHECK-constraint precedent: SQL already evaluates expressions per row in table scope, so no lambda syntax and no binding machinery are needed. Macro use is just a call expression: `PREDICATE (docblock := has_docblock(file_path, node_id))`. Inline lambdas are removed from the design entirely — also prudent because DuckDB's lambda syntax itself migrated (arrow style deprecated in favor of Python-style `lambda x: …`), and a shape spec shouldn't sit on a moving target. **Two tiers beyond the per-name binding, and they are not the same tier.** The earlier one-line `PSEUDO PREFIX 'sel_…'` conflated them; as the macro surface implements and [`cheatsheet.md`](cheatsheet.md) measures them:
+- A **prefix binding is explicit and per tree.** It names a macro prefix and an argument list, enumerates every catalog macro carrying that prefix, and binds each under the part of the name after it. `tree_catalog_predicates().origin` records `prefix`. Macro spelling today: `predicate := [{prefix: 'pre_', args: 'depth'}]`; the DDL clause spelling for this form is not settled, so no `PREDICATE PREFIX` syntax is claimed here.
+- The **shared `sel_` tier is automatic and catalog-wide**, scanned for every tree, recorded as `origin = 'shared'` — but it **binds nothing unless the tree declares `predicate_args`**, because the shared tier has no other source of arguments. A tree without it gets zero shared predicates however many `sel_` macros exist.
+
+A tree-local binding still shadows both (same name, one row, `origin = 'local'`). And a macro already bound under one name is not bound again under another: with both a `pre_` prefix binding and a `sel_shallow` macro in the catalog, `shallow` is bound once, by the prefix binding, to `pre_shallow(depth)` — the prefix binding claims the macro and the shared tier skips it.
