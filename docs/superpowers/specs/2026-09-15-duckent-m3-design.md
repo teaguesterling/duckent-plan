@@ -114,6 +114,18 @@ Only declared slots are compared; a tree with no O override compiles to no state
 |---|---|---|
 | MN03 (re-planted) | a semantics-path function reads an O accessor: the compiler looks up whether SIZE is declared in `tree_catalog.slots` and emits a different descendant form when it is not | 42's new boundary record: for every app corpus selector, the compiled SQL for `app_declared` and `app_derived` is identical apart from the projection name and the `_match_tree` literal |
 | MN04 (the M2 file formerly named MN03) | the declared SIZE path of the projection returns `size + 1` | conformance at create (11_ddl, 12_dml records that create or insert a declared-SIZE tree) and 42 |
+| MN26 *(planted 2026-10-03, commit `13d842c`)* | the projection uses the ORDER **value** as `_pre` instead of its rank within ROOT (`CAST(__order AS BIGINT) AS _pre`), so every O(1) positional form — `_pre = _parent + 1`, `_pre = 0`, `_pre + _size + 1` — is arithmetic on the wrong number | `33_navigation.test`, and only it |
+
+**MN26 is §2.1's invariant, planted late.** `_pre` is the dense rank of ORDER within ROOT, and
+that is the whole licence for the O(1) positional forms; nothing tested it, because every
+positional record in the suite ran on `app.parquet`, whose `node_id` is already dense and 0-based
+— precisely where the distinction is invisible. `33_navigation.test` gained a gapped-ORDER fixture
+(root `f`; `x` at ORDER 0/10/20 and `y` at 100/110/120) asserting both the row sets and that the
+plain and element-aware spellings still answer the same relation, and MN26 plants the revert.
+Measured before planting: exactly the 2 new records fail under it and all 23 pre-existing records
+of that file pass, so the kill is attributable. Doctrine 3 is the reason it exists at all — the
+test alone would have left the invariant guarded by whoever remembers it, and a suite no mutant
+can fail tests nothing.
 
 The M2 file's rename is recorded in FINDINGS: the number MN3 was used for MN4's claim in M2, corrected here so a permanent id keeps the handover's meaning. MN01, MN02 and MN14 touch the fragments §2 and §4 rewrite and are regenerated with `test/mutants/regen.py`; MN14 stops overriding `tree_sql_size_expr`, which §2.3 removes.
 
@@ -155,7 +167,14 @@ A review from the duck_block_utils side (2026-09-15, all suites and mutants gree
 
 A ROOT partition with several level-0 rows is **not** refused. The handover allows it ("multiple roots legal — R2 permits level returning to 0"): ROOT delimits independent trees for DML and attachments, it does not require one root row. The reviewer read it as a defect; FINDINGS records the adjudication.
 
-**7.4 The parent basis respects ROOT.** The DFS walk joins a child to its parent by key alone, so a valid forest whose keys repeat per root is refused, orphans vanish, and a duplicate key duplicates rows or never terminates (*verified*). Rules: the walk's recursive join also requires the child's ROOT to equal the walker's; before the walk, ingest refuses a key that repeats within a root (`KEY <k> appears <n> times in root <r>`) and any row the walk cannot reach from a NULL parent within its root (`<n> rows are not reachable from a root in root <r>: orphans or a cycle, e.g. key <k>`). Those two checks are emitted before any statement that evaluates the projection.
+**7.4 The parent basis respects ROOT.** The DFS walk joins a child to its parent by key alone, so a valid forest whose keys repeat per root is refused, orphans vanish, and a duplicate key duplicates rows or never terminates (*verified*). Rules: the walk's recursive join also requires the child's ROOT to equal the walker's; before the walk, ingest refuses a key that repeats within a root and any row the walk cannot reach from a NULL parent within its root. Those two checks are emitted before any statement that evaluates the projection. *(amended 2026-10-08 — both messages re-run and quoted exactly. The design's first quote predates the `KEY` → `UNIQUE KEY` rename (PR #49) and omitted the tree; the second names the tree too, which the design's did not.)*
+
+```
+UNIQUE KEY dup appears 2 times in root {'file_path': f.py} of tree docs.t
+1 rows of tree docs.o are not reachable from a root in root {'file_path': f.py}: orphans or a cycle, e.g. key 3
+```
+
+The reachability message is gated on ATTR: with ATTR open (`*`) the projection carries the key column and the refusal can name an example key, and with ATTR closed it compares row counts per root and drops the `e.g. key` clause (`tree_compile_reach_check`). With no ROOT declared, the `in root …` clause is omitted from both.
 
 **7.5 Smaller items.** A ROOT declaration splits on every comma, so an expression containing one cannot be declared: `tree_sql_list` splits on top-level commas only, honoring one level of parentheses and quotes, and a deeper nesting refuses with a hint to project a column. Selectors that reach a raw DuckDB error instead of a duckent refusal, and inputs the two css front-ends treat differently, are found by one sweep (`test/sweep_selectors.py`, reusing the Task 9 differential generator) over `app`, and each class found gets a fix and a record.
 
@@ -180,6 +199,23 @@ A ROOT partition with several level-0 rows is **not** refused. The handover allo
 - **Mutant hygiene.** `regen.py --check` never looks at the hand-written MN01, MN02, MN14 and MN15; it now checks that every macro they override exists in `sql/`. `run_mutants.py` runs its subprocesses with `cwd` set to the repository root, refuses an unknown `--only` id, and the manifest's MN22 note counts 252 records, not 250.
 - **Evidence behind claims.** The 3,444-selector front-end differential and the §7.5 sweep are committed as `test/sweep_selectors.py`, so the number has a script behind it.
 - **Doc drift**, corrected in the core and M2 specs and FINDINGS: ATTR MAP is `MAP(VARCHAR, VARCHAR)` only, not "compiled by its type"; a local and a prefix pseudo-class with the same name refuse (S-coherence), which is what the code does; selector-bodied pseudo-classes are not built and are listed as carried; the M2 footgun table's citations point at rows that exist (refusals live in 37 and 38, #141 is `c12` on `py_variety`, no corpus row uses a capture); FINDINGS' description of `tree_catalog.compiled` and its `_match_language` formula; deferred mutant ids are listed in the manifest as the core spec says.
+
+  *(amended 2026-10-08 — five of those seven corrections did not land in 2026-09-15, and this
+  bullet asserted them as done for three weeks. What was true: S-coherence (core design §4) and
+  the `_match_language` formula (FINDINGS, struck through and closed). What was not, and is
+  corrected now: the core design still said ATTR MAP "dispatches on the expression's type" in two places
+  (§2.1 and §5); the M2 design §7 still said selector-bodied predicates "are inlined into the IR
+  at compile"; the M2 footgun table still cited 44 for the refusals, "both fixtures" for #141, and
+  a corpus capture that does not exist; and FINDINGS still said `tree_catalog.compiled` records
+  "only the `projection` artifact" when `attribute_columns` is written beside it; and the deferred
+  mutant ids (MN09, MN10, MN11, MN16, MN20, MN23) are **still absent from
+  `test/mutants/manifest.yaml`**, which lists the 20 planted ones and nothing else — that one is
+  not corrected here, because the fix belongs in the manifest, and the core design's "listed as
+  open in the manifest" has been changed to say where they are actually listed instead. The
+  behaviour this bullet reports was right in every case — it is only the claim that the documents
+  had been brought into line that was false. The lesson is the obvious one and belongs next to
+  the claim: a review that lists a doc fix has not made it; one unlanded item in such a list is
+  reason to re-check the others, which is how these five were found.)*
 
 ## 8. What M3 does not fix: compile cost
 
