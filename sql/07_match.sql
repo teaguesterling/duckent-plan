@@ -1,6 +1,6 @@
 -- sql/07_match.sql
 CREATE OR REPLACE MACRO tree_canonical_columns() AS
-  ['_root', '_pre', '_level', '_parent', '_size', '_children', '_next', '_type', '_key', '_tags', '_attr_map', '_element', '_pseudo'];
+  ['_root', '_pre', '_level', '_parent', '_size', '_children', '_next', '_type', '_key', '_tags', '_attr_map', '_element', '_predicate'];
 
 -- One fragment per relation, each the single definition shared by combinators, groups and traversal.
 -- a and b are step aliases; elem says whether the tree declares ELEMENT, in which case the sibling
@@ -256,9 +256,9 @@ CREATE OR REPLACE MACRO tree_sql_clause(kind, value, op, arg, alias, attr_cols, 
     WHEN 'class'  THEN 'COALESCE(list_contains(' || alias || '._tags, ' || tree_sql_lit(value) || '), false)'
     -- The built-ins are compiled by tree_sql_builtin_pseudo, which returns NULL for every other
     -- name -- so this branch consults the one list rather than repeating it. A declared
-    -- pseudo-class is a lookup in the projection's _pseudo map.
+    -- pseudo-class is a lookup in the projection's _predicate map.
     WHEN 'pseudo' THEN COALESCE(tree_sql_builtin_pseudo(value, alias, elem),
-                                'COALESCE(' || alias || '._pseudo[' || tree_sql_lit(value) || '], false)')
+                                'COALESCE(' || alias || '._predicate[' || tree_sql_lit(value) || '], false)')
     -- An attribute resolves to a projected column first, then to ATTR MAP. The map is
     -- MAP(VARCHAR, VARCHAR), so a comparison against a number or a boolean has to cast the
     -- value ('3' > '10' is true as text); a quoted literal compares as text and needs none.
@@ -378,17 +378,17 @@ WITH t AS (
                   []::STRUCT(name VARCHAR, "type" VARCHAR)[]) AS attr_cols
   FROM tree_catalog.trees tr WHERE tr.database_name = current_database() AND tr.schema_name = sch AND tr.tree_name = nm),
 -- The overlay with its macro-, map- and prefix-bound predicates turned into expression
--- bodies, exactly as the DDL compilers do before storing them: tree_sql_pseudo_map reads (p).body
--- only, so an unexpanded binding would compile the _pseudo map -- and with it the whole
+-- bodies, exactly as the DDL compilers do before storing them: tree_sql_predicate_map reads (p).body
+-- only, so an unexpanded binding would compile the _predicate map -- and with it the whole
 -- projection text -- to NULL. A NULL overlay must stay NULL rather than become a struct of NULLs,
--- which is what tree_expand_pseudo(NULL) returns, hence the guard.
-ov AS (SELECT CASE WHEN semantic IS NULL THEN NULL ELSE tree_expand_pseudo(semantic) END AS sem),
+-- which is what tree_expand_predicate(NULL) returns, hence the guard.
+ov AS (SELECT CASE WHEN semantic IS NULL THEN NULL ELSE tree_expand_predicate(semantic) END AS sem),
 -- 1.5.5 refuses a subquery anywhere inside an expression that carries a lambda ("subqueries in
 -- lambda expressions are not supported"), and macro inlining puts the argument text inside the
--- lambda. So everything a lambda-bearing fragment (tree_sql_pseudo_map, tree_sql_chain) or a
+-- lambda. So everything a lambda-bearing fragment (tree_sql_predicate_map, tree_sql_chain) or a
 -- lambda here is handed has to arrive as a plain column reference, which is what ovp and cfg are
 -- for: each is one row, joined in rather than read with (SELECT ... FROM ...).
-ovp AS (SELECT sem, list_transform(COALESCE((sem).pseudo, []), lambda x: (x).name) AS names FROM ov),
+ovp AS (SELECT sem, list_transform(COALESCE((sem).predicate, []), lambda x: (x).name) AS names FROM ov),
 -- the selector's rows, flattened once and read by both the checks below and the n CTE
 ir AS (SELECT * FROM (SELECT unnest(sel, recursive := true))),
 -- Structure the unrolled fold cannot reach. Its passes are inner joins over a fixed number of
@@ -477,7 +477,7 @@ chk AS (SELECT CASE
   WHEN (semantic).attr IS NOT NULL THEN tree_err('tree_match: a per-query SEMANTIC overlay cannot add attribute columns; use tree_ddl_alter')
   -- ... and "sets nothing" is the question create and alter ask of a SEMANTIC group, through the
   -- predicate all three now share. The copy that stood here had already drifted from theirs: it
-  -- omitted PSEUDO_ARGS, so an overlay that set only pseudo_args -- which binds the whole shared
+  -- omitted PSEUDO_ARGS, so an overlay that set only predicate_args -- which binds the whole shared
   -- pseudo tier, and whose names ovp already treated as known -- was refused as empty.
   WHEN semantic IS NOT NULL AND NOT tree_semantic_declares(semantic)
        THEN tree_err('tree_match: semantic overlay is empty')
@@ -515,13 +515,13 @@ proj AS (
         CASE WHEN (semantic).element IS NULL THEN NULL ELSE 'COALESCE(' || (semantic).element || ', false) AS _element' END,
         -- map_concat, not replace: the catalog's predicates stay bound, the overlay's
         -- entries are added, and the overlay (the second argument) wins on a shared name
-        -- Gated on (sem).pseudo -- the EXPANDED overlay -- not the raw (semantic).pseudo: an
-        -- overlay that sets only pseudo_args (no pseudo declared at all) still expands to a
+        -- Gated on (sem).predicate -- the EXPANDED overlay -- not the raw (semantic).predicate: an
+        -- overlay that sets only predicate_args (no pseudo declared at all) still expands to a
         -- non-NULL shared-tier binding list, and ovp.names (below) already treats those names
-        -- as known. Gating on the raw, undeclared field left the projection's _pseudo map
+        -- as known. Gating on the raw, undeclared field left the projection's _predicate map
         -- without the shared binding while the matcher believed it was bound -- a lookup that
         -- silently matched nothing instead of raising or actually binding.
-        CASE WHEN (sem).pseudo IS NULL THEN NULL ELSE 'map_concat(_pseudo, ' || tree_sql_pseudo_map(sem) || ') AS _pseudo' END], lambda x: x IS NOT NULL), 'string_agg', ', ')
+        CASE WHEN (sem).predicate IS NULL THEN NULL ELSE 'map_concat(_predicate, ' || tree_sql_predicate_map(sem) || ') AS _predicate' END], lambda x: x IS NOT NULL), 'string_agg', ', ')
       || ') FROM tree_catalog.' || tree_sql_object_name('proj', sch, nm) || '())' END AS p
   FROM ovp),
 -- The one row every text-building step joins against. A missing tree leaves t empty, so these are

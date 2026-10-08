@@ -79,7 +79,7 @@ SPEC = {
         ("WHEN 'pseudo_unknown' THEN 'false'",
          "-- the mutation\n    WHEN 'pseudo_unknown' THEN tree_err('tree_match: unknown pseudo-class ' || value)", 1)]),
 
-    "MN12": ("sql/00_types.sql", ["tree_expand_pseudo"], [
+    "MN12": ("sql/00_types.sql", ["tree_expand_predicate"], [
         ("                      -- spec §7, amended: identity dedup. The spec's literal text excludes a\n"
          "                      -- candidate only by name collision; that alone double-binds a macro\n"
          "                      -- already claimed by a prefix declaration (e.g. sel_ast_leaf, which also\n"
@@ -88,14 +88,14 @@ SPEC = {
          "                      -- any name -- locally or via a prefix -- is not re-bound by the shared\n"
          "                      -- tier under another one.\n"
          "                      AND NOT list_contains(list_transform(lp.bound, lambda y: (y).name),"
-         " substr(f.function_name, length(tree_shared_pseudo_prefix()) + 1))\n"
+         " substr(f.function_name, length(tree_shared_predicate_prefix()) + 1))\n"
          "                      AND NOT list_contains(list_transform(lp.bound, lambda y: (y).macro), f.function_name)\n",
          "                      -- the mutation, edit (1): the name and macro dedup filters are gone\n", 1),
         ("\n)\nSELECT {type: (sem).type,",
          "\n),\n"
          "-- the mutation, edit (2): shared first, local/prefix second, and the FIRST occurrence of a\n"
          "-- name wins -- so the shared tier overrides what the tree declared. The dedup is needed\n"
-         "-- because tree_sql_pseudo_map builds a MAP and a repeated key raises.\n"
+         "-- because tree_sql_predicate_map builds a MAP and a repeated key raises.\n"
          "allb AS (SELECT list_concat(shared.extra, lp.bound) AS v FROM lp, shared),\n"
          "ded AS (SELECT list_filter(v, lambda x, i:\n"
          "                 list_position(list_transform(v, lambda y: (y).name), (x).name) = i) AS v FROM allb)\n"
@@ -169,7 +169,7 @@ SPEC = {
         ("WHEN 'class'  THEN 'COALESCE(list_contains(' || alias || '._tags, ' || tree_sql_lit(value) || '), false)'",
          "-- the mutation\n"
          "    WHEN 'class'  THEN 'CASE WHEN COALESCE(len(' || alias || '._tags), 0) = 0'\n"
-         "                       || ' THEN COALESCE(' || alias || '._pseudo[' || tree_sql_lit(value) || '], false)'\n"
+         "                       || ' THEN COALESCE(' || alias || '._predicate[' || tree_sql_lit(value) || '], false)'\n"
          "                       || ' ELSE COALESCE(list_contains(' || alias || '._tags, '"
          " || tree_sql_lit(value) || '), false) END'", 1)]),
 }

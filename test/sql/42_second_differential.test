@@ -21,14 +21,14 @@ CALL tree_ddl_create('main', 'app_declared', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   size := 'descendant_count', parent := 'parent_id', children := 'children_count',
   semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
-    element := 'is_element', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
+    element := 'is_element', predicate := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 statement ok
 CALL tree_ddl_create('main', 'app_derived', tree_spec(tree_shape(
   root := 'file_path', "order" := 'node_id', level := 'depth',
   semantic := tree_semantic(type := 'type', key := 'name', tags := 'css_classes',
-    element := 'is_element', pseudo := [{name: 'def', body: '(flags & 6) = 6'}])),
+    element := 'is_element', predicate := [{name: 'def', body: '(flags & 6) = 6'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 # The two projections first, column for column. The selector records below are the

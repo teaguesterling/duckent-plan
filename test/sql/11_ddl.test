@@ -5,7 +5,7 @@
 statement ok
 CALL tree_ddl_create('main', 'app', tree_spec(
   tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
-             semantic := tree_semantic(type := 'type', key := 'name', pseudo := [{name: 'leaf', body: 'descendant_count = 0'}])),
+             semantic := tree_semantic(type := 'type', key := 'name', predicate := [{name: 'leaf', body: 'descendant_count = 0'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 query IIIIII
@@ -112,12 +112,12 @@ SELECT count(*), max(_level), max(_size) FROM tree_project('main', 'flat_default
 # S-less refusal in tree_match stopped firing: a TYPE clause then compiled against TYPE's 'node'
 # default and returned zero rows where a refusal was owed. That is verbatim the failure the comment
 # on tree_semantic_declares says the flag exists to prevent. The EXPLICIT spelling of the same
-# intent -- pseudo := [{prefix: 'sel_', args: ...}] -- was already refused by
+# intent -- predicate := [{prefix: 'sel_', args: ...}] -- was already refused by
 # tree_sql_check_prefixes; only the implicit tier bypassed it.
 statement error
-CALL tree_ddl_create('main', 'pa_unbound', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', semantic := tree_semantic(pseudo_args := 'depth')), source := 'read_parquet(''test/data/app.parquet'')'));
+CALL tree_ddl_create('main', 'pa_unbound', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', semantic := tree_semantic(predicate_args := 'depth')), source := 'read_parquet(''test/data/app.parquet'')'));
 ----
-PSEUDO_ARGS binds no macro
+PREDICATE_ARGS binds no macro
 
 # With a shared-tier macro in scope the same declaration is accepted and binds it, so the refusal
 # above is about binding nothing rather than about PSEUDO_ARGS itself.
@@ -125,14 +125,14 @@ statement ok
 CREATE MACRO sel_leafy(n) AS n = 0;
 
 statement ok
-CALL tree_ddl_create('main', 'pa_bound', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', semantic := tree_semantic(pseudo_args := 'descendant_count')), source := 'read_parquet(''test/data/app.parquet'')'));
+CALL tree_ddl_create('main', 'pa_bound', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', semantic := tree_semantic(predicate_args := 'descendant_count')), source := 'read_parquet(''test/data/app.parquet'')'));
 
 query II
 SELECT count(*), list((p).name) FROM (SELECT unnest(bound) AS p FROM (SELECT list({name: name}) AS bound FROM tree_catalog.predicates WHERE tree_name = 'pa_bound'));
 ----
 1	[leafy]
 
-# A BARE prefix macro has an empty remainder, so tree_expand_pseudo deliberately leaves it unbound
+# A BARE prefix macro has an empty remainder, so tree_expand_predicate deliberately leaves it unbound
 # -- "not an error, just not a nameable pseudo-class". The check has to agree with that, or a tree
 # whose only sel_ macro is the bare one would pass while binding nothing.
 statement ok
@@ -142,9 +142,9 @@ statement ok
 CREATE MACRO sel_(n) AS n = 0;
 
 statement error
-CALL tree_ddl_create('main', 'pa_bare', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', semantic := tree_semantic(pseudo_args := 'depth')), source := 'read_parquet(''test/data/app.parquet'')'));
+CALL tree_ddl_create('main', 'pa_bare', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', semantic := tree_semantic(predicate_args := 'depth')), source := 'read_parquet(''test/data/app.parquet'')'));
 ----
-PSEUDO_ARGS binds no macro
+PREDICATE_ARGS binds no macro
 
 statement ok
 DROP MACRO sel_;
@@ -254,7 +254,7 @@ _pre
 
 # duplicate pseudo names refused (S-coherence)
 statement error
-CALL tree_ddl_create('main', 'bad8', tree_spec(tree_shape("order" := 'node_id', level := 'depth', semantic := tree_semantic(pseudo := [{name: 'x', body: 'true'}, {name: 'x', body: 'false'}])), source := 'read_parquet(''test/data/app.parquet'')'));
+CALL tree_ddl_create('main', 'bad8', tree_spec(tree_shape("order" := 'node_id', level := 'depth', semantic := tree_semantic(predicate := [{name: 'x', body: 'true'}, {name: 'x', body: 'false'}])), source := 'read_parquet(''test/data/app.parquet'')'));
 ----
 S-coherence
 
@@ -296,12 +296,12 @@ abstract must be true or false
 
 # a PSEUDO with no body refuses: the pseudo map and the pseudo_classes INSERT both go NULL
 statement error
-CALL tree_ddl_create('main', 'bad15', tree_spec(tree_shape("order" := 'node_id', level := 'depth', semantic := tree_semantic(pseudo := [{name: 'p', body: NULL}])), source := 'read_parquet(''test/data/app.parquet'')'));
+CALL tree_ddl_create('main', 'bad15', tree_spec(tree_shape("order" := 'node_id', level := 'depth', semantic := tree_semantic(predicate := [{name: 'p', body: NULL}])), source := 'read_parquet(''test/data/app.parquet'')'));
 ----
 every PSEUDO needs a name and a body
 
 statement error
-CALL tree_ddl_create('main', 'bad16', tree_spec(tree_shape("order" := 'node_id', level := 'depth', semantic := tree_semantic(pseudo := [{name: NULL, body: 'true'}])), source := 'read_parquet(''test/data/app.parquet'')'));
+CALL tree_ddl_create('main', 'bad16', tree_spec(tree_shape("order" := 'node_id', level := 'depth', semantic := tree_semantic(predicate := [{name: NULL, body: 'true'}])), source := 'read_parquet(''test/data/app.parquet'')'));
 ----
 every PSEUDO needs a name and a body
 
@@ -428,7 +428,7 @@ CALL tree_ddl_alter('main', 'bare', tree_semantic(attr := 'node_id AS _pre'));
 _pre
 
 statement error
-CALL tree_ddl_alter('main', 'bare', tree_semantic(pseudo := [{name: 'x', body: 'true'}, {name: 'x', body: 'false'}]));
+CALL tree_ddl_alter('main', 'bare', tree_semantic(predicate := [{name: 'x', body: 'true'}, {name: 'x', body: 'false'}]));
 ----
 S-coherence
 
@@ -527,7 +527,7 @@ CREATE MACRO is_leaf(n) AS n = 0;
 
 statement ok
 CALL tree_ddl_create('main', 'elem', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
-  semantic := tree_semantic(type := 'type', element := 'regexp_matches(type, ''^[a-z_]'')', pseudo := [{name: 'leaf', macro: 'is_leaf', args: 'descendant_count'}])),
+  semantic := tree_semantic(type := 'type', element := 'regexp_matches(type, ''^[a-z_]'')', predicate := [{name: 'leaf', macro: 'is_leaf', args: 'descendant_count'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 query I
@@ -557,7 +557,7 @@ CREATE MACRO sel_x_top(d) AS d = 0;
 
 statement ok
 CALL tree_ddl_create('main', 'pfx', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
-  semantic := tree_semantic(type := 'type', pseudo := [{prefix: 'sel_x_', args: 'depth'}])),
+  semantic := tree_semantic(type := 'type', predicate := [{prefix: 'sel_x_', args: 'depth'}])),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
 query IIII

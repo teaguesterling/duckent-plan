@@ -57,7 +57,7 @@ Four blocks, taught in dependency order (R, S, O, W). Rearranged, the initials s
 | Block | Name | What it governs |
 |---|---|---|
 | **R** | Required | Structure. `ROOT` (tree identity, required iff the relation holds more than one tree), row order, and a structural basis of `LEVEL` or `PARENT`. Either basis derives the other. `PRE` is the derived position — the rank of `ORDER` within `ROOT`, gap-free, which every O(1) form rests on. A `PARENT` basis also needs a `UNIQUE KEY`, the root-unique column `PARENT` resolves against. R1 + R2 is the minimal treeness set. |
-| **S** | Semantics | What selectors can say. `TYPE` (total, defaults to `'node'`), `KEY` (the distinguished label `#` matches — at most one, *not* unique), `TAGS` (zero or more), two-tier attributes (named and typed, then a string-only map), and per-tree `PSEUDO` bindings whose values are plain row-scope expressions — recorded in `tree_catalog.predicates`, because a tag is data and a predicate is code. |
+| **S** | Semantics | What selectors can say. `TYPE` (total, defaults to `'node'`), `KEY` (the distinguished label `#` matches — at most one, *not* unique), `TAGS` (zero or more), two-tier attributes (named and typed, then a string-only map), and per-tree `PREDICATE` bindings whose values are plain row-scope expressions — recorded in `tree_catalog.predicates`, because a tag is data and a predicate is code. |
 | **O** | Optimizations | Cost only, never results. Native `PARENT`, `SIZE`, `CHILDREN`, `NEXT` columns register as overrides. Every override must test-equal its derivable default; a divergence is a corrupted encoding, not a fast path. |
 | **W** | World | Linking trees without touching them. Root-restricted attachments, demand loaders with a tri-state frontier (loaded / unloaded / absent), and epoch manifests. Within-tree match sets are invariant under any change to W. |
 
@@ -71,7 +71,7 @@ Four blocks, taught in dependency order (R, S, O, W). Rearranged, the initials s
 
 ## Settled syntax
 
-**One naming rule, so this does not have to be relitigated per slot:** selector syntax is CSS's, and the catalog's vocabulary is duckent's. So `.x`, `#x`, `[a=b]` and `:x` keep their CSS spelling in a selector, while the declarations they resolve against are `TAGS`, `KEY`, `ATTR` and `PSEUDO`. One level down, inside a declaration, a **slot names a tree-semantics role and a binding names a domain column** — which is why `tree_semantic(type := 'type', key := 'name')` reads correctly: role on the left, the vocabulary's own column on the right.
+**One naming rule, so this does not have to be relitigated per slot:** selector syntax is CSS's, and the catalog's vocabulary is duckent's. So `.x`, `#x`, `[a=b]` and `:x` keep their CSS spelling in a selector, while the declarations they resolve against are `TAGS`, `KEY`, `ATTR` and `PREDICATE`. One level down, inside a declaration, a **slot names a tree-semantics role and a binding names a domain column** — which is why `tree_semantic(type := 'type', key := 'name')` reads correctly: role on the left, the vocabulary's own column on the right.
 
 Two things named `KEY` are deliberately distinguished by that rule. The S-block `KEY` is the distinguished label `#` matches, at most one per row and **not** unique — the M2 oracle has `.call#print` returning five nodes, three of them in one root. The R-block `UNIQUE KEY` is the root-unique column a `PARENT` basis resolves against, and its uniqueness is enforced at ingest.
 

@@ -444,7 +444,7 @@ def write_43_representation(hand):
     out += ["# " + "-" * 86 + "\n# (b) promotion: one predicate as a PSEUDO body, and as a CLASSES"
             " list the source computes\n# " + "-" * 86 + "\n\n",
             _app_ddl("rep_pseudo", SIZE_ONLY,
-                     "type := 'type', pseudo := [{name: 'def', body: '(flags & 6) = 6'}]"),
+                     "type := 'type', predicate := [{name: 'def', body: '(flags & 6) = 6'}]"),
             _app_ddl("rep_class", SIZE_ONLY, "type := 'type', tags := 'cls'",
                      source="(SELECT *, CASE WHEN (flags & 6) = 6 THEN [''def''] ELSE [] END "
                             "AS cls FROM read_parquet(''test/data/app.parquet''))")]
@@ -464,7 +464,7 @@ def write_43_representation(hand):
             "# column, which keeps the first from passing on a tree that selects nothing at all.\n\n",
             _app_ddl("rep_class_none", SIZE_ONLY,
                      "type := 'type', tags := '[]::VARCHAR[]',\n"
-                     "    pseudo := [{name: 'def', body: '(flags & 6) = 6'}]"),
+                     "    predicate := [{name: 'def', body: '(flags & 6) = 6'}]"),
             "query II\n"
             "SELECT (SELECT count(*) FROM tree_match('main', 'rep_class_none', tree_steps([{class: 'def'}]))),\n"
             "       (SELECT count(*) FROM tree_match('main', 'rep_class_none', tree_steps([{pseudo: 'def'}])))\n"
@@ -584,7 +584,7 @@ def corpus_sem(type_expr="type", element_expr="is_element"):
     """The corpus S group, with TYPE and ELEMENT as parameters: 43 varies exactly those two and
     holds everything else fixed, so the S group has one spelling here."""
     return ("type := '%s', key := 'name', tags := 'css_classes',\n"
-            "    element := '%s', pseudo := [{name: 'def', body: '(flags & 6) = 6'}]"
+            "    element := '%s', predicate := [{name: 'def', body: '(flags & 6) = 6'}]"
             % (sql_text(type_expr), sql_text(element_expr)))
 
 
