@@ -141,7 +141,7 @@ class TestRefusals(unittest.TestCase):
         return str(cm.exception)
 
     def test_where_has_no_host_escape(self):
-        self.assertIn("css has no host escape: mint a PSEUDO, or MATCH USING TREEQL",
+        self.assertIn("css has no host escape: mint a PREDICATE, or MATCH USING TREEQL",
                       self.refusal(".fn[WHERE x > 2]"))
 
     def test_unclosed(self):

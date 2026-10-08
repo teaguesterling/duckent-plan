@@ -414,7 +414,7 @@ def write_43_representation(hand):
     Three swaps over app.parquet, each leaving the semantics alone and changing only the spelling:
 
       (a) TYPE as a column (`type`) against TYPE as an expression (`lower(upper(type))`).
-      (b) promotion: the same predicate as a PSEUDO body and as a CLASSES list built in the source.
+      (b) promotion: the same predicate as a PREDICATE body and as a TAGS list built in the source.
       (c) ELEMENT as a column (`is_element`) against a macro over the same flag bit.
 
     (c) is the one that needs care. `is_element` is `is_construct(flags)` baked in at fixture time,
@@ -428,7 +428,7 @@ def write_43_representation(hand):
     rows = [r for r in hand if r["fixture"] == "app"]
     out = ["# name: test/sql/43_representation.test\n",
            "# description: P23 -- a semantic is what it selects, not how it is spelled. TYPE as a\n",
-           "# column vs as an expression, a PSEUDO body vs the same predicate promoted to CLASSES,\n",
+           "# column vs as an expression, a PREDICATE body vs the same predicate promoted to TAGS,\n",
            "# and ELEMENT as a column vs as a macro over the flag bit it was derived from.\n#\n",
            "# (a) and (c) run the `app` rows of test/corpus/selectors.tsv; (b) and the last record\n",
            "# of (c) are selectors written for those two claims, which the corpus has no row for.\n#\n",
@@ -441,7 +441,7 @@ def write_43_representation(hand):
         head = "# %s  %s  %s" % (r["id"], r["css"], " ".join(r["tags"]))
         out += _same_keys_record(head, _css_keys("rep_col", r["css"]),
                                  _css_keys("rep_expr", r["css"]))
-    out += ["# " + "-" * 86 + "\n# (b) promotion: one predicate as a PSEUDO body, and as a CLASSES"
+    out += ["# " + "-" * 86 + "\n# (b) promotion: one predicate as a PREDICATE body, and as a TAGS"
             " list the source computes\n# " + "-" * 86 + "\n\n",
             _app_ddl("rep_pseudo", SIZE_ONLY,
                      "type := 'type', predicate := [{name: 'def', body: '(flags & 6) = 6'}]"),
@@ -459,7 +459,7 @@ def write_43_representation(hand):
     out += ["# The two records above say a promoted class and its pseudo-class select the same\n"
             "# rows. They do NOT say a class may be ANSWERED from a pseudo-class body: promotion\n"
             "# is something the tree's declaration does, not something the matcher may infer per\n"
-            "# row. rep_class_none binds `def` as a PSEUDO and declares an empty CLASSES list, so\n"
+            "# row. rep_class_none binds `def` as a PREDICATE and declares an empty TAGS list, so\n"
             "# `.def` must select nothing there while `:def` still selects every def -- the second\n"
             "# column, which keeps the first from passing on a tree that selects nothing at all.\n\n",
             _app_ddl("rep_class_none", SIZE_ONLY,
@@ -591,7 +591,7 @@ def corpus_sem(type_expr="type", element_expr="is_element"):
 def _tree_ddl_records(trees):
     """The corpus trees a file uses, created once at its top. ATTR is left at the default `*`, so
     `name` and `params` are projected columns an `[attr]` clause can compare."""
-    out = ["# The corpus trees. CLASSES, ELEMENT and `params` are columns test/gen_fixtures.py\n"
+    out = ["# The corpus trees. TAGS, ELEMENT and `params` are columns test/gen_fixtures.py\n"
            "# derived from sitting_duck at fixture time, so nothing here needs the extension.\n\n"]
     for tree in trees:
         out.append("statement ok\n" + TREE_DDL.format(tree=tree, sem=corpus_sem()) + "\n\n")

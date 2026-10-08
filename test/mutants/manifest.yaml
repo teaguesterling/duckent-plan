@@ -115,9 +115,9 @@
   expect_fail: [test/sql/44_parsers.test, test/sql/37_css_parser.test]
 - id: MN12
   file: MN12_shared_wins.sql
-  what: the shared sel_* pseudo tier shadows a tree's own local or prefix binding
+  what: the shared sel_* predicate tier shadows a tree's own local or prefix binding
   expect_fail: [test/sql/36_pseudo.test]
-  also_kills: nothing in the corpus -- no corpus tree declares a pseudo a sel_* macro could
+  also_kills: nothing in the corpus -- no corpus tree declares a predicate a sel_* macro could
     shadow, so 36_pseudo's `shadow` tree (:leaf count = 0) is the only witness
 - id: MN13
   file: MN13_map_no_cast.sql
@@ -175,12 +175,12 @@
 - id: MN25
   file: MN25_promoted_class_from_body.sql
   what: a CLASS clause is answered from the pseudo-class of the same name when the row's
-    CLASSES list is empty (promotion recomputed at match time)
+    TAGS list is empty (promotion recomputed at match time)
   expect_fail: [test/sql/43_representation.test]
-  # 43's `rep_class_none` record is the discriminating one: the tree binds `def` as a PSEUDO
-  # and declares an empty CLASSES list, so `.def` must select nothing there. The two promotion
+  # 43's `rep_class_none` record is the discriminating one: the tree binds `def` as a PREDICATE
+  # and declares an empty TAGS list, so `.def` must select nothing there. The two promotion
   # records before it cannot see the mutant -- on rep_class every def row has a non-empty
-  # CLASSES list, so the fallback never fires.
+  # TAGS list, so the fallback never fires.
 - id: MN26
   file: MN26_pre_is_order_value.sql
   what: the projection uses the ORDER value as _pre instead of its rank within ROOT, so every

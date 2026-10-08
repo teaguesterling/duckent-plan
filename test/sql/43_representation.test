@@ -1,6 +1,6 @@
 # name: test/sql/43_representation.test
 # description: P23 -- a semantic is what it selects, not how it is spelled. TYPE as a
-# column vs as an expression, a PSEUDO body vs the same predicate promoted to CLASSES,
+# column vs as an expression, a PREDICATE body vs the same predicate promoted to TAGS,
 # and ELEMENT as a column vs as a macro over the flag bit it was derived from.
 #
 # (a) and (c) run the `app` rows of test/corpus/selectors.tsv; (b) and the last record
@@ -147,7 +147,7 @@ SELECT (SELECT list(file_path || ':' || node_id ORDER BY file_path, node_id)
 true
 
 # --------------------------------------------------------------------------------------
-# (b) promotion: one predicate as a PSEUDO body, and as a CLASSES list the source computes
+# (b) promotion: one predicate as a PREDICATE body, and as a TAGS list the source computes
 # --------------------------------------------------------------------------------------
 
 statement ok
@@ -185,7 +185,7 @@ true
 # The two records above say a promoted class and its pseudo-class select the same
 # rows. They do NOT say a class may be ANSWERED from a pseudo-class body: promotion
 # is something the tree's declaration does, not something the matcher may infer per
-# row. rep_class_none binds `def` as a PSEUDO and declares an empty CLASSES list, so
+# row. rep_class_none binds `def` as a PREDICATE and declares an empty TAGS list, so
 # `.def` must select nothing there while `:def` still selects every def -- the second
 # column, which keeps the first from passing on a tree that selects nothing at all.
 

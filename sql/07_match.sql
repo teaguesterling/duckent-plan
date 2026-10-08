@@ -162,17 +162,17 @@ CREATE OR REPLACE MACRO tree_sql_comb(op, a, b, elem) AS
 -- whatever its SEMANTIC group binds, and they are never reported as unknown. One list, read by
 -- tree_sql_builtin_pseudo (which compiles them) and by tree_compile_match -- which must not mark
 -- them unknown, and must not refuse them on a tree with no SEMANTIC group: they read no S slot.
-CREATE OR REPLACE MACRO tree_builtin_pseudos() AS ['first-child', 'last-child'];
+CREATE OR REPLACE MACRO tree_builtin_predicates() AS ['first-child', 'last-child'];
 
 -- The predicate a built-in pseudo-class compiles to, or NULL when `name` is not one of them --
--- which is what makes tree_builtin_pseudos() above the single list. The dispatch used to be a
+-- which is what makes tree_builtin_predicates() above the single list. The dispatch used to be a
 -- second, hand-copied CASE inside tree_sql_clause, so adding a built-in meant remembering both
 -- and forgetting either one left a built-in that compiled but was reported unknown (or the
 -- reverse). The built-ins go through the navigation fragments rather than being spelled out
 -- again, so a tree that declares ELEMENT gets the first *element* child instead of the row at
 -- _parent + 1.
 CREATE OR REPLACE MACRO tree_sql_builtin_pseudo(name, alias, elem) AS
-  CASE WHEN NOT list_contains(tree_builtin_pseudos(), name) THEN NULL
+  CASE WHEN NOT list_contains(tree_builtin_predicates(), name) THEN NULL
        WHEN name = 'first-child' THEN tree_sql_first_child(alias, elem)
        WHEN name = 'last-child'  THEN tree_sql_last_child(alias, elem) END;
 
@@ -477,8 +477,8 @@ chk AS (SELECT CASE
   WHEN (semantic).attr IS NOT NULL THEN tree_err('tree_match: a per-query SEMANTIC overlay cannot add attribute columns; use tree_ddl_alter')
   -- ... and "sets nothing" is the question create and alter ask of a SEMANTIC group, through the
   -- predicate all three now share. The copy that stood here had already drifted from theirs: it
-  -- omitted PSEUDO_ARGS, so an overlay that set only predicate_args -- which binds the whole shared
-  -- pseudo tier, and whose names ovp already treated as known -- was refused as empty.
+  -- omitted PREDICATE_ARGS, so an overlay that set only predicate_args -- which binds the whole shared
+  -- predicate tier, and whose names ovp already treated as known -- was refused as empty.
   WHEN semantic IS NOT NULL AND NOT tree_semantic_declares(semantic)
        THEN tree_err('tree_match: semantic overlay is empty')
   WHEN (SELECT count(*) FROM ir WHERE kind = 'step') = 0 THEN tree_err('tree_match: selector has no steps')
@@ -516,7 +516,7 @@ proj AS (
         -- map_concat, not replace: the catalog's predicates stay bound, the overlay's
         -- entries are added, and the overlay (the second argument) wins on a shared name
         -- Gated on (sem).predicate -- the EXPANDED overlay -- not the raw (semantic).predicate: an
-        -- overlay that sets only predicate_args (no pseudo declared at all) still expands to a
+        -- overlay that sets only predicate_args (no predicate declared at all) still expands to a
         -- non-NULL shared-tier binding list, and ovp.names (below) already treats those names
         -- as known. Gating on the raw, undeclared field left the projection's _predicate map
         -- without the shared binding while the matcher believed it was bound -- a lookup that
@@ -539,7 +539,7 @@ cfg AS (SELECT (SELECT p FROM proj) AS p, (SELECT has_element FROM t) AS elem,
 -- selector, so a clause or a combinator inside a group is checked exactly like a top-level one.
 n AS (
   SELECT node_id, parent_id,
-         CASE WHEN kind = 'pseudo' AND NOT list_contains(tree_builtin_pseudos(), value)
+         CASE WHEN kind = 'pseudo' AND NOT list_contains(tree_builtin_predicates(), value)
                    AND NOT list_contains(COALESCE((SELECT known_pseudos FROM t), []), value)
                    AND (semantic IS NULL OR NOT list_contains((SELECT names FROM ovp), value)) THEN 'pseudo_unknown' ELSE kind END AS kind,
          value, op, arg, COALESCE(alias, 's' || node_id) AS alias,
@@ -550,7 +550,7 @@ n AS (
          -- never wanted one. An unknown pseudo on the same tree still refuses: `ir.kind` is read
          -- here, not the `pseudo_unknown` the column above computes.
          CASE WHEN ir.kind IN ('type', 'id', 'class', 'attr', 'pseudo') AND NOT (SELECT has_semantic FROM t)
-                   AND NOT (ir.kind = 'pseudo' AND list_contains(tree_builtin_pseudos(), ir.value))
+                   AND NOT (ir.kind = 'pseudo' AND list_contains(tree_builtin_predicates(), ir.value))
               THEN tree_err('tree_match: tree ' || sch || '.' || nm || ' has no SEMANTIC group; only combinators and WHERE are available. Add one with tree_ddl_alter or pass semantic :=')
               -- The sibling-free refusal, which covers the POSITIONAL built-ins too: "first" and
               -- "last" mean nothing among siblings nothing orders. It tested the combinator
@@ -559,7 +559,7 @@ n AS (
               -- there -- the one thing the sibling-free profile exists to prevent.
               WHEN (SELECT profile FROM t) = 'sibling_free'
                    AND ((ir.kind = 'step' AND ir.op IN ('next', 'after'))
-                        OR (ir.kind = 'pseudo' AND list_contains(tree_builtin_pseudos(), ir.value)))
+                        OR (ir.kind = 'pseudo' AND list_contains(tree_builtin_predicates(), ir.value)))
               THEN tree_err('tree_match: tree ' || sch || '.' || nm || ' is sibling-free (no SIBLING_ORDER declared); SIBLING, FOLLOWING, :first-child and :last-child are unavailable')
               ELSE true END AS ok
   FROM ir),

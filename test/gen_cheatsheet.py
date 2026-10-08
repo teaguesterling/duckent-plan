@@ -188,7 +188,7 @@ GLOSS_MACRO = {
     "tree_encode": "derive ORDER and LEVEL from a key/parent pair",
     "tree_derive_parent": "derive PARENT from an ORDER/LEVEL pair",
     "tree_canonical_columns": "the columns projection adds",
-    "tree_builtin_pseudos": "predicates every tree has without declaring them",
+    "tree_builtin_predicates": "predicates every tree has without declaring them",
 }
 GLOSS_DOMAIN = {
     "basis": "which R slots carry the structure",
@@ -469,7 +469,7 @@ def render(m):
                            "WHERE name = 'tree_default_selector_language'")))
     out.write("Predicates every tree has without declaring them: %s. A declared predicate "
               "whose name starts with %s is shared across trees rather than local to one.\n\n"
-              % (", ".join(code(":" + p) for p in m.one("SELECT tree_builtin_pseudos()")),
+              % (", ".join(code(":" + p) for p in m.one("SELECT tree_builtin_predicates()")),
                  code(m.one("SELECT tree_shared_predicate_prefix()"))))
     out.write("An unknown predicate is not an error: it selects nothing, and the compiled "
               "SQL says so.\n\n")

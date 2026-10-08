@@ -24,7 +24,7 @@ statement ok
 INSERT INTO tree_state.partitions
 VALUES (current_database(), 'main', '__mn22_absent', 'x', 0, 0, false, NULL);
 
-# The corpus trees. CLASSES, ELEMENT and `params` are columns test/gen_fixtures.py
+# The corpus trees. TAGS, ELEMENT and `params` are columns test/gen_fixtures.py
 # derived from sitting_duck at fixture time, so nothing here needs the extension.
 
 statement ok

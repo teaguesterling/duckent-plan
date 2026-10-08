@@ -463,7 +463,7 @@ CREATE OR REPLACE MACRO tree_css_lower(rows) AS (
   -- rather than on the arms one at a time.
   SELECT CASE
     WHEN (SELECT n FROM bad_where) > 0
-      THEN tree_css_err('css: css has no host escape: mint a PSEUDO, or MATCH USING TREEQL')
+      THEN tree_css_err('css: css has no host escape: mint a PREDICATE, or MATCH USING TREEQL')
     WHEN (SELECT n FROM bad_list) > 0 THEN tree_css_err('css: unexpected '','': v0 has no selector lists')
     WHEN (SELECT n FROM bad_property) > 0
       THEN tree_css_err('css: unexpected end of selector: tree-sitter-css read this as css property syntax, '
