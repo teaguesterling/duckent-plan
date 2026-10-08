@@ -543,7 +543,10 @@ SELECT count(*) FROM tree_apply(tree_shape("order" := 'node_id', level := 'depth
 54
 
 # object names are injective: ('a_b','c') and ('a','b_c') must not compile to the same macro.
-# Underscores in the parts are doubled, so a single underscore is only ever the separator.
+# The SCHEMA's LENGTH is prefixed, not the underscores doubled -- doubling is NOT injective and
+# sql/00_types.sql says why (it maps ('a_','c') and ('a','_c') both to a__c). Decoding reads the
+# number, then that many characters, then the separator, then the rest: proj_3_a_b_c against
+# proj_1_a_b_c here, and proj_2_a__c against proj_1_a__c for the pair doubling collapses.
 statement ok
 CREATE TABLE tiny(node_id INT, depth INT);
 

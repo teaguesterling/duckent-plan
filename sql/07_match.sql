@@ -160,18 +160,29 @@ CREATE OR REPLACE MACRO tree_sql_comb(op, a, b, elem) AS
 
 -- The predicates the language itself defines. They are structural, so every tree has them
 -- whatever its SEMANTIC group binds, and they are never reported as unknown. One list, read by
--- tree_sql_builtin_pseudo (which compiles them) and by tree_compile_match -- which must not mark
+-- tree_sql_builtin_predicate (which compiles them) and by tree_compile_match -- which must not mark
 -- them unknown, and must not refuse them on a tree with no SEMANTIC group: they read no S slot.
+--
+-- NAMING, one level finer than the README's rule, because this file holds both halves and the
+-- next sweep for `pseudo` will land here: an identifier that names what the CATALOG holds is
+-- spelled `predicate`; an identifier that names a SELECTOR CLAUSE or an IR KIND keeps `pseudo`.
+-- So tree_builtin_predicates() and tree_sql_builtin_predicate() are predicates (the catalog's
+-- behaviours, one of which this compiles), while the IR kinds 'pseudo' and 'pseudo_unknown' and
+-- the step field they come from stay CSS's. _match_unknown_pseudos below is the deliberate
+-- survivor: it is named after the 'pseudo_unknown' clause kind it counts, so renaming it would
+-- make the column disagree with the thing it reports on.
 CREATE OR REPLACE MACRO tree_builtin_predicates() AS ['first-child', 'last-child'];
 
--- The predicate a built-in pseudo-class compiles to, or NULL when `name` is not one of them --
--- which is what makes tree_builtin_predicates() above the single list. The dispatch used to be a
--- second, hand-copied CASE inside tree_sql_clause, so adding a built-in meant remembering both
--- and forgetting either one left a built-in that compiled but was reported unknown (or the
--- reverse). The built-ins go through the navigation fragments rather than being spelled out
--- again, so a tree that declares ELEMENT gets the first *element* child instead of the row at
--- _parent + 1.
-CREATE OR REPLACE MACRO tree_sql_builtin_pseudo(name, alias, elem) AS
+-- The SQL a built-in predicate compiles to, or NULL when `name` is not one of them -- which is
+-- what makes tree_builtin_predicates() above the single list. (In a selector these are written
+-- as pseudo-classes, `:first-child`; what they ARE is predicates every tree has.)
+--
+-- The dispatch used to be a second, hand-copied CASE inside tree_sql_clause, so adding a
+-- built-in meant remembering both, and forgetting either one left a built-in that compiled but
+-- was reported unknown (or the reverse). The built-ins go through the navigation fragments
+-- rather than being spelled out again, so a tree that declares ELEMENT gets the first *element*
+-- child instead of the row at _parent + 1.
+CREATE OR REPLACE MACRO tree_sql_builtin_predicate(name, alias, elem) AS
   CASE WHEN NOT list_contains(tree_builtin_predicates(), name) THEN NULL
        WHEN name = 'first-child' THEN tree_sql_first_child(alias, elem)
        WHEN name = 'last-child'  THEN tree_sql_last_child(alias, elem) END;
@@ -254,10 +265,10 @@ CREATE OR REPLACE MACRO tree_sql_clause(kind, value, op, arg, alias, attr_cols, 
     WHEN 'type'   THEN alias || '._type = ' || tree_sql_lit(value)
     WHEN 'id'     THEN alias || '._key = ' || tree_sql_lit(value)
     WHEN 'class'  THEN 'COALESCE(list_contains(' || alias || '._tags, ' || tree_sql_lit(value) || '), false)'
-    -- The built-ins are compiled by tree_sql_builtin_pseudo, which returns NULL for every other
+    -- The built-ins are compiled by tree_sql_builtin_predicate, which returns NULL for every other
     -- name -- so this branch consults the one list rather than repeating it. A declared
-    -- pseudo-class is a lookup in the projection's _predicate map.
-    WHEN 'pseudo' THEN COALESCE(tree_sql_builtin_pseudo(value, alias, elem),
+    -- predicate is a lookup in the projection's _predicate map.
+    WHEN 'pseudo' THEN COALESCE(tree_sql_builtin_predicate(value, alias, elem),
                                 'COALESCE(' || alias || '._predicate[' || tree_sql_lit(value) || '], false)')
     -- An attribute resolves to a projected column first, then to ATTR MAP. The map is
     -- MAP(VARCHAR, VARCHAR), so a comparison against a number or a boolean has to cast the
@@ -354,7 +365,7 @@ CREATE OR REPLACE MACRO tree_sql_group(kind, steps, anchor, elem) AS
 CREATE OR REPLACE MACRO tree_compile_match(sch, nm, sel, semantic := NULL, language := NULL) AS (
 WITH t AS (
   SELECT tr.profile, tr.has_semantic OR semantic IS NOT NULL AS has_semantic,
-         (SELECT list(name) FROM tree_catalog.predicates p WHERE p.database_name = current_database() AND p.schema_name = sch AND p.tree_name = nm) AS known_pseudos,
+         (SELECT list(name) FROM tree_catalog.predicates p WHERE p.database_name = current_database() AND p.schema_name = sch AND p.tree_name = nm) AS known_predicates,
          -- whether any row can be a non-element: only then must the sibling and positional
          -- fragments scan for the nearest element neighbour instead of using the O(1) pre/size form
          EXISTS (SELECT 1 FROM tree_catalog.slots s WHERE s.database_name = current_database() AND s.schema_name = sch AND s.tree_name = nm AND s.slot = 'ELEMENT')
@@ -540,7 +551,7 @@ cfg AS (SELECT (SELECT p FROM proj) AS p, (SELECT has_element FROM t) AS elem,
 n AS (
   SELECT node_id, parent_id,
          CASE WHEN kind = 'pseudo' AND NOT list_contains(tree_builtin_predicates(), value)
-                   AND NOT list_contains(COALESCE((SELECT known_pseudos FROM t), []), value)
+                   AND NOT list_contains(COALESCE((SELECT known_predicates FROM t), []), value)
                    AND (semantic IS NULL OR NOT list_contains((SELECT names FROM ovp), value)) THEN 'pseudo_unknown' ELSE kind END AS kind,
          value, op, arg, COALESCE(alias, 's' || node_id) AS alias,
          -- The S-less refusal, with the built-in positional predicates exempted: they are

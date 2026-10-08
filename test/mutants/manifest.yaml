@@ -32,6 +32,48 @@
 # verification rather than counting it as verified against a control. Verify it by hand: unset
 # DUCKENT_MUTANT and run the two suites in its expect_fail list; they must PASS. That is the same
 # procedure as the automated one, run by a person.
+#
+# ---------------------------------------------------------------------------------------------
+# NOT PLANTED. Ids are permanent and never renumbered, so the six below are part of the list
+# even though no file implements them. The core design's mutant table already says the deferred
+# ids are "listed as open in the manifest", and README is moving to calling this file the
+# complete list rather than the handover; this block is what makes those claims true. The m3
+# plan asked for it in exactly this shape -- a header block listing MN09/MN10/MN11/MN16/MN23 as
+# deferred with the milestone that needs them, and MN20 as retired.
+#
+# They are COMMENTS, not rows, because the schema cannot express "declared but not planted":
+# both consumers iterate every entry and dereference m["file"] and m["expect_fail"]
+# (test/mutants/regen.py's main loop, test/run_mutants.py's). A row without those keys raises;
+# a row naming a file that does not exist passes regen's existence guard and is then reported
+# BROKEN by run_mutants.py, which exits 1. Giving them rows means teaching both loops to skip a
+# `deferred:` key -- a harness contract change, deliberately not bundled into this PR.
+#
+# DEFERRED TO W (attachment, cross-taxon planning, incremental load). All four need a tree that
+# SPLICES and a frontier that can be UNLOADED; every current fixture is complete, so nothing
+# among them can distinguish *unloaded* from *absent*. That is issue #33, still open, and it
+# blocks all four -- the fixture is the blocker, not the mutation.
+#
+#   MN09  adding an attachment changes a SINGLE-TREE match set                      gate: P18
+#   MN10  the planner prunes a cross-taxon descendant walk with a parent-tree
+#         descendant_count, so attached matches vanish                              gate: P19
+#   MN11  an O-derived prune above an unloaded frontier, using a stale size         gate: P19
+#                                                                                   + tri-state
+#   MN16  the matcher skips an unloaded branch instead of loading it, so unloaded
+#         silently becomes ABSENT                                                   gate: P20
+#
+# DEFERRED TO M-LANG (the language-registration layer, D-N10).
+#
+#   MN23  a delimiter-required language parsed BARE -- jq, whose own `select` collides with
+#         bare-form clause termination, so bare eligibility has to be a per-language registry
+#         flag rather than a property of MATCH. Needs the registry to exist first.
+#
+# RETIRED, number reserved.
+#
+#   MN20  bare `[WHERE]` (no head) accepted. It guarded the css host escape's head rule; the
+#         escape was removed from css entirely (the host door is TREEQL step WHERE, which MN19
+#         now guards), so there is nothing left for it to catch. Not deferred -- retired. The
+#         number is not reused.
+# ---------------------------------------------------------------------------------------------
 - id: MN01
   file: MN01_encoder_tiebreak_desc.sql
   what: reverse the source-order tiebreak in DFS derivation
