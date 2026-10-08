@@ -1,4 +1,7 @@
 # duckent — Build Prompt for the Tree-Semantics Core
+
+> **Frozen at v21 — the historical build brief, not a current reference.** It calls the project `duck_nest`, names introspection functions that were never built, and uses the pre-rename slot vocabulary; the current vocabulary is in [`cheatsheet.md`](cheatsheet.md), which is generated from a live catalog and gated in CI.
+
 *Master prompt: serves as an engineer brief or a Claude Code session prompt, verbatim. Name is a candidate (crystallization gate): __duck_nest__ (the thing every sitting duck sits on) or __duckent__ (Ents speak Tree; Treebeard's policy — never say anything unless it's worth taking a long time to say — is bind-time checking's motto). duckent pairs best if the TREE DDL ships from this repo; duck_nest if DDL lands separately. Teague's call.*
 
 ---
@@ -24,7 +27,7 @@ sitting_duck_languages   duck_block_utils   adjacency shims (CMDB, LDAP, SBOM)
 1. **One semantics, N surfaces.** There is exactly one matcher semantics. Parsers, planners, and future PEG-native syntax are front-ends bound to it by differential test. A second matcher anywhere is an orphan instance.
 2. **Semantics consult declarations, never state (P14′).** Matching is a function of R, S, and — cross-tree only — W1 *declarations*. O caches, W2 load status, and W3 epochs are state: visible to planning and evaluation strategy alone, never to answers (P20: virtual matching ≡ as-if-materialized, so demand loading must load what the selector reaches). Architectural, not stylistic: module boundaries such that semantics-path functions *cannot* see O accessors or load state.
 3. **Every claim is a test or is marked open.** Suites before features where possible; planted mutants must die; a suite no mutant can fail tests nothing. FINDINGS.md records what first contact showed, especially when the design was wrong.
-4. **Fail legibly.** A selector needing a capability the tree doesn't declare fails at registration/bind with the missing slot named ("tree `org` declares no CLASSES accessor"), never with an empty result.
+4. **Fail legibly.** A selector needing a capability the tree doesn't declare fails at registration/bind with the missing capability named, never with an empty result. As built, the refusal is per S group rather than per accessor — `.fn`, `#x`, `module` and `:leaf` on a tree that declares no semantics all give `tree_match: tree main.org has no SEMANTIC group; only combinators and WHERE are available. Add one with tree_ddl_alter or pass semantic :=`.
 5. **Unknowns are preserved, excluded, reported** — unknown pseudo-classes parse, match nothing, and are counted; never fatal, never silent.
 
 ## The contract you implement (normative) — the ROWS contract
