@@ -66,15 +66,27 @@ CREATE OR REPLACE MACRO tree_shape_merge(p, c) AS
 -- {prefix: 'sel_'} binding (a legitimate, if unusual, prefix form). `explicit_sel_prefix` --
 -- computed by the caller from the tree's own unexpanded PSEUDO declaration, never from a
 -- merged/inherited one -- breaks the tie: shared only when the tree did not itself ask for that
--- literal prefix. purity is not computed yet.
+-- literal prefix. purity is computed by tree_sql_purity (M4): pure, impure, unknown or
+-- malformed, with the first two decidable and refused by tree_sql_check_purity before this runs.
+-- Built over the list's INDICES rather than with list_transform, because tree_sql_purity is a
+-- subquery macro and DuckDB refuses a subquery inside a lambda. `ORDER BY i` keeps the emission
+-- order identical to the list's, which list_aggregate gave for free -- the expanded list is not
+-- name-ordered (the shared tier is, the local entries are as written), so ordering by name here
+-- would have quietly reordered what the catalog records.
 CREATE OR REPLACE MACRO tree_sql_pseudo_insert(db, sch, nm, pseudo, explicit_sel_prefix) AS
   CASE WHEN len(COALESCE(pseudo, [])) = 0 THEN NULL ELSE
-  'INSERT INTO tree_catalog.predicates VALUES ' || list_aggregate(list_transform(pseudo, lambda x:
-      '(' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ' || tree_sql_lit((x).name) || ', '
-      || CASE WHEN (x).macro IS NULL THEN '''expression''' ELSE '''macro''' END || ', ' || tree_sql_lit((x).body) || ', '
-      || CASE WHEN (x).prefix IS NULL THEN '''local'''
-              WHEN (x).prefix = tree_shared_predicate_prefix() AND NOT explicit_sel_prefix THEN '''shared'''
-              ELSE '''prefix''' END || ', ''unknown'')'), 'string_agg', ', ') END;
+  'INSERT INTO tree_catalog.predicates VALUES ' || (
+    SELECT string_agg(r, ', ' ORDER BY i) FROM (
+      SELECT i,
+        '(' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', '
+        || tree_sql_lit((pseudo[i]).name) || ', '
+        || CASE WHEN (pseudo[i]).macro IS NULL THEN '''expression''' ELSE '''macro''' END || ', '
+        || tree_sql_lit((pseudo[i]).body) || ', '
+        || CASE WHEN (pseudo[i]).prefix IS NULL THEN '''local'''
+                WHEN (pseudo[i]).prefix = tree_shared_predicate_prefix() AND NOT explicit_sel_prefix THEN '''shared'''
+                ELSE '''prefix''' END || ', '
+        || tree_sql_lit(tree_sql_purity((pseudo[i]).body)) || ')' AS r
+      FROM generate_series(1, len(pseudo)) t(i))) END;
 
 -- The attribute_columns artifact: the projection's non-canonical columns -- name AND declared
 -- type -- in projection order, as a JSON list of `{"name": ..., "type": ...}` objects. Recorded
@@ -209,7 +221,10 @@ checked AS (
       -- both halves of the S ladder: the prefix check reads the group as written (a prefix that
       -- bound nothing is gone from the expansion), the rest reads the expanded one
       ELSE tree_sql_check_prefixes(raw_semantic, 'tree_ddl_create')
-           AND tree_sql_check_semantic((shape).semantic, attr_text, 'tree_ddl_create') END AS ok,
+           AND tree_sql_check_semantic((shape).semantic, attr_text, 'tree_ddl_create')
+           -- purity reads the EXPANDED group: a macro- or prefix-bound entry is judged on the
+           -- body it actually compiles to, not on the name that bound it
+           AND tree_sql_check_purity((shape).semantic, 'tree_ddl_create') END AS ok,
     CASE WHEN abstract THEN NULL ELSE tree_compile_projection(shape, source, attr_text) END AS proj_sql
   FROM derived
 ),
@@ -348,7 +363,8 @@ c AS (
     -- the same two halves create runs, in this verb's words: the prefix check reads `semantic`,
     -- the argument as written, because a prefix that bound no macro is gone from `sem`
     tree_sql_check_prefixes(semantic, 'tree_ddl_alter')
-      AND tree_sql_check_semantic(sem, attr_text, 'tree_ddl_alter') AS ok,
+      AND tree_sql_check_semantic(sem, attr_text, 'tree_ddl_alter')
+      AND tree_sql_check_purity(sem, 'tree_ddl_alter') AS ok,
     list_filter([
       {b: 'S', s: 'TYPE', e: (sem).type}, {b: 'S', s: 'KEY', e: (sem).key}, {b: 'S', s: 'TAGS', e: (sem).tags},
       {b: 'S', s: 'ATTR', e: attr_text}, {b: 'S', s: 'ATTR_MAP', e: (sem).attr_map},

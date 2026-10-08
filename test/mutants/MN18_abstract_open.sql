@@ -117,7 +117,10 @@ checked AS (
       -- both halves of the S ladder: the prefix check reads the group as written (a prefix that
       -- bound nothing is gone from the expansion), the rest reads the expanded one
       ELSE tree_sql_check_prefixes(raw_semantic, 'tree_ddl_create')
-           AND tree_sql_check_semantic((shape).semantic, attr_text, 'tree_ddl_create') END AS ok,
+           AND tree_sql_check_semantic((shape).semantic, attr_text, 'tree_ddl_create')
+           -- purity reads the EXPANDED group: a macro- or prefix-bound entry is judged on the
+           -- body it actually compiles to, not on the name that bound it
+           AND tree_sql_check_purity((shape).semantic, 'tree_ddl_create') END AS ok,
     CASE WHEN abstract THEN NULL ELSE tree_compile_projection(shape, source, attr_text) END AS proj_sql
   FROM derived
 ),
