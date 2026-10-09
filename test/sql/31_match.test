@@ -762,12 +762,21 @@ SELECT (SELECT list(name ORDER BY node_id) FROM tree_match('main', 'app', tree_s
 # nor numeric -- so `>= true` compiles to TRY_CAST(... AS BOOLEAN) >= true. BOOLEAN orders
 # false < true, so the two comparisons PARTITION the tree: both are non-empty and they sum to the
 # whole 54 rows, which is what says neither side is an accident of the cast collapsing to NULL.
-query III
+#
+# The last two columns are the other half of what that branch promises -- "the reading that cannot
+# abort". `scope` is a STRUCT, so TRY_CAST(scope AS DECIMAL(38,10)) is NULL on every row; the
+# comparison still BINDS, and `< 3` and `>= 3` both answer no rows rather than raising. The two
+# zeros are read against the 54 beside them: this is a cast that cannot succeed anywhere, not an
+# empty tree. A port that throws on an uncastable column, or that refuses to compile the
+# comparison at all, changes a no-match into an error.
+query IIIII
 SELECT (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'is_element >= true'}]))),
        (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'is_element < true'}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'scope < 3'}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'scope >= 3'}]))),
        (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{"where": 'true'}])));
 ----
-31	23	54
+31	23	0	0	54
 
 # The claim sql/07_match.sql makes about an ABSENT value, made a test (doctrine 3): "Ordering
 # operators are left alone: `<` against an absent value is genuinely unknown ... false is the
