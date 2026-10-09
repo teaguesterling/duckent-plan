@@ -467,7 +467,28 @@ CREATE OR REPLACE MACRO tree_compile_check(sch, nm) AS (
     CASE WHEN x.storage <> 'projection' OR (x.shape)."order" IS NULL THEN NULL ELSE
       'INSERT INTO tree_state.assertions SELECT ' || tree_sql_lit(x.db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ''assert_order'', CASE WHEN count(*) FILTER (WHERE __o IS NULL OR __n > 1) = 0 THEN ''ok'' ELSE ''violated'' END, (SELECT max(epoch) FROM tree_state.partitions WHERE database_name = ' || tree_sql_lit(x.db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm) || '), count(*) FILTER (WHERE __o IS NULL OR __n > 1) || '' violating rows'' FROM ' || tree_sql_order_dup_rel((x.shape)."order", (x.shape).root, x.source) END,
     'DELETE FROM tree_state.assertions WHERE database_name = ' || tree_sql_lit(x.db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm) || ' AND artifact = ''assert_p13''',
-    'INSERT INTO tree_state.assertions SELECT ' || tree_sql_lit(x.db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ''assert_p13'', CASE WHEN count(*) = 0 THEN ''ok'' ELSE ''violated'' END, (SELECT max(epoch) FROM tree_state.partitions WHERE database_name = ' || tree_sql_lit(x.db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm) || '), count(*) || '' violating rows'' FROM (SELECT _level, _level - lag(_level, 1, -1) OVER (PARTITION BY _root ORDER BY _pre) AS d, row_number() OVER (PARTITION BY _root ORDER BY _pre) AS rn FROM ' || x.rel || ') WHERE ' || tree_sql_p13_pred()],
+    'INSERT INTO tree_state.assertions SELECT ' || tree_sql_lit(x.db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ''assert_p13'', CASE WHEN count(*) = 0 THEN ''ok'' ELSE ''violated'' END, (SELECT max(epoch) FROM tree_state.partitions WHERE database_name = ' || tree_sql_lit(x.db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm) || '), count(*) || '' violating rows'' FROM (SELECT _level, _level - lag(_level, 1, -1) OVER (PARTITION BY _root ORDER BY _pre) AS d, row_number() OVER (PARTITION BY _root ORDER BY _pre) AS rn FROM ' || x.rel || ') WHERE ' || tree_sql_p13_pred(),
+    -- p13_ok is the PER-ROOT verdict (core design 2.2: `partitions` is one row per ROOT
+    -- value), where assert_p13 above is the tree-level one and carries only a count. Both are
+    -- written from the SAME predicate, so the pair cannot disagree about what P13 means --
+    -- only about which grain it reports. Before this statement existed, tree_check refreshed
+    -- the assertion and left p13_ok alone, so a tree whose stored rows had moved off P13
+    -- carried p13_ok = true beside assert_p13 = violated: two catalog rows contradicting each
+    -- other about one property. At ingest p13_ok is correct by construction -- create emits
+    -- s_p13 before s_partitions inside one transaction, so the INSERT is unreachable unless
+    -- P13 held -- so the gap was only ever the re-check.
+    --
+    -- Materialized only: `partitions` has no rows for a projection-mode tree, which owns no
+    -- storage and so has no partition to go stale. Aggregating per root and joining on
+    -- root_key refreshes in BOTH directions -- a root recorded bad and since repaired comes
+    -- back true -- where an UPDATE touching only violating roots would mark it bad forever.
+    CASE WHEN x.storage <> 'materialized' THEN NULL ELSE
+      'UPDATE tree_state.partitions p SET p13_ok = v.ok FROM (SELECT _root::VARCHAR AS rk, '
+      || 'count(*) FILTER (WHERE ' || tree_sql_p13_pred() || ') = 0 AS ok FROM (SELECT _root, _level, '
+      || '_level - lag(_level, 1, -1) OVER (PARTITION BY _root ORDER BY _pre) AS d, '
+      || 'row_number() OVER (PARTITION BY _root ORDER BY _pre) AS rn FROM ' || x.rel || ') GROUP BY 1) v'
+      || ' WHERE p.database_name = ' || tree_sql_lit(x.db) || ' AND p.schema_name = ' || tree_sql_lit(sch)
+      || ' AND p.tree_name = ' || tree_sql_lit(nm) || ' AND p.root_key = v.rk' END],
     -- One pair of statements per DECLARED O slot. A shape declaring none contributes an empty
     -- list, so a tree with no O group records P13 (and ORDER) exactly as it always did.
     flatten(list_filter([

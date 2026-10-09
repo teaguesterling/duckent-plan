@@ -492,6 +492,27 @@ chk AS (SELECT CASE
   -- predicate tier, and whose names ovp already treated as known -- was refused as empty.
   WHEN semantic IS NOT NULL AND NOT tree_semantic_declares(semantic)
        THEN tree_err('tree_match: semantic overlay is empty')
+  -- ...and the rest of the S ladder create and alter share. This is the THIRD compiler of an
+  -- S group and it ran none of these, so an overlay could carry exactly what a declaration is
+  -- refused for. The costly shape was a predicate with neither body nor macro: its _predicate
+  -- term compiled to NULL, NULL was dropped from the REPLACE list below, and the WHERE then
+  -- read the TREE's own map -- so the query returned ZERO ROWS, with no error, while reporting
+  -- _match_unknown_pseudos = 0. Doctrine 4 and Doctrine 5 at once, on the one path nothing
+  -- guarded. An impure body was accepted too (the same selector not answering the same twice
+  -- inside one query), and a malformed body and a duplicate binding leaked raw DuckDB errors
+  -- naming neither the tree nor the predicate.
+  -- Argument split is create's: the prefix check reads the group AS WRITTEN, because a prefix
+  -- that bound nothing is gone from the expansion; the other two read the expanded group, so a
+  -- macro- or prefix-bound entry is judged on the body it compiles to. `sem` arrives as a plain
+  -- column (hence `FROM ov`) because tree_sql_check_semantic carries a lambda and 1.5.5 refuses
+  -- a subquery inside one -- the same constraint ovp exists for.
+  WHEN semantic IS NOT NULL
+       AND NOT (tree_sql_check_prefixes(semantic, 'tree_match')
+                AND tree_sql_check_semantic(sem, NULL, 'tree_match')
+                AND tree_sql_check_purity(sem, 'tree_match'))
+    -- unreachable: each check raises rather than returning false. Present so the branch is a
+    -- complete CASE arm, and so a check that is ever made to RETURN false still refuses here.
+    THEN tree_err('tree_match: semantic overlay refused')
   WHEN (SELECT count(*) FROM ir WHERE kind = 'step') = 0 THEN tree_err('tree_match: selector has no steps')
   -- before the depth walk, which is the thing a duplicated node id makes non-terminating
   WHEN (SELECT bad FROM bad_dup) THEN tree_err('tree_match: selector node ids are not unique')
@@ -513,7 +534,7 @@ chk AS (SELECT CASE
                   || ' which is not allowed under ' || (SELECT pk FROM bad_parent))
   WHEN (SELECT n FROM bad_self) > 0
     THEN tree_err('tree_match: SELF is only legal as the first step of a HAS/NOT group')
-  ELSE true END AS ok),
+  ELSE true END AS ok FROM ov),
 -- The relation every step alias ranges over: the stored projection, or a REPLACE over it when
 -- the query carries an overlay. Each replaced column is spelled the way sql/02_projection.sql
 -- spells it, so an overlaid tree and a declared one behave identically -- ATTR MAP cast to the

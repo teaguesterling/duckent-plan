@@ -825,3 +825,66 @@ SELECT (SELECT count(*) FROM tree_catalog_trees() WHERE tree_name LIKE 'corrupt%
        (SELECT count(*) FROM tree_state.partitions WHERE tree_name LIKE 'corrupt%');
 ----
 0	0	0
+
+# ---------------------------------------------------------------------------
+# S-coherence after EXPANSION. The duplicate-name check reads the expanded predicate list
+# (03_ddl: create checks (shape).semantic, alter checks sem), so it catches collisions that
+# only EXIST after expansion -- a local name against a prefix-derived one, and two prefix
+# bindings whose remainders agree. Both were covered by nothing: the only records were two
+# literal local names, a collision that exists BEFORE expansion.
+#
+# Blinding the check to prefix-derived entries passed all 1506 assertions, because the
+# duplicate is still refused -- by DuckDB's own `Map keys must be unique.`, which names
+# neither the tree nor the predicate. So the failure mode these records guard is not a wrong
+# answer; it is an illegible refusal, and the message is what is under test.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE MACRO px_leaf(n) AS n = 0;
+
+statement ok
+CREATE MACRO qy_leaf(n) AS n = 1;
+
+# a local name colliding with a prefix-derived one
+statement error
+CALL tree_ddl_create('main', 'coh1', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'leaf', body: 'descendant_count = 9'}, {prefix: 'px_', args: 'descendant_count'}])),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+----
+S-coherence: PREDICATE leaf is bound twice
+
+# two prefix bindings whose remainders collide
+statement error
+CALL tree_ddl_create('main', 'coh2', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type', predicate := [{prefix: 'px_', args: 'descendant_count'}, {prefix: 'qy_', args: 'descendant_count'}])),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+----
+S-coherence: PREDICATE leaf is bound twice
+
+# the pre-expansion case names the predicate too, not just "a predicate"
+statement error
+CALL tree_ddl_create('main', 'coh3', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'x', body: 'true'}, {name: 'x', body: 'false'}])),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+----
+S-coherence: PREDICATE x is bound twice
+
+# and alter enforces it on the expanded list as well -- the two verbs share the check, so a
+# collision create refuses cannot be introduced by altering a tree into it
+statement ok
+CALL tree_ddl_create('main', 'coh4', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type')), source := 'read_parquet(''test/data/app.parquet'')'));
+
+statement error
+CALL tree_ddl_alter('main', 'coh4', tree_semantic(type := 'type', predicate := [{name: 'leaf', body: 'descendant_count = 9'}, {prefix: 'px_', args: 'descendant_count'}]));
+----
+S-coherence: PREDICATE leaf is bound twice
+
+# a prefix binding whose remainders do NOT collide still works: the check refuses ambiguity,
+# it does not refuse prefixes
+statement ok
+CALL tree_ddl_alter('main', 'coh4', tree_semantic(type := 'type', predicate := [{prefix: 'px_', args: 'descendant_count'}]));
+
+query II
+SELECT name, origin FROM tree_catalog_predicates() WHERE tree_name = 'coh4';
+----
+leaf	prefix
