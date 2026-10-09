@@ -333,3 +333,71 @@ query II
 SELECT name, origin FROM tree_catalog_predicates() WHERE tree_name = 'okpfx' AND origin = 'prefix';
 ----
 leaf	prefix
+
+# ---------------------------------------------------------------------------
+# tree_match's SEMANTIC overlay is the THIRD compiler of an S group, and it ran
+# none of the checks create and alter share. Each record below is refused by
+# tree_ddl_create already; the overlay accepted them, and the first two
+# returned ZERO ROWS with no error -- a Doctrine 4 empty result, reported with
+# _match_unknown_pseudos = 0, i.e. the engine positively claiming nothing was
+# unknown. The other two leaked a raw DuckDB error naming neither the tree nor
+# the predicate.
+# ---------------------------------------------------------------------------
+
+# a predicate with neither body nor macro: compiled to a dropped _predicate term, so the
+# WHERE read the TREE's own map, missed the name, and COALESCE(NULL, false) emptied the result
+statement error
+FROM tree_match('main', 'bare', tree_steps([{type: 'function_definition', pseudo: 'x'}]),
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'x', body: NULL, macro: NULL}]))
+SELECT type;
+----
+tree_match: every PREDICATE needs a name and a body or macro
+
+# an impure body. The overlay accepted it, so the same selector did not answer the same twice
+# within one query -- Doctrine 2 (semantics consult declarations, never state) on the one path
+# the M4 purity check did not reach
+statement error
+FROM tree_match('main', 'bare', tree_steps([{type: 'function_definition', pseudo: 'r'}]),
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'r', body: 'descendant_count > 100 * random()'}]))
+SELECT type;
+----
+tree_match: PREDICATE r is not pure
+
+# a malformed body: create says "does not parse", the overlay leaked `Parser Error: syntax error`
+statement error
+FROM tree_match('main', 'bare', tree_steps([{type: 'function_definition', pseudo: 'b'}]),
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'b', body: 'descendant_count = )('}]))
+SELECT type;
+----
+tree_match: PREDICATE b does not parse
+
+# two bindings of one name: create says S-coherence naming the predicate, the overlay leaked
+# DuckDB's "Map keys must be unique." -- which names neither the tree nor the predicate
+statement error
+FROM tree_match('main', 'bare', tree_steps([{type: 'function_definition', pseudo: 'd'}]),
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'd', body: 'depth = 0'}, {name: 'd', body: 'depth = 1'}]))
+SELECT type;
+----
+tree_match: S-coherence: PREDICATE d is bound twice
+
+# a prefix binding that binds no macro. Expansion replaces it with NOTHING, so the overlay
+# became indistinguishable from one that declared no predicates at all and every `:name` the
+# caller meant to mint was silently unknown
+statement error
+FROM tree_match('main', 'bare', tree_steps([{type: 'function_definition', pseudo: 'leaf'}]),
+  semantic := tree_semantic(type := 'type', predicate := [{prefix: 'no_such_prefix_', args: 'descendant_count'}]))
+SELECT type;
+----
+tree_match: PREDICATE prefix no_such_prefix_ binds no macro
+
+# and the overlay still accepts a well-formed binding: the checks refuse, they do not block.
+# children_count > 2 holds for both function_definition rows (each has 5), so this asserts a
+# specific non-empty set -- descendant_count = 0 would have been vacuous here, since both
+# function_definition rows carry 23.
+query II rowsort
+FROM tree_match('main', 'bare', tree_steps([{type: 'function_definition', pseudo: 'ok'}]),
+  semantic := tree_semantic(type := 'type', predicate := [{name: 'ok', body: 'children_count > 2'}]))
+SELECT type, _match_unknown_pseudos;
+----
+function_definition	0
+function_definition	0

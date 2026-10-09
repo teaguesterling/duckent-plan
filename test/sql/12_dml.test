@@ -323,3 +323,67 @@ SELECT (SELECT count(*) FROM tree_project('main', 'scripts') WHERE file_path = '
        (SELECT count(*) FROM tree_state.partitions WHERE tree_name = 'scripts' AND root_key = '{''file_path'': corrupt.py}');
 ----
 0	0
+
+# ---------------------------------------------------------------------------
+# p13_ok is the PER-ROOT P13 verdict -- core design 2.2 makes `partitions` one row per ROOT
+# value -- while assert_p13 is the tree-level one and reports only a count. So p13_ok is the
+# record that says WHICH root is bad, and the two are different grains, not duplicates.
+#
+# At ingest it is correct by construction: create emits [... s_p13, s_conform, s_table,
+# s_macro, s_partitions ...] inside one transaction, so the partitions INSERT is unreachable
+# unless P13 held. What was missing is the refresh: tree_check re-ran assert_p13 and left
+# p13_ok alone, so once the stored rows moved off P13 the two records disagreed -- p13_ok
+# still true beside assert_p13 violated.
+# ---------------------------------------------------------------------------
+statement ok
+CREATE TABLE p13src AS SELECT * FROM (VALUES
+  ('a.py', 1, 0), ('a.py', 2, 1), ('b.py', 3, 0), ('b.py', 4, 1)) t(file_path, node_id, depth);
+
+statement ok
+CALL tree_ddl_create('main', 'p13refresh', tree_spec(tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth'), source := 'p13src'));
+
+query IT rowsort
+SELECT root_key, p13_ok FROM tree_state.partitions WHERE tree_name = 'p13refresh';
+----
+{'file_path': a.py}	true
+{'file_path': b.py}	true
+
+# move b.py off P13 behind duckent's back: a child claiming level 5 under a level-0 root is a
+# jump, which is exactly what tree_sql_p13_pred calls a violation
+statement ok
+UPDATE tree_catalog."t_4_main_p13refresh" SET _level = 5 WHERE _pre = 1 AND _root.file_path = 'b.py';
+
+statement ok
+CALL tree_check('main', 'p13refresh');
+
+# the tree-level assertion says something is wrong...
+query TT
+SELECT status, detail FROM tree_catalog_assertions() WHERE tree_name = 'p13refresh' AND artifact = 'assert_p13';
+----
+violated	1 violating rows
+
+# ...and p13_ok says WHICH root, which is the whole point of the finer grain
+query IT rowsort
+SELECT root_key, p13_ok FROM tree_state.partitions WHERE tree_name = 'p13refresh';
+----
+{'file_path': a.py}	true
+{'file_path': b.py}	false
+
+# and the refresh corrects in BOTH directions: repair the row and the verdict comes back.
+# A one-way refresh would leave a repaired root permanently marked bad.
+statement ok
+UPDATE tree_catalog."t_4_main_p13refresh" SET _level = 1 WHERE _pre = 1 AND _root.file_path = 'b.py';
+
+statement ok
+CALL tree_check('main', 'p13refresh');
+
+query IT rowsort
+SELECT root_key, p13_ok FROM tree_state.partitions WHERE tree_name = 'p13refresh';
+----
+{'file_path': a.py}	true
+{'file_path': b.py}	true
+
+query TT
+SELECT status, detail FROM tree_catalog_assertions() WHERE tree_name = 'p13refresh' AND artifact = 'assert_p13';
+----
+ok	0 violating rows

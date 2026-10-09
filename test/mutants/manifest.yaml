@@ -234,3 +234,35 @@
   # `_pre = 0` is false for y's root. Every other record in that file -- and every positional
   # record elsewhere -- runs on app.parquet, whose node_id is already dense and 0-based, where
   # the mutation is invisible. Measured before planting: 2 of 25 records fail, and they are these.
+- id: MN27
+  file: MN27_shared_tier_unchecked.sql
+  what: PREDICATE_ARGS that binds no macro is accepted, so the tree declares an S group holding
+    no predicates while tree_semantic_declares still counts it -- has_semantic goes true, the
+    S-less refusal stops firing, and every `:name` the author meant to mint is silently unknown
+  expect_fail: [test/sql/11_ddl.test]
+  # 11's two PREDICATE_ARGS records are the discriminating ones: one declares PREDICATE_ARGS with
+  # no sel_* macro in scope at all, the other with only the BARE prefix macro, which binds nothing
+  # because the shared arm requires a non-empty remainder. Every other PREDICATE_ARGS record in
+  # the suite has a bindable sel_* macro present, where the mutation is invisible.
+- id: MN28
+  file: MN28_malformed_reads_pure.sql
+  what: tree_sql_purity never asks whether the body parses, so a malformed body -- which contains
+    no resolvable function calls -- is indistinguishable from a pure one and is recorded 'pure'
+    instead of refused
+  expect_fail: [test/sql/36_pseudo.test]
+  # 36's malformed-body record is the discriminating one. The impure records cannot see this
+  # mutant: a VOLATILE body parses, so the stability arms still fire and still refuse. This is
+  # the false positive the parse-ability arm exists to prevent -- "no function calls found" and
+  # "pure" are the same observation unless parse-ability is a separate question.
+- id: MN29
+  file: MN29_coherence_blind_to_prefix.sql
+  what: the S-coherence duplicate-name check compares only locally-named entries, so a collision
+    that exists only AFTER expansion -- a local name against a prefix-derived one, or two prefix
+    bindings whose remainders agree -- is not seen by duckent at all
+  expect_fail: [test/sql/11_ddl.test]
+  # The kill is on the MESSAGE, not on whether it refuses: the duplicate still fails, but as
+  # DuckDB's `Map keys must be unique.` when the predicate map is built, naming neither the tree
+  # nor the predicate. So the discriminating records are 11's post-expansion collisions, which
+  # assert `S-coherence: PREDICATE leaf is bound twice`. Measured before planting: blinding the
+  # check passed all 1506 assertions that existed before those records, which is why this mutant
+  # and those records had to arrive together.

@@ -235,6 +235,20 @@ CREATE OR REPLACE MACRO tree_sql_check_purity(sem, verb) AS (
                            ELSE ' is not pure: its body reads a VOLATILE or CONSISTENT_WITHIN_QUERY'
                                 || ' function, so the same selector would not answer the same twice' END) END);
 
+-- The alphabetically first name bound more than once in an EXPANDED predicate list, or NULL
+-- when every name is unique. Exists so the S-coherence refusal can say WHICH predicate: a
+-- prefix binding expands to one entry per matching macro, so "a predicate is bound twice" tells
+-- a reader nothing they can act on. Deterministic by min(), not by list order, because the
+-- expanded list is not name-ordered (the shared tier is, local entries are as written).
+--
+-- A subquery macro, so tree_sql_check_semantic now contains a subquery. That is fine at all
+-- three call sites -- create's and alter's `ok` expression, and tree_match's chk ladder -- but
+-- it would break if check_semantic were ever inlined INSIDE a lambda, which 1.5.5 refuses.
+CREATE OR REPLACE MACRO tree_sql_dup_predicate(sem) AS (
+  SELECT min(nm) FROM (
+    SELECT nm FROM (SELECT unnest(list_transform(COALESCE((sem).predicate, []), lambda x: (x).name)) AS nm)
+    GROUP BY nm HAVING count(*) > 1));
+
 -- The validation ladder for the S group, shared by tree_compile_create and tree_compile_alter
 -- so that altering a tree cannot bypass a check create enforces. `verb` prefixes the message.
 -- Returns true when the semantic is acceptable; raises otherwise.
@@ -250,7 +264,8 @@ CREATE OR REPLACE MACRO tree_sql_check_semantic(sem, attr_text, verb) AS
     WHEN len(list_filter(COALESCE((sem).predicate, []), lambda x: (x).prefix IS NULL AND ((x).name IS NULL OR ((x).body IS NULL AND (x).macro IS NULL)))) > 0
       THEN tree_err(verb || ': every PREDICATE needs a name and a body or macro')
     WHEN len(list_distinct(list_transform(COALESCE((sem).predicate, []), lambda x: (x).name))) <> len(COALESCE((sem).predicate, []))
-      THEN tree_err(verb || ': S-coherence: a predicate is bound twice')
+      THEN tree_err(verb || ': S-coherence: PREDICATE '
+                    || COALESCE(tree_sql_dup_predicate(sem), '<unnamed>') || ' is bound twice')
     ELSE true END;
 
 -- The second half of the S validation ladder, and the one that has to read the UNEXPANDED

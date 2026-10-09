@@ -172,6 +172,35 @@ SPEC = {
          "                       || ' THEN COALESCE(' || alias || '._predicate[' || tree_sql_lit(value) || '], false)'\n"
          "                       || ' ELSE COALESCE(list_contains(' || alias || '._tags, '"
          " || tree_sql_lit(value) || '), false) END'", 1)]),
+
+    # --- M4 hardening: the three refusals M4 added or sharpened, each previously guarded by
+    # --- suites but by no mutant, so nothing proved what a kill there would prove.
+
+    "MN27": ("sql/00_types.sql", ["tree_sql_check_prefixes"], [
+        ("              WHEN (SELECT unbound FROM shared_bad)\n"
+         "              THEN tree_err(verb || ': PREDICATE_ARGS binds no macro: no '\n"
+         "                            || tree_shared_predicate_prefix() || '* macro is in scope')\n",
+         "              -- the mutation: PREDICATE_ARGS binding nothing is accepted, so a tree\n"
+         "              -- declares an S group that holds no predicates and every `:name` its\n"
+         "              -- author meant to mint is silently unknown\n", 1)]),
+
+    "MN28": ("sql/00_types.sql", ["tree_sql_purity"], [
+        ("    WHEN NOT tree_sql_expr_parses(expr) THEN 'malformed'\n",
+         "    -- the mutation: parse-ability is never asked, and a malformed body contains no\n"
+         "    -- resolvable function calls -- so 'no calls' reads exactly like purity and the\n"
+         "    -- body is recorded 'pure' instead of refused\n", 1)]),
+
+    "MN29": ("sql/00_types.sql", ["tree_sql_check_semantic"], [
+        ("    WHEN len(list_distinct(list_transform(COALESCE((sem).predicate, []), lambda x: (x).name)))"
+         " <> len(COALESCE((sem).predicate, []))",
+         "    -- the mutation: only locally-named entries are compared, so a collision that exists\n"
+         "    -- ONLY after expansion is invisible here. The duplicate is still refused -- by\n"
+         "    -- DuckDB's own `Map keys must be unique.` when the predicate map is built -- so the\n"
+         "    -- kill has to be on the MESSAGE, not on whether it refuses.\n"
+         "    WHEN len(list_distinct(list_transform(list_filter(COALESCE((sem).predicate, []),"
+         " lambda x: (x).prefix IS NULL), lambda x: (x).name)))"
+         " <> len(list_filter(COALESCE((sem).predicate, []), lambda x: (x).prefix IS NULL))", 1)]),
+
 }
 
 
