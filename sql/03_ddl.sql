@@ -436,11 +436,11 @@ CREATE OR REPLACE MACRO tree_project(sch, nm) AS TABLE
 CREATE OR REPLACE MACRO tree_apply(shape, source) AS TABLE
   FROM query(tree_compile_projection(shape, source, '*'));
 
--- Classes are data: enumerate them per tree.
+-- Tags are data: enumerate them per tree.
 -- 1.5.5 note: `SELECT unnest(_tags) ... GROUP BY ALL` fails ("Cannot group on an
 -- UNNEST or UNLIST clause") because DuckDB won't group on an UNNEST expression in the
--- select list. Unnesting in the FROM clause instead (a lateral UNNEST(...) AS u(class))
+-- select list. Unnesting in the FROM clause instead (a lateral UNNEST(...) AS u(tag))
 -- produces a plain column that GROUP BY ALL can group on; the compiled result is the
--- same set of (class, row_count) pairs the brief's version intended.
+-- same set of (tag, row_count) pairs the brief's version intended.
 CREATE OR REPLACE MACRO tree_catalog_tags(sch, nm) AS TABLE
   SELECT tag, count(*) AS row_count FROM tree_project(sch, nm), UNNEST(_tags) AS u(tag) WHERE _tags IS NOT NULL GROUP BY ALL ORDER BY tag;
