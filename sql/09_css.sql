@@ -559,3 +559,11 @@ CREATE OR REPLACE MACRO tree_parse_css(sel) AS (
       (SELECT list({node_id: node_id, parent_id: parent_id, type: type, name: name} ORDER BY node_id)
        FROM query('SELECT node_id, parent_id, type, name FROM parse_ast_list_table('
                   || tree_sql_lit(tree_css_capture_markers(sel)) || ', ''css'')'))) END);
+
+-- Registration. This front-end names itself and its own parser in the registry, and takes the
+-- default for TEXT selectors -- the flip core design section 1 describes, performed where the
+-- front-end is rather than where the catalog is. A build that does not embed this file leaves
+-- the registry holding treeql alone, and a text selector is then refused by a lookup that finds
+-- no parser instead of by a hardcoded branch.
+INSERT INTO tree_catalog.selector_languages VALUES ('css', 'tree_css_lower', 'tree_selector_to_treeql', true) ON CONFLICT DO NOTHING;
+UPDATE tree_catalog.settings SET value = 'css' WHERE name = 'tree_default_selector_language';
