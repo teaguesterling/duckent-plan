@@ -674,3 +674,166 @@ SELECT tree_compile_match('main', 'app', [
   {node_id: 2, parent_id: 1, kind: 'type', value: 'function_definition', op: NULL, arg: NULL, alias: NULL}]::TREE_SELECTOR);
 ----
 tree_match: alias __x is reserved for the compiler's own relations
+
+# --------------------------------------------------------------------------------------
+# attribute comparison operators: the four with no coverage anywhere
+# --------------------------------------------------------------------------------------
+# sql/06_selector.sql accepts ten attribute operators. A coverage audit over all 25 suites found
+# `>` used 11 times, `LIKE` 6, `!=`/`<>`/`NOT LIKE` twice each -- and `<`, `<=`, `>=` and `ILIKE`
+# NOT ONCE. They were probed and they work, so this closes a coverage gap rather than a bug; the
+# reason it matters is that the C++ port reimplements comparison and coercion from scratch, and an
+# operator with no test ports wrong in silence.
+#
+# Only TREEQL can reach them. The css front-ends parse `=`, `^=`, `$=` and `*=` only, so a css
+# selector cannot spell an ordering comparison at all -- every record below builds the IR with
+# tree_steps.
+
+# tree_sql_attr_col_cmp has four branches and an ordering operator reaches all of them. Pinned as
+# generated TEXT as well as by row set, because the branch is chosen from the column's DECLARED
+# type and the literal's shape, and a port that picks a different branch still compiles:
+#   * a literal that is not a number or a boolean is spliced as written, whatever the column is
+#     (this is the only branch LIKE and ILIKE ever take -- a pattern is quoted text);
+#   * a number against a VARCHAR column is REQUOTED, so the comparison stays textual and cannot
+#     abort the query on the first row whose text is not a number (R7);
+#   * a number against a numeric column compares numerically;
+#   * anything else -- here a BOOLEAN column -- goes through TRY_CAST, the reading that answers
+#     "no match" instead of raising.
+query IIII
+SELECT tree_sql_attr_col_cmp('s1', 'depth', 'UINTEGER', '<=', '2'),
+       tree_sql_attr_col_cmp('s1', 'name', 'VARCHAR', '>=', '10'),
+       tree_sql_attr_col_cmp('s1', 'is_element', 'BOOLEAN', '<', 'true'),
+       tree_sql_attr_col_cmp('s1', 'name', 'VARCHAR', 'ILIKE', '''%a%''');
+----
+s1."depth" <= 2	s1."name" >= '10'	TRY_CAST(s1."is_element" AS BOOLEAN) < true	s1."name" ILIKE '%a%'
+
+# `<` against an integer column: the numeric branch. app.parquet has 8 identifiers spread over
+# depths 2..8, so a threshold inside that range answers a specific pair rather than all or none.
+query I rowsort
+FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'depth < 3'}])) SELECT name;
+----
+greet
+shout
+
+# `<=` is `<` shifted by one on an integer column -- cheap to state, and the one identity that
+# catches an off-by-one or a strict/non-strict mix-up in the port. The row list is asserted too,
+# so the identity cannot hold by both sides being empty: 6 of the 8 identifiers, not all of them.
+query IIII
+SELECT (SELECT list(node_id ORDER BY node_id) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'depth <= 6'}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'depth <= 6'}])))
+     = (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'depth < 7'}]))),
+       (SELECT list(node_id ORDER BY node_id) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'depth <= 6'}])))
+     = (SELECT list(node_id ORDER BY node_id) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'depth < 7'}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{type: 'identifier'}])));
+----
+[8, 11, 27, 32, 35, 50]	true	true	8
+
+# ... and `>= n` is `> n-1`, the same identity from the other side. 2 of the 8 identifiers.
+query II
+SELECT (SELECT list(name ORDER BY node_id) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'depth >= 7'}]))),
+       (SELECT list(node_id ORDER BY node_id) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'depth >= 7'}])))
+     = (SELECT list(node_id ORDER BY node_id) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'depth > 6'}])));
+----
+[greet, name]	true
+
+# The ordering operators on a VARCHAR column, which is a DIFFERENT branch: the literal is quoted,
+# so it is spliced as written and the comparison is lexicographic. `<` and `<=` are asserted
+# together against the same threshold, which is one of the identifier names -- that is what makes
+# the pair distinguish the two operators (2 rows against 6) instead of agreeing by accident.
+query II
+SELECT (SELECT list(name ORDER BY node_id) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'name < ''name'''}]))),
+       (SELECT list(name ORDER BY node_id) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'name <= ''name'''}])));
+----
+[greet, greet]	[greet, name, name, name, greet, name]
+
+# ILIKE folds case and LIKE does not, which is the whole difference between them -- so the test
+# has to run on data where the fold CHANGES the answer, in both directions: a lowercase pattern
+# against uppercase data (the f-string `f"Hello, {name}"`) and an uppercase pattern against
+# lowercase data (the `greet` identifiers). The LIKE columns are 0 by the same fold, and they are
+# in the same record as their non-empty ILIKE partner so that neither zero can be vacuous.
+query IIII
+SELECT (SELECT list(name ORDER BY node_id) FROM tree_match('main', 'app', tree_steps([{attr: 'name ILIKE ''%hello%'''}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'name LIKE ''%hello%'''}]))),
+       (SELECT list(node_id ORDER BY node_id) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'name ILIKE ''%GREET%'''}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{type: 'identifier', attr: 'name LIKE ''%GREET%'''}])));
+----
+[f"Hello, {name}"]	0	[8, 44]	0
+
+# The TRY_CAST branch, with ordering operators on it. `is_element` is BOOLEAN -- neither VARCHAR
+# nor numeric -- so `>= true` compiles to TRY_CAST(... AS BOOLEAN) >= true. BOOLEAN orders
+# false < true, so the two comparisons PARTITION the tree: both are non-empty and they sum to the
+# whole 54 rows, which is what says neither side is an accident of the cast collapsing to NULL.
+#
+# The last two columns are the other half of what that branch promises -- "the reading that cannot
+# abort". `scope` is a STRUCT, so TRY_CAST(scope AS DECIMAL(38,10)) is NULL on every row; the
+# comparison still BINDS, and `< 3` and `>= 3` both answer no rows rather than raising. The two
+# zeros are read against the 54 beside them: this is a cast that cannot succeed anywhere, not an
+# empty tree. A port that throws on an uncastable column, or that refuses to compile the
+# comparison at all, changes a no-match into an error.
+query IIIII
+SELECT (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'is_element >= true'}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'is_element < true'}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'scope < 3'}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'scope >= 3'}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{"where": 'true'}])));
+----
+31	23	0	0	54
+
+# The claim sql/07_match.sql makes about an ABSENT value, made a test (doctrine 3): "Ordering
+# operators are left alone: `<` against an absent value is genuinely unknown ... false is the
+# honest answer." `signature_type` is a VARCHAR column that is NULL on 45 of the 54 rows, so the
+# two ordering comparisons below can only reach the other 9 -- and they do: 5 + 4 = 9, exactly the
+# rows a WHERE clause says have a value. The 45 absent ones are in NEITHER, which is the claim.
+#
+# The second half of the same paragraph is the contrast: a NEGATED operator compiles as
+# NOT COALESCE(positive, false) and so CLAIMS the absent rows. `!= 'identifier'` answers 50 --
+# the 45 NULLs plus the 5 non-NULL rows that are not 'identifier' -- where `>= 'g'`, which is the
+# complement of `< 'g'` over the rows that have a value, answers 4. One operator counts absence as
+# a match, the other counts it as a non-match, in the same record on the same column.
+#
+# It is the absent VALUE that reads false; an absent NAME is a different question and the record
+# after this one shows the implementation distinguishes them.
+query IIIII
+SELECT (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'signature_type < ''g'''}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'signature_type >= ''g'''}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{"where": 'signature_type IS NOT NULL'}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{attr: 'signature_type != ''identifier'''}]))),
+       (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{"where": 'true'}])));
+----
+5	4	9	50	54
+
+# An undeclared attribute NAME refuses, with an ordering operator as with `=` (the `=` form is
+# pinned near the top of this file). So "absent" has two readings and they do not collapse: an
+# absent value is a non-match, an absent name is a refusal before any SQL is built.
+statement error
+FROM tree_match('main', 'app', tree_steps([{attr: 'nosuchcol < 1'}]));
+----
+nosuchcol is neither a projected column nor served by ATTR MAP
+
+# The column-tier twin of the `mapped` tree above: the same line-span text, but as a declared
+# VARCHAR column instead of an ATTR MAP value.
+statement ok
+CREATE TABLE coltext AS SELECT node_id, depth, type, CAST(end_line - start_line + 1 AS VARCHAR) AS lines FROM 'test/data/app.parquet';
+
+statement ok
+CALL tree_ddl_create('main', 'coltext', tree_spec(tree_shape("order" := 'node_id', level := 'depth',
+  semantic := tree_semantic(type := 'type')), source := 'coltext'));
+
+# `lines` is the same data twice -- the line span as VARCHAR -- once as a projected column and
+# once as an ATTR MAP value, and `[lines >= 10]` is answered DIFFERENTLY by the two tiers. The
+# column branch requotes the literal and compares as text, where '11', '2' and '3' all sort at or
+# above '10'; the map branch TRY_CASTs the map's text to DECIMAL and compares numerically, where
+# only the module's 11 lines does. Both partition the whole tree (4 + 50 and 1 + 53), so neither
+# answer is a cast collapsing to NULL -- they genuinely disagree about the cut point.
+#
+# PINNED AS MEASURED, not as endorsed: sql/07_match.sql argues for each rule separately (the
+# column one to keep `[name=5]` from aborting the query on non-numeric text, R7; the map one
+# because '3' > '10' is true as text) and nothing in the macros reconciles them. Recorded here so
+# the port inherits a decision rather than a coin flip, and so that making the tiers agree has to
+# move this record on purpose.
+query IIII
+SELECT (SELECT list(type ORDER BY node_id) FROM tree_match('main', 'coltext', tree_steps([{attr: 'lines >= 10'}]))),
+       (SELECT count(*) FROM tree_match('main', 'coltext', tree_steps([{attr: 'lines < 10'}]))),
+       (SELECT list(type ORDER BY node_id) FROM tree_match('main', 'mapped', tree_steps([{attr: 'lines >= 10'}]))),
+       (SELECT count(*) FROM tree_match('main', 'mapped', tree_steps([{attr: 'lines < 10'}])));
+----
+[module, function_definition, block, function_definition]	50	[module]	53
