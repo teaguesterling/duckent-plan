@@ -137,7 +137,7 @@ slot_rows AS (
 -- statement is NULL by construction, but a required one going NULL means an interpolated
 -- value was NULL, and filtering it away is how a half-registered tree gets created (I3).
 built AS (
-  SELECT 'BEGIN TRANSACTION' AS s_begin,
+  SELECT
    'INSERT INTO tree_catalog.trees VALUES (' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ' || abstract || ', '
      || COALESCE(tree_sql_lit((spec)."like"), 'NULL') || ', ' || COALESCE(tree_sql_lit(source), 'NULL') || ', ' || tree_sql_lit(basis) || ', ' || tree_sql_lit(profile) || ', '
      || tree_sql_lit(storage) || ', ' || tree_sql_lit(order_source) || ', ' || has_semantic || ', NULL)' AS s_trees,
@@ -170,12 +170,11 @@ built AS (
      'INSERT INTO tree_state.partitions SELECT ' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', _root::VARCHAR, 1, count(*), true, now() FROM ' || tbl_name || ' GROUP BY _root' END AS s_partitions,
    CASE WHEN abstract THEN NULL ELSE 'INSERT INTO tree_catalog.compiled VALUES (' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ''projection'', ' || tree_sql_lit(proj_name) || ', ' || tree_sql_lit(proj_sql) || ')' END AS s_compiled,
    CASE WHEN abstract THEN NULL ELSE tree_sql_attr_cols_insert(db, sch, nm, proj_name) END AS s_attr_cols,
-   'COMMIT' AS s_commit
   FROM slot_rows WHERE ok
 )
-SELECT CASE WHEN s_begin IS NULL OR s_trees IS NULL OR s_slots IS NULL OR s_commit IS NULL
+SELECT CASE WHEN s_trees IS NULL OR s_slots IS NULL
             -- plain tree_err(), not (SELECT tree_err(...)): an uncorrelated scalar subquery is
             -- evaluated once, eagerly, and would refuse every valid create
             THEN tree_err('tree_ddl_create: internal: a required statement compiled to NULL')
-            ELSE list_filter([s_begin, s_trees, s_slots, s_predicate, s_order, s_key, s_reach, s_shadow, s_p13, s_conform, s_table, s_macro, s_partitions, s_compiled, s_attr_cols, s_commit], lambda x: x IS NOT NULL) END
+            ELSE list_filter([s_trees, s_slots, s_predicate, s_order, s_key, s_reach, s_shadow, s_p13, s_conform, s_table, s_macro, s_partitions, s_compiled, s_attr_cols], lambda x: x IS NOT NULL) END
 FROM built);
