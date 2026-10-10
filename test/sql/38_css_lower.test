@@ -831,10 +831,20 @@ alias __x is reserved for the compiler's own relations
 # They belong with the front-end whose registration they verify.
 # ---------------------------------------------------------------------------
 
-query II
-SELECT language, bare_safe FROM tree_catalog_languages() WHERE language = 'css';
+query III
+SELECT language, printer, bare_safe FROM tree_catalog_languages() WHERE language = 'css';
 ----
-css	true
+css	tree_selector_to_treeql	true
+
+# The registry's full contents, which 02_catalog.test used to assert and cannot: it is a core
+# suite and `css` arrives only with this front-end. Asserting it HERE is strictly stronger --
+# 02_catalog could only ever say "these two are registered", while this says "loading the css
+# front-end adds exactly one language, and leaves treeql alone".
+query I rowsort
+SELECT language FROM tree_catalog_languages();
+----
+css
+treeql
 
 query I
 SELECT value FROM tree_catalog.settings WHERE name = 'tree_default_selector_language';
