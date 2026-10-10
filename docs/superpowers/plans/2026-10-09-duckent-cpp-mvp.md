@@ -19,7 +19,7 @@
 - **No C++ reimplementation of semantics.** If a corpus assertion can only be made to pass by changing a `.sql` file, stop and escalate — that is a semantics change and belongs in the plan repo with its own mutant.
 - **Refusal text is contract.** Messages originate in the macros and must reach the user verbatim; the C++ layer must not wrap, prefix or reformat them.
 - **Verb side effects go in the scan, never in `bind`.** Bind runs under `EXPLAIN` and during prepare.
-- **Gate:** `16 file(s): 16 ran, 0 skipped, 487 assertion(s), 0 failure(s)`.
+- **Gate:** 16 files ran, 0 skipped, 0 failures, at least **495** assertions. The count is a FLOOR (`>=`), not an equality — it has already moved twice (487 -> 497 -> 495) as records were added and relocated, and an equality check would fail on correct work.
 
 ---
 
@@ -1026,7 +1026,7 @@ skip -- which is a property to assert, not to assume.
 import re, sys
 
 EXPECTED_FILES = 16
-EXPECTED_ASSERTIONS = 487
+EXPECTED_ASSERTIONS = 495  # a FLOOR, asserted with >=
 
 DUCKENT_SUITES = {
     "00_smoke", "01_types", "02_catalog", "03_fixtures", "10_projection", "11_ddl",

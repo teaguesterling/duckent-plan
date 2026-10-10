@@ -822,3 +822,21 @@ statement error
 SELECT tree_parse_css('.fn@__x');
 ----
 alias __x is reserved for the compiler's own relations
+
+# ---------------------------------------------------------------------------
+# Registration. 09_css.sql registers the css front-end and takes the default for TEXT selectors,
+# and these two records are what hold that claim. They lived in 36_pseudo.test until the C++
+# port's core-only build -- which embeds 00-08 and omits 09_css.sql -- showed that a predicate
+# suite asserting the selector-language default cannot pass without the css front-end present.
+# They belong with the front-end whose registration they verify.
+# ---------------------------------------------------------------------------
+
+query II
+SELECT language, bare_safe FROM tree_catalog_languages() WHERE language = 'css';
+----
+css	true
+
+query I
+SELECT value FROM tree_catalog.settings WHERE name = 'tree_default_selector_language';
+----
+css
