@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A DuckDB extension that embeds duckent's SQL macros unchanged, provides the seven `CALL` verbs and `tree_match` as C++ functions, and passes the 16 IR-selector suites (487 assertions) under DuckDB's own sqllogictest runner.
+**Goal:** A DuckDB extension that embeds duckent's SQL macros unchanged, provides the seven `CALL` verbs and `tree_match` as C++ functions, and passes the 16 IR-selector suites (at least 495 assertions) under DuckDB's own sqllogictest runner.
 
 **Architecture:** The semantics stay in the macros. The extension embeds `sql/00_types.sql` … `sql/08_traversal.sql` as compiled-in string literals and executes them at load. The only C++ is the executor layer that `test/run.py` emulates in Python today: each verb calls its `tree_compile_*` macro, receives a `VARCHAR[]` of statements, and runs them; `tree_match` calls `tree_compile_match` and streams the resulting query. No front-end, no parser, no `require`, no sitting_duck.
 
@@ -19,7 +19,7 @@
 - **No C++ reimplementation of semantics.** If a corpus assertion can only be made to pass by changing a `.sql` file, stop and escalate — that is a semantics change and belongs in the plan repo with its own mutant.
 - **Refusal text is contract.** Messages originate in the macros and must reach the user verbatim; the C++ layer must not wrap, prefix or reformat them.
 - **Verb side effects go in the scan, never in `bind`.** Bind runs under `EXPLAIN` and during prepare.
-- **Gate:** `16 file(s): 16 ran, 0 skipped, 487 assertion(s), 0 failure(s)`.
+- **Gate:** 16 files ran, 0 skipped, 0 failures, at least **495** assertions. The count is a FLOOR (`>=`), not an equality — it has already moved twice (487 -> 497 -> 495) as records were added and relocated, and an equality check would fail on correct work.
 
 ---
 
@@ -41,7 +41,7 @@ New repository `duckent-ext` (renamed to `duckent` only after the gate is green)
 | `src/duckent_match.cpp` | `tree_match` |
 | `src/include/duckent_sql.hpp` | declarations for the above |
 | `test/sql/*.test` | the 16 suites, copied from the plan repo |
-| `test/check_gate.py` | asserts 16 files and 487 assertions actually ran |
+| `test/check_gate.py` | asserts 16 files ran, 0 skipped, 0 failures, and at least 495 assertions |
 | `.github/workflows/tests.yml` | build, gate, drift check, and a **from-source load** job |
 
 ---
@@ -991,7 +991,7 @@ git commit -m "feat: tree_match as a bound table function over compiled SQL"
 
 **Interfaces:**
 - Consumes: everything above.
-- Produces: a CI job that fails if fewer than 16 files or fewer than 487 assertions ran.
+- Produces: a CI job that fails if fewer than 16 files ran, if anything skipped or failed, or if fewer than 495 assertions ran.
 
 - [ ] **Step 1: Copy the last five suites and the fixtures they need**
 
@@ -1026,7 +1026,7 @@ skip -- which is a property to assert, not to assume.
 import re, sys
 
 EXPECTED_FILES = 16
-EXPECTED_ASSERTIONS = 487
+EXPECTED_ASSERTIONS = 495  # a FLOOR, asserted with >=
 
 DUCKENT_SUITES = {
     "00_smoke", "01_types", "02_catalog", "03_fixtures", "10_projection", "11_ddl",
@@ -1062,7 +1062,7 @@ Expected: first passes; second exits 1 naming `36_pseudo`.
 
 ```yaml
   gate:
-    name: 16 suites, 487 assertions
+    name: 16 suites, 495+ assertions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

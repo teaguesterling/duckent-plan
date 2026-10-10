@@ -221,10 +221,17 @@ class Session:
             # and nothing else -- core design section 4, "a pure compiler plus a thin executor" --
             # so the transaction lives here, where the thing that issues N statements is.
             #
-            # This is also what makes the C++ port's executor simple: a CALL table function runs
-            # INSIDE a query, where BEGIN TRANSACTION is not legal, so a compiler that emitted it
-            # could not be executed by the extension at all. There the enclosing single statement
-            # supplies the same atomicity this block does.
+            # This is also what makes the C++ port's executor possible at all: a CALL verb is a
+            # table function and runs INSIDE a query, where BEGIN TRANSACTION is not legal, so a
+            # compiler that emitted it could not be executed by the extension.
+            #
+            # An earlier version of this comment predicted the port would inherit atomicity from
+            # "the enclosing single statement". That was measured and is WRONG: executing the
+            # list through the calling ClientContext deadlocks, because ClientContext::Query
+            # takes a non-recursive context_lock the scan already holds. The port instead does
+            # exactly what this block does -- a side connection with its own BEGIN/COMMIT -- and
+            # refuses when called inside a caller's explicit transaction, since its work would
+            # then survive the caller's ROLLBACK. See the extension's docs/executor-mechanism.md.
             self.con.execute("BEGIN TRANSACTION")
             try:
                 for s in stmts:

@@ -6,7 +6,7 @@ the first increment of core design §9 (repository plan) and §10 (what the port
 | in | out | why |
 |---|---|---|
 | extension skeleton, embedded macros, the seven CALL verbs, `tree_match` over IR selectors | every selector front-end, including css | a front-end is its own extension that registers with duckent, not a milestone of it |
-| the 16 suites that pass IR selectors — 487 assertions | the 9 suites that pass selector TEXT — 1,035 assertions | those 9 test a front-end; the MVP has none |
+| the 16 suites that pass IR selectors — a floor of 495 assertions | the 9 suites that pass selector TEXT | those 9 test a front-end; the MVP has none |
 | the macro layer as the semantics, unchanged | any C++ reimplementation of semantics | the corpus is the acceptance gate, so the semantics must not move while the substrate does |
 | the language registry as the dispatch seam | planner-side use of O, W, the 2.0 grammar | later increments, each with its own spec |
 
@@ -23,8 +23,15 @@ same bytes running in a different host.
 ### The gate, measured
 
 ```
-16 file(s): 16 ran, 0 skipped, 487 assertion(s), 0 failure(s)
+16 file(s): 16 ran, 0 skipped, 495 assertion(s), 0 failure(s)
 ```
+
+*(amended 2026-10-10)* The count is a **floor**, asserted with `>=`, not an equality. It was 487
+when this spec was written and 497 a day later, because PR #59 added ten attribute-operator
+records to `31_match.test`; it is 495 now because two css-registration records moved out of
+`36_pseudo.test` to `38_css_lower.test`. A silent skip REDUCES the count, so a floor still
+catches the failure the gate exists for, while an equality check fails on correct work — and a
+gate that cries wolf is a gate people stop trusting.
 
 00_smoke, 01_types, 02_catalog, 03_fixtures, 10_projection, 11_ddl, 12_dml, 13_alter,
 20_derivations, 30_selector, 31_match, 32_traversal, 33_navigation, 34_groups, 35_attr_map,
@@ -186,9 +193,14 @@ commits.
 ### 6.2 Replacing `DUCKENT_NO_SKIP`
 
 duckent's runner turns a skip into a failure. That mechanism is why an incident of 17 vacuous
-assertions was caught once, and DuckDB's `require` merely skips. The MVP has no `require` lines, so
-nothing *can* skip — but that is a property to assert, not to assume: **CI checks that 16 files and
-487 assertions ran.** A suite dropping out of the glob must be a failure, not a smaller green
+assertions was caught once, and DuckDB's `require` merely skips.
+
+*(amended 2026-10-10)* The original reasoning here was "the MVP has no `require` lines, so nothing
+can skip". That premise is false: measured, a statically linked extension still needs resolving
+for the harness, and without it a suite's assertions fail outright. What makes the suites need no
+`require` is a committed `test/test_config.json` naming `statically_loaded_extensions`, passed to
+the unittest binary via `--test-config` from the extension's own Makefile. The conclusion stands
+and the mechanism is now stated, so nobody re-derives it: **CI checks that 16 files ran and that the assertion count is at least 495.** A suite dropping out of the glob must be a failure, not a smaller green
 number.
 
 ### 6.3 The mutant harness ports nearly unchanged
