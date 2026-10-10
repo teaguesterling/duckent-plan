@@ -243,7 +243,7 @@ slot_rows AS (
 -- statement is NULL by construction, but a required one going NULL means an interpolated
 -- value was NULL, and filtering it away is how a half-registered tree gets created (I3).
 built AS (
-  SELECT 'BEGIN TRANSACTION' AS s_begin,
+  SELECT
    'INSERT INTO tree_catalog.trees VALUES (' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ' || abstract || ', '
      || COALESCE(tree_sql_lit((spec)."like"), 'NULL') || ', ' || COALESCE(tree_sql_lit(source), 'NULL') || ', ' || tree_sql_lit(basis) || ', ' || tree_sql_lit(profile) || ', '
      || tree_sql_lit(storage) || ', ' || tree_sql_lit(order_source) || ', ' || has_semantic || ', NULL)' AS s_trees,
@@ -276,14 +276,13 @@ built AS (
      'INSERT INTO tree_state.partitions SELECT ' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', _root::VARCHAR, 1, count(*), true, now() FROM ' || tbl_name || ' GROUP BY _root' END AS s_partitions,
    CASE WHEN abstract THEN NULL ELSE 'INSERT INTO tree_catalog.compiled VALUES (' || tree_sql_lit(db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', ''projection'', ' || tree_sql_lit(proj_name) || ', ' || tree_sql_lit(proj_sql) || ')' END AS s_compiled,
    CASE WHEN abstract THEN NULL ELSE tree_sql_attr_cols_insert(db, sch, nm, proj_name) END AS s_attr_cols,
-   'COMMIT' AS s_commit
   FROM slot_rows WHERE ok
 )
-SELECT CASE WHEN s_begin IS NULL OR s_trees IS NULL OR s_slots IS NULL OR s_commit IS NULL
+SELECT CASE WHEN s_trees IS NULL OR s_slots IS NULL
             -- plain tree_err(), not (SELECT tree_err(...)): an uncorrelated scalar subquery is
             -- evaluated once, eagerly, and would refuse every valid create
             THEN tree_err('tree_ddl_create: internal: a required statement compiled to NULL')
-            ELSE list_filter([s_begin, s_trees, s_slots, s_predicate, s_order, s_key, s_reach, s_shadow, s_p13, s_conform, s_table, s_macro, s_partitions, s_compiled, s_attr_cols, s_commit], lambda x: x IS NOT NULL) END
+            ELSE list_filter([s_trees, s_slots, s_predicate, s_order, s_key, s_reach, s_shadow, s_p13, s_conform, s_table, s_macro, s_partitions, s_compiled, s_attr_cols], lambda x: x IS NOT NULL) END
 FROM built);
 
 -- A missing tree refuses outright: without this check, dropping a mistyped or never-created
@@ -295,7 +294,7 @@ FROM built);
 CREATE OR REPLACE MACRO tree_compile_drop(sch, nm) AS (
   SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM tree_catalog.trees t WHERE t.database_name = current_database() AND t.schema_name = sch AND t.tree_name = nm)
     THEN tree_err('tree_ddl_drop: tree ' || COALESCE(sch, '<NULL>') || '.' || COALESCE(nm, '<NULL>') || ' not found')
-    ELSE ['BEGIN TRANSACTION',
+    ELSE [
     'DELETE FROM tree_catalog.trees WHERE database_name = current_database() AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
     'DELETE FROM tree_catalog.slots WHERE database_name = current_database() AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
     'DELETE FROM tree_catalog.predicates WHERE database_name = current_database() AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
@@ -304,7 +303,7 @@ CREATE OR REPLACE MACRO tree_compile_drop(sch, nm) AS (
     'DELETE FROM tree_state.assertions WHERE database_name = current_database() AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm),
     'DROP MACRO TABLE IF EXISTS tree_catalog.' || tree_sql_object_name('proj', sch, nm),
     'DROP TABLE IF EXISTS tree_catalog.' || tree_sql_object_name('t', sch, nm),
-    'COMMIT'] END);
+    ] END);
 
 -- Replace the SEMANTIC group and rebuild the projection (and storage, when materialized).
 -- Alter changes S only, never the row SET. Four guards keep it from being a back door: the S
@@ -377,7 +376,7 @@ SELECT CASE WHEN semantic IS NULL THEN tree_err('tree_ddl_alter: semantic is NUL
   -- COALESCEs close the same hole by the other route: a NULL schema or name makes this the
   -- branch that fires AND makes its message NULL, and error(NULL) is NULL in 1.5.5.
   WHEN NOT EXISTS (SELECT 1 FROM t) THEN tree_err('tree_ddl_alter: tree ' || COALESCE(sch, '<NULL>') || '.' || COALESCE(nm, '<NULL>') || ' not found') ELSE
-  (SELECT list_filter(['BEGIN TRANSACTION',
+  (SELECT list_filter([
    -- First, as in insert and replace: an `order_source = 'frozen'` tree takes _pre from the
    -- source's scan order, and alter REBUILDS the stored table from that source, so with
    -- preserve_insertion_order off it would freeze an arbitrary order into _pre and so into
@@ -426,7 +425,7 @@ SELECT CASE WHEN semantic IS NULL THEN tree_err('tree_ddl_alter: semantic is NUL
    -- the rebuilt projection, which an UPDATE ... SET sql_text = (subquery) cannot do portably
    CASE WHEN is_abstract THEN NULL ELSE 'DELETE FROM tree_catalog.compiled WHERE database_name = ' || tree_sql_lit(db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm) || ' AND artifact = ''attribute_columns''' END,
    CASE WHEN is_abstract THEN NULL ELSE tree_sql_attr_cols_insert(db, sch, nm, proj_name) END,
-   'COMMIT'], lambda x: x IS NOT NULL) FROM c WHERE ok) END);
+   ], lambda x: x IS NOT NULL) FROM c WHERE ok) END);
 
 -- The canonical projection of a registered tree. query() folds the concatenated literal to a constant.
 CREATE OR REPLACE MACRO tree_project(sch, nm) AS TABLE

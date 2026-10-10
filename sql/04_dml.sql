@@ -353,7 +353,7 @@ CREATE OR REPLACE MACRO tree_compile_insert(sch, nm, source) AS (
   -- NULL in the level basis, which is how both parent-basis checks below drop out of the list
   p AS (SELECT x, tree_compile_projection(x.shape, source, x.attr) AS proj,
                CASE WHEN (x.shape).level IS NOT NULL OR (x.shape).parent IS NULL THEN NULL ELSE (x.shape).unique_key END AS reach_key_expr FROM c)
-  SELECT list_filter(['BEGIN TRANSACTION',
+  SELECT list_filter([
     tree_sql_frozen_guard(x.order_source, 'tree_insert'),
     -- before the projection is evaluated, not after: a tie would otherwise be numbered first,
     -- and under a declared PARENT it multiplies rows rather than merely reordering them
@@ -378,13 +378,13 @@ CREATE OR REPLACE MACRO tree_compile_insert(sch, nm, source) AS (
     'INSERT INTO ' || x.tbl || ' BY NAME SELECT * FROM __duckent_new',
     'INSERT INTO tree_state.partitions SELECT ' || tree_sql_lit(x.db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', _root::VARCHAR, 1, count(*), true, now() FROM __duckent_new GROUP BY _root',
     'DROP TABLE __duckent_new',
-    'COMMIT'], lambda s: s IS NOT NULL) FROM p);
+    ], lambda s: s IS NOT NULL) FROM p);
 
 CREATE OR REPLACE MACRO tree_compile_replace(sch, nm, source) AS (
   WITH c AS (SELECT tree_dml_context('tree_replace', sch, nm) AS x),
   p AS (SELECT x, tree_compile_projection(x.shape, source, x.attr) AS proj,
                CASE WHEN (x.shape).level IS NOT NULL OR (x.shape).parent IS NULL THEN NULL ELSE (x.shape).unique_key END AS reach_key_expr FROM c)
-  SELECT list_filter(['BEGIN TRANSACTION',
+  SELECT list_filter([
     tree_sql_frozen_guard(x.order_source, 'tree_replace'),
     tree_compile_order_check((x.shape)."order", (x.shape).root, source, sch || '.' || nm),
     -- The NEW source alone, as for insert, and here the union would be actively wrong: replace
@@ -404,7 +404,7 @@ CREATE OR REPLACE MACRO tree_compile_replace(sch, nm, source) AS (
     'INSERT INTO ' || x.tbl || ' BY NAME SELECT * FROM __duckent_new',
     'INSERT INTO tree_state.partitions SELECT ' || tree_sql_lit(x.db) || ', ' || tree_sql_lit(sch) || ', ' || tree_sql_lit(nm) || ', n._root::VARCHAR, COALESCE(e.epoch, 0) + 1, count(*), true, now() FROM __duckent_new n LEFT JOIN __duckent_epochs e ON e.root_key = n._root::VARCHAR GROUP BY n._root, e.epoch',
     'DROP TABLE __duckent_new', 'DROP TABLE __duckent_epochs',
-    'COMMIT'], lambda s: s IS NOT NULL) FROM p);
+    ], lambda s: s IS NOT NULL) FROM p);
 
 -- The predicate is evaluated over the ROOT columns only: a non-ROOT column is a binder error naming it (P21). MN17 mutates this to row surgery.
 CREATE OR REPLACE MACRO tree_sql_delete_stmt(tbl, root_predicate) AS
@@ -428,12 +428,12 @@ CREATE OR REPLACE MACRO tree_sql_delete_stmt(tbl, root_predicate) AS
 CREATE OR REPLACE MACRO tree_compile_delete(sch, nm, root_predicate) AS (
   WITH c AS (SELECT tree_dml_context('tree_delete', sch, nm) AS x)
   SELECT CASE WHEN x IS NULL THEN tree_err('tree_delete: internal: no DML context') ELSE
-   ['BEGIN TRANSACTION',
+   [
     'CREATE TEMP TABLE __duckent_gone AS SELECT DISTINCT _root::VARCHAR AS root_key FROM (SELECT DISTINCT _root, _root.* FROM ' || x.tbl || ') WHERE ' || root_predicate,
     tree_sql_delete_stmt(x.tbl, root_predicate),
     'DELETE FROM tree_state.partitions WHERE database_name = ' || tree_sql_lit(x.db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm) || ' AND root_key IN (SELECT root_key FROM __duckent_gone)',
     'DROP TABLE __duckent_gone',
-    'COMMIT'] END FROM c);
+    ] END FROM c);
 
 -- Run the assertions and record them: P13, the ORDER assertion for a projection-mode tree, and
 -- one per declared O slot. tree_check REPORTS and never refuses (M3 §3.4) -- that is the whole
@@ -454,7 +454,7 @@ CREATE OR REPLACE MACRO tree_compile_check(sch, nm) AS (
   b AS (SELECT x, tree_sql_o_bad_cte(x.shape, x.rel, tree_sql_o_order_col(x.shape, x.attr), x.attr) AS cte FROM c)
   -- see tree_compile_delete on why the context is read in a predicate
   SELECT CASE WHEN x IS NULL THEN tree_err('tree_check: internal: no DML context') ELSE
-   list_filter(list_concat(list_concat(['BEGIN TRANSACTION',
+   list_filter(list_concat(list_concat([
     -- The ORDER assertion is recorded, never raised (M3 §3.4), and only for a projection-mode
     -- tree: a materialized one had its ORDER checked at the ingest that stored it, and its source
     -- may since have moved on, while a projection-mode tree IS its source. It reads the same
@@ -496,4 +496,4 @@ CREATE OR REPLACE MACRO tree_compile_check(sch, nm) AS (
       CASE WHEN (x.shape).parent IS NULL OR (x.shape).level IS NULL THEN NULL ELSE tree_sql_o_assert_stmts(x.db, sch, nm, 'PARENT', cte) END,
       CASE WHEN (x.shape).children IS NULL THEN NULL ELSE tree_sql_o_assert_stmts(x.db, sch, nm, 'CHILDREN', cte) END,
       CASE WHEN (x.shape).next IS NULL THEN NULL ELSE tree_sql_o_assert_stmts(x.db, sch, nm, 'NEXT', cte) END
-    ], lambda l: l IS NOT NULL))), ['COMMIT']), lambda s: s IS NOT NULL) END FROM b);
+    ], lambda l: l IS NOT NULL))), []), lambda s: s IS NOT NULL) END FROM b);

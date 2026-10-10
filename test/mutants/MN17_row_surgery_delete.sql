@@ -27,11 +27,11 @@
 CREATE OR REPLACE MACRO tree_compile_delete(sch, nm, root_predicate) AS (
   WITH c AS (SELECT tree_dml_context('tree_delete', sch, nm) AS x)
   SELECT CASE WHEN x IS NULL THEN tree_err('tree_delete: internal: no DML context') ELSE
-   ['BEGIN TRANSACTION',
+   [
     -- the mutation, half one: the gone-roots computation reads the table directly
     'CREATE TEMP TABLE __duckent_gone AS SELECT DISTINCT _root::VARCHAR AS root_key FROM ' || x.tbl || ' WHERE ' || root_predicate,
     -- the mutation, half two: and so does the DELETE -- row surgery
     'DELETE FROM ' || x.tbl || ' WHERE ' || root_predicate,
     'DELETE FROM tree_state.partitions WHERE database_name = ' || tree_sql_lit(x.db) || ' AND schema_name = ' || tree_sql_lit(sch) || ' AND tree_name = ' || tree_sql_lit(nm) || ' AND root_key IN (SELECT root_key FROM __duckent_gone)',
     'DROP TABLE __duckent_gone',
-    'COMMIT'] END FROM c);
+    ] END FROM c);

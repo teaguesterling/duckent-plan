@@ -321,6 +321,29 @@ D-N3 refuse per query (adopted). D-N4 attachment interface in core, registry abo
 
 Two open items M2 leaves for M-LANG, both from the css work: the `:not` self relation's spelling in TREEQL text (the IR op is `self`), and the three lossy families of §6.2 — of which the first, the whitespace-descendant compound, could be closed by rewriting the combinator through the universal selector.
 
+*(amended 2026-10-09, before the C++ port — one decision opened by the ATTR operator coverage pass.)*
+
+- **D-N25 the two ATTR tiers disagree about coercion — open, and the port must resolve it.**
+  The same selector over the same data answers differently depending on which tier serves the
+  attribute. Measured on a three-row tree whose `lines` column holds `'11'`, `'2'`, `'3'`:
+
+  | tier | compiled comparison | rows |
+  |---|---|---|
+  | declared VARCHAR column | `s1."lines" >= '10'` | 3 — textual, so `'2'` and `'3'` sort above `'10'` |
+  | `ATTR MAP` value | `TRY_CAST(s1._attr_map['lines'] AS DECIMAL(38,10)) >= 10` | 1 — numeric |
+
+  Both rules are argued for separately in `sql/07_match.sql` and nothing reconciles them: the
+  column rule requotes the literal so `[name=5]` cannot abort the query on the first
+  non-numeric row (R7), and the map rule casts because `'3' > '10'` is true as text. Both
+  partitions cover the whole tree (3+0 and 1+2), so neither side is a cast collapsing to NULL
+  — they genuinely disagree about the cut point.
+
+  `test/sql/31_match.test` pins the behaviour **as measured, not as endorsed**, and says so, so
+  that making the tiers agree has to move that record on purpose. This is listed as open rather
+  than settled because the macro phase has no reason to prefer either rule, while the C++ port
+  reimplements comparison and must therefore choose: it cannot inherit an accident. Whichever
+  rule wins, the losing tier's existing records move with it.
+
 ## 12. Verified during design
 
 On DuckDB 1.5.5: partial struct cast to a custom type fills NULLs and drops unknown fields; a macro constructor with named parameters refuses unknown names; `query()` runs macro-produced text with literal arguments, including inside a parameterized table macro; a `USING KEY` recursive CTE can fold a flattened selector AST bottom-up against a projection (`function_definition:not(:has(string))` on `app.py` returned `shout`, matching shipped `ast_select`), with the constraint that the recursive term must be a single SELECT and may reference `recurring.<cte>` only in FROM-clause position — *(amended 2026-09-15: that constraint turned out to rule the form out entirely for the real compiler, because a group compiles to a correlated `[NOT] EXISTS`; see §6.1)*; `USING SAMPLE`, `TABLE src`, `COLUMNS(...) AS '\1'`, and `query_table` all behave as the syntax reference recorded. On DuckDB main at 2026-09-11: `GrammarExtension` with `GrammarChange::{AddRule, AddChoice, PrependChoice, ReplaceRule, SetTransformProcess, AddTerminalRuleOverride}`, activated by `SET active_grammar_extensions`, exists and is marked preview.

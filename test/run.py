@@ -128,7 +128,6 @@ class Session:
                 self.run_script(open(mutant).read(), mutant)
             except Exception as e:
                 raise MutantLoadError(str(e)) from e
-        self.in_txn = False
 
     def run_script(self, text, label):
         for stmt in split_statements(text):
@@ -218,16 +217,22 @@ class Session:
             verb, args = m.group(1).lower(), m.group(2)
             macro = compile_macro_name(verb)
             stmts = self.con.execute(f"SELECT {macro}({args})").fetchone()[0]
-            for s in stmts:
-                try:
+            # Atomicity is the EXECUTOR's, not the compiler's. The compile macros emit semantics
+            # and nothing else -- core design section 4, "a pure compiler plus a thin executor" --
+            # so the transaction lives here, where the thing that issues N statements is.
+            #
+            # This is also what makes the C++ port's executor simple: a CALL table function runs
+            # INSIDE a query, where BEGIN TRANSACTION is not legal, so a compiler that emitted it
+            # could not be executed by the extension at all. There the enclosing single statement
+            # supplies the same atomicity this block does.
+            self.con.execute("BEGIN TRANSACTION")
+            try:
+                for s in stmts:
                     self.con.execute(s)
-                    up = s.strip().upper()
-                    if up.startswith("BEGIN"): self.in_txn = True
-                    if up.startswith("COMMIT") or up.startswith("ROLLBACK"): self.in_txn = False
-                except Exception:
-                    if self.in_txn:
-                        self.con.execute("ROLLBACK"); self.in_txn = False
-                    raise
+            except Exception:
+                self.con.execute("ROLLBACK")
+                raise
+            self.con.execute("COMMIT")
             return None
         return self.con.execute(self.rewrite_match(sql))
 
