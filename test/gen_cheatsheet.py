@@ -26,7 +26,7 @@ Two limits the generated file states about itself, because they are real:
     emulates them over the tree_compile_* macros, so their PARAMETERS are measured from
     those macros and the mapping is measured from the runner itself.
 """
-import argparse, difflib, io, os, sys
+import argparse, difflib, io, os, re, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run import Session, EXEC_VERBS, compile_macro_name, fmt
@@ -201,6 +201,36 @@ GLOSS_DOMAIN = {
 }
 
 
+# ---------------------------------------------------------------------------
+# The host door: TREEQL's text form has no parser yet (that is M-LANG), so a front-end hands
+# selectors over as IR. These describe that handover.
+# ---------------------------------------------------------------------------
+
+# One well-formed selector, used both to read the row layout off the type and as the base the
+# refusals below mutate. `class` is a type the reference fixture actually carries, so the
+# accepted case returns rows rather than an empty answer that would pass for working.
+IR_OK = ("[{node_id: 0, parent_id: NULL, kind: 'selector', value: NULL, op: NULL, arg: NULL, alias: NULL},"
+         " {node_id: 1, parent_id: 0, kind: 'step', value: NULL, op: NULL, arg: NULL, alias: NULL},"
+         " {node_id: 2, parent_id: 1, kind: 'type', value: 'class', op: NULL, arg: NULL, alias: NULL}]")
+
+# The IR's node kinds. AUTHORED here, and render() asserts the list against EVERY place the
+# implementation writes the whitelist -- today the printer's in sql/06_selector.sql and the match
+# path's in sql/07_match.sql. So this list cannot drift from the implementation, and the two
+# copies cannot drift from each other, which nothing else checks.
+SELECTOR_KINDS = ["selector", "step", "has", "not", "type", "id", "class", "attr", "pseudo", "where"]
+
+# Hand-built IR the match path must REFUSE, rendered with the message it refuses it with. A
+# front-end's output is only as trustworthy as these checks, because nothing parsed it.
+# (what is wrong with it, the IR)
+IR_REFUSALS = [
+    ("a kind nothing defines",
+     IR_OK.replace("kind: 'type', value: 'class'", "kind: 'frobnicate', value: 'class'")),
+    ("two nodes sharing a node_id", IR_OK.replace("node_id: 2, parent_id: 1", "node_id: 1, parent_id: 1")),
+    ("a step whose parent is neither the selector nor a group",
+     IR_OK.replace("node_id: 1, parent_id: 0", "node_id: 1, parent_id: 99")),
+    ("no steps at all", "[]"),
+]
+
 class Measured:
     """One loaded database with the reference trees declared, and the readings taken off it."""
 
@@ -288,6 +318,43 @@ class Measured:
                            "WHERE tree_name = '%s' AND name = 'p'" % nm)
         self.s.execute("CALL tree_ddl_drop('docs', '%s');" % nm)
         return "verdict", verdict
+
+    def kind_whitelists(self):
+        """The node-kind whitelist as each source file writes it, keyed by file.
+
+        Read from the SQL rather than from the catalog because it is a literal inside a macro
+        body, not a value the catalog exposes. Two files carry it; a doc that listed the kinds
+        without checking both would be a declaration with nothing verifying it.
+        """
+        found = {}
+        for rel in ("sql/06_selector.sql", "sql/07_match.sql"):
+            text = open(os.path.join(ROOT, rel)).read()
+            m = re.search(r"kind NOT IN \(\s*('selector'[^)]*)\)", text)
+            found[rel] = [x.strip().strip("'") for x in m.group(1).split(",")] if m else None
+        return found
+
+    def ir_layout(self):
+        """(column, type) for every field of a TREE_SELECTOR row, read off the type."""
+        _, rows = self.rows("DESCRIBE SELECT unnest(%s::TREE_SELECTOR, recursive := true)" % IR_OK)
+        return [(r[0], r[1]) for r in rows]
+
+    def ir_refusal_of(self, lit):
+        """The message hand-built IR is refused with, or None if it compiled.
+
+        Through tree_compile_match, not tree_match: the validation lives in the compile macro,
+        and `tree_match` is a table function the extension provides rather than something this
+        macro-only database has (see the note in section 3).
+        """
+        try:
+            self.one("SELECT tree_compile_match('docs', 'ast', %s::TREE_SELECTOR)" % lit)
+        except Exception as e:
+            return str(e).split("\nLINE ")[0].replace("Invalid Input Error: ", "")
+        return None
+
+    def ir_accepted_rows(self):
+        """How many rows the well-formed selector above matches, by running what it compiles to."""
+        sql = self.one("SELECT tree_compile_match('docs', 'ast', %s::TREE_SELECTOR)" % IR_OK)
+        return self.one("SELECT count(*) FROM (%s)" % sql)
 
 
 def norm(name):
@@ -499,6 +566,38 @@ def render(m):
                   "again under another.\n\n"
                   % (shared_prefix, "once" if n == 1 else "%d times" % n, code(origin), code(body)))
 
+    # -- 5b. the host door ---------------------------------------------------
+    out.write("### Handing over a pre-parsed selector\n\n")
+    out.write("TREEQL's text form has no parser yet, so a selector given as text is refused "
+              "(the message names the registry row it consulted). What TREEQL has instead is "
+              "a door: hand the IR over directly. A front-end that parses its own syntax "
+              "elsewhere -- in the host, in another extension -- emits these rows and passes "
+              "them as a `TREE_SELECTOR`, which is what `tree_steps` itself produces.\n\n")
+
+    layout = m.ir_layout()
+    table(out, ["column", "type"], [[code(c), code(t)] for c, t in layout])
+
+    out.write("`node_id` and `parent_id` are the structure: one %s row is the root, every "
+              "other row names its parent. A kind is one of %s.\n\n"
+              % (code("selector"), ", ".join(code(k) for k in SELECTOR_KINDS)))
+
+    out.write("The door is checked, not trusted -- nothing parsed these rows, so the match "
+              "path validates them. Each refusal below is the real message:\n\n")
+
+    ir_rows, ir_missing = [], []
+    for what, lit in IR_REFUSALS:
+        msg = m.ir_refusal_of(lit)
+        if msg is None:
+            ir_missing.append(what)
+        else:
+            ir_rows.append([what, code(msg)])
+    table(out, ["handed over", "refused with"], ir_rows)
+
+    matched = m.ir_accepted_rows()
+    out.write("And the well-formed one those mutate matches %s, so the refusals above are "
+              "the checks firing rather than the selector being empty.\n\n"
+              % ("1 row" if matched == 1 else "%d rows" % matched))
+
     # -- 6. purity -----------------------------------------------------------
     out.write("## What a predicate body may contain\n\n")
     out.write("A predicate's body is substituted into a plan, so a body that reads anything "
@@ -545,6 +644,19 @@ def render(m):
                           for r in m.rows("SELECT * FROM tree_catalog_tags('docs','ast')")[1]))
 
     # -- coverage assertions ------------------------------------------------
+    for rel, found in m.kind_whitelists().items():
+        if found is None:
+            stale.append("could not find the node-kind whitelist in %s; SELECTOR_KINDS is "
+                         "no longer checked against it" % rel)
+        elif found != SELECTOR_KINDS:
+            stale.append("SELECTOR_KINDS disagrees with %s: doc has %r, that file has %r"
+                         % (rel, SELECTOR_KINDS, found))
+    if ir_missing:
+        stale.append("hand-built IR the doc claims is refused was ACCEPTED: "
+                     + ", ".join(ir_missing))
+    if not matched:
+        stale.append("the well-formed hand-built selector matched no rows, so the IR "
+                     "refusals above prove nothing")
     unexercised = [k for k in shape_keys if k != "semantic" and norm(k) not in blocks]
     if unexercised:
         stale.append("no reference declaration exercises shape slot(s): " + ", ".join(unexercised))

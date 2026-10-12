@@ -149,6 +149,33 @@ Four forms, and what each records. These are the rows the `forms` reference decl
 
 The two tiers can reach the same name. With both a `pre_` binding and a `sel_shallow` macro in the catalog, the name `shallow` is bound once, by the `prefix` binding, to `pre_shallow(depth)`: a macro already claimed under one name is not bound again under another.
 
+### Handing over a pre-parsed selector
+
+TREEQL's text form has no parser yet, so a selector given as text is refused (the message names the registry row it consulted). What TREEQL has instead is a door: hand the IR over directly. A front-end that parses its own syntax elsewhere -- in the host, in another extension -- emits these rows and passes them as a `TREE_SELECTOR`, which is what `tree_steps` itself produces.
+
+| column | type |
+|---|---|
+| `node_id` | `INTEGER` |
+| `parent_id` | `INTEGER` |
+| `kind` | `VARCHAR` |
+| `value` | `VARCHAR` |
+| `op` | `VARCHAR` |
+| `arg` | `VARCHAR` |
+| `alias` | `VARCHAR` |
+
+`node_id` and `parent_id` are the structure: one `selector` row is the root, every other row names its parent. A kind is one of `selector`, `step`, `has`, `not`, `type`, `id`, `class`, `attr`, `pseudo`, `where`.
+
+The door is checked, not trusted -- nothing parsed these rows, so the match path validates them. Each refusal below is the real message:
+
+| handed over | refused with |
+|---|---|
+| a kind nothing defines | `tree_match: unknown clause kind frobnicate` |
+| two nodes sharing a node_id | `tree_match: selector node ids are not unique` |
+| a step whose parent is neither the selector nor a group | `tree_match: node 1 has kind step which is not allowed under <none>` |
+| no steps at all | `tree_match: selector has no steps` |
+
+And the well-formed one those mutate matches 1 row, so the refusals above are the checks firing rather than the selector being empty.
+
 ## What a predicate body may contain
 
 A predicate's body is substituted into a plan, so a body that reads anything but its row is refused at declaration. These verdicts are read back out of `tree_catalog_predicates()` after declaring each body:
