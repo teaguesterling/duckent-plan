@@ -175,7 +175,7 @@ GLOSS_MACRO = {
     "tree_shape": "declare structure: the R and O slots, and the semantics block",
     "tree_semantic": "declare semantics: the S slots and the predicates",
     "tree_spec": "a shape plus how it is stored and where its rows come from",
-    "tree_ancestors": "walk up from a row",
+    "tree_ancestors": "walk up from a row (`root_key` is `_root` cast to VARCHAR)",
     "tree_descendants": "walk down from a row",
     "tree_children": "the row's immediate children",
     "tree_parent": "the row's parent",
@@ -184,7 +184,7 @@ GLOSS_MACRO = {
     "tree_last_child": "the last child, in sibling order",
     "tree_next_sibling": "the following sibling",
     "tree_prev_sibling": "the preceding sibling",
-    "tree_nav": "any of the above, with the relation named as an argument",
+    "tree_nav": "the substrate the nine above are built on: `rel` is a SQL join predicate, not a relation name, so call one of them instead",
     "tree_encode": "derive ORDER and LEVEL from a key/parent pair",
     "tree_derive_parent": "derive PARENT from an ORDER/LEVEL pair",
     "tree_canonical_columns": "the columns projection adds",
@@ -230,6 +230,37 @@ IR_REFUSALS = [
      IR_OK.replace("node_id: 1, parent_id: 0", "node_id: 1, parent_id: 99")),
     ("no steps at all", "[]"),
 ]
+
+# ---------------------------------------------------------------------------
+# The three ways to query a declared tree. Every query below is RUN by the generator and its
+# real result rendered, so an example that stops working fails the build instead of rotting.
+# The reference tree is `ast`, declared above; `:leaf` is one of its predicates.
+# ---------------------------------------------------------------------------
+
+# Path 1: the projection, queried with ordinary SQL and no duckent vocabulary at all.
+Q_PROJECT = ("SELECT _level, type, name FROM tree_project('docs', 'ast') "
+             "WHERE _level <= 1 ORDER BY _pre")
+
+# Path 2: navigation from an anchor row. root_key is the _root STRUCT cast to VARCHAR, which is
+# the one thing about these macros a reader cannot guess -- handing them the struct itself fails
+# inside a macro the caller never wrote. The generator renders that error rather than describing
+# it, so the doc cannot soften it over time.
+Q_CHILDREN = "SELECT type FROM tree_children('docs', 'ast', %s, 0) ORDER BY _pre"
+Q_WRONG_KEY = "SELECT count(*) FROM tree_children('docs', 'ast', {'file_path': 'f.py'}, 0)"
+
+# Path 3: tree_match, which is the only place a predicate can be used. The pair is chosen to
+# DISCRIMINATE: one type where every row satisfies :leaf, one where none does. A single number
+# would be indistinguishable from a predicate that matched everything, or nothing.
+# (type, expectation, why). The expectation is CHECKED, not decorative: "all" means every row
+# of that type must satisfy :leaf and "none" means no row may, and an entry carrying neither is
+# itself a failure. Keying the check on the expectation rather than on the type NAME is
+# deliberate -- an earlier version asked `if ty == "method"`, so renaming the entry silently
+# disabled the check instead of failing it.
+PRED_PAIR = [("method", "all", "every row of this type is a leaf"),
+             ("class", "none", "no row of this type is a leaf")]
+
+# A predicate is not a column. Rendered with the error, because the error is the explanation.
+Q_PRED_AS_COLUMN = "SELECT count(*) FROM tree_project('docs', 'ast') WHERE leaf"
 
 class Measured:
     """One loaded database with the reference trees declared, and the readings taken off it."""
@@ -356,6 +387,29 @@ class Measured:
         sql = self.one("SELECT tree_compile_match('docs', 'ast', %s::TREE_SELECTOR)" % IR_OK)
         return self.one("SELECT count(*) FROM (%s)" % sql)
 
+    def root_key(self):
+        """The anchor key the navigation macros take: `_root` cast to VARCHAR."""
+        return self.one("SELECT DISTINCT _root::VARCHAR FROM tree_project('docs', 'ast')")
+
+    def error_of(self, sql):
+        """The message a query fails with, or None if it succeeded."""
+        try:
+            self.con.execute(sql)
+        except Exception as e:
+            return re.split(r"\nLINE |\n\s*Candidate functions", str(e))[0].strip()
+        return None
+
+    def match_count(self, steps_sql):
+        """How many rows a selector matches, through the compile macro."""
+        sql = self.one("SELECT tree_compile_match('docs', 'ast', %s)" % steps_sql)
+        return self.one("SELECT count(*) FROM (%s)" % sql)
+
+    def predicate_pair(self, type_name):
+        """(rows of this type, rows of this type that satisfy :leaf)."""
+        bare = "tree_steps([{type: '%s'}])" % type_name
+        leaf = "tree_steps([{type: '%s', pseudo: 'leaf'}])" % type_name
+        return self.match_count(bare), self.match_count(leaf)
+
 
 def norm(name):
     """A slot name without the punctuation the two spellings disagree about: the type says
@@ -369,6 +423,11 @@ def table(out, headers, rows):
     for r in rows:
         out.write("| " + " | ".join("" if c is None else str(c) for c in r) + " |\n")
     out.write("\n")
+
+
+def code_block(s):
+    """A fenced block. Used for the worked queries and for the errors they produce."""
+    return "```sql\n%s\n```\n\n" % s.strip()
 
 
 def code(s):
@@ -524,6 +583,75 @@ def render(m):
     for note in extra_notes:
         out.write(note + "\n\n")
 
+    # -- 4b. querying a tree -------------------------------------------------
+    out.write("## Querying a tree\n\n")
+    out.write("Three ways, and a predicate belongs to exactly one of them. Every query below "
+              "was run against the `ast` reference declaration to produce the result shown.\n\n")
+
+    out.write("### 1. The projection, with ordinary SQL\n\n")
+    out.write("The usual answer, and it needs no duckent vocabulary: `tree_project` is a "
+              "relation, so query it.\n\n")
+    out.write(code_block(Q_PROJECT))
+    pcols, prows = m.rows(Q_PROJECT)
+    table(out, pcols, [[fmt(c) for c in r] for r in prows])
+
+    out.write("### 2. Navigation, from an anchor row\n\n")
+    rk = m.root_key()
+    out.write("The nine navigation relations listed under **Verbs** walk from one row. The anchor is a "
+              "`(root_key, pre)` pair, and **`root_key` is the `_root` struct cast to "
+              "VARCHAR** -- here %s. That is the one thing about these macros a reader "
+              "cannot guess:\n\n" % code(rk))
+    out.write(code_block(Q_CHILDREN % ("'" + rk.replace("'", "''") + "'")))
+    ccols, crows = m.rows(Q_CHILDREN % ("'" + rk.replace("'", "''") + "'"))
+    table(out, ccols, [[fmt(c) for c in r] for r in crows])
+
+    wrong = m.error_of(Q_WRONG_KEY)
+    if wrong is None:
+        stale.append("handing a navigation macro the _root STRUCT no longer fails, so the "
+                     "warning about root_key's form is stale")
+    else:
+        out.write("Handing one the struct itself, rather than its VARCHAR rendering, fails "
+                  "inside a macro the caller never wrote:\n\n")
+        out.write(code_block(wrong))
+
+    out.write("A root or an anchor that does not exist is **not** an error: it answers with no "
+              "rows, which is what a caller asking about a row that is not there is owed.\n\n")
+
+    out.write("### 3. Selectors, which is where predicates are used\n\n")
+    out.write("`tree_match` takes a selector and returns the rows it matches. A predicate "
+              "declared on the tree is named in a step's `pseudo`, and the pair below is two "
+              "types of the same tree -- one where every row satisfies `:leaf`, one where none "
+              "does -- because a single count cannot tell a working predicate from one that "
+              "matches everything:\n\n")
+    pred_rows, pred_bad = [], []
+    for ty, expect, why in PRED_PAIR:
+        total, leafy = m.predicate_pair(ty)
+        pred_rows.append([code(ty), str(total), str(leafy), why])
+        if total == 0:
+            pred_bad.append("%s: the type matches no rows at all, so it says nothing about "
+                            "the predicate" % ty)
+        elif expect == "all" and leafy != total:
+            pred_bad.append("%s: expected every row to satisfy :leaf, got %d of %d"
+                            % (ty, leafy, total))
+        elif expect == "none" and leafy != 0:
+            pred_bad.append("%s: expected no row to satisfy :leaf, got %d of %d"
+                            % (ty, leafy, total))
+        elif expect not in ("all", "none"):
+            pred_bad.append("%s: expectation %r is neither 'all' nor 'none', so nothing "
+                            "checked it" % (ty, expect))
+    if not any(e == "all" for _, e, _ in PRED_PAIR) or not any(e == "none" for _, e, _ in PRED_PAIR):
+        pred_bad.append("the pair no longer contains both an 'all' and a 'none' entry, so it "
+                        "cannot distinguish a working predicate from one matching everything")
+    table(out, ["type", "rows", "`:leaf` rows", "why this one"], pred_rows)
+
+    pred_err = m.error_of(Q_PRED_AS_COLUMN)
+    if pred_err is None:
+        stale.append("a predicate is now readable as a projection column, so the claim that "
+                     "predicates are selector-only is stale")
+    else:
+        out.write("A predicate is **not** a column, and cannot be used outside a selector:\n\n")
+        out.write(code_block(Q_PRED_AS_COLUMN + "\n-- " + pred_err))
+
     # -- 5. selectors --------------------------------------------------------
     out.write("## Selectors\n\n")
     lang_cols, lang_rows = m.rows("SELECT * FROM tree_catalog_languages() ORDER BY language")
@@ -644,6 +772,12 @@ def render(m):
                           for r in m.rows("SELECT * FROM tree_catalog_tags('docs','ast')")[1]))
 
     # -- coverage assertions ------------------------------------------------
+    if not prows:
+        stale.append("the projection walkthrough query returned no rows")
+    if not crows:
+        stale.append("the navigation walkthrough query returned no rows")
+    if pred_bad:
+        stale.append("the predicate pair no longer discriminates: " + "; ".join(pred_bad))
     for rel, found in m.kind_whitelists().items():
         if found is None:
             stale.append("could not find the node-kind whitelist in %s; SELECTOR_KINDS is "
