@@ -72,7 +72,7 @@ Expressions and relations, used in a query:
 
 | macro | returns | what it does |
 |---|---|---|
-| `tree_ancestors(sch, nm, root_key, pre)` | relation | walk up from a row |
+| `tree_ancestors(sch, nm, root_key, pre)` | relation | walk up from a row (`root_key` is `_root` cast to VARCHAR) |
 | `tree_apply(shape, source)` | relation | project a shape over a source without declaring a tree |
 | `tree_builtin_predicates()` | scalar | predicates every tree has without declaring them |
 | `tree_canonical_columns()` | scalar | the columns projection adds |
@@ -83,7 +83,7 @@ Expressions and relations, used in a query:
 | `tree_explain(sch, nm, sel, semantic, language)` | scalar | what a selector compiles to, without running it |
 | `tree_first_child(sch, nm, root_key, pre)` | relation | the first child, in sibling order |
 | `tree_last_child(sch, nm, root_key, pre)` | relation | the last child, in sibling order |
-| `tree_nav(sch, nm, root_key, pre, rel)` | relation | any of the above, with the relation named as an argument |
+| `tree_nav(sch, nm, root_key, pre, rel)` | relation | the substrate the nine above are built on: `rel` is a SQL join predicate, not a relation name, so call one of them instead |
 | `tree_next_sibling(sch, nm, root_key, pre)` | relation | the following sibling |
 | `tree_parent(sch, nm, root_key, pre)` | relation | the row's parent |
 | `tree_parse_css(sel)` | scalar | a CSS selector as duckent IR |
@@ -119,6 +119,62 @@ The columns whose values come from a fixed set, as the reference declarations ex
 | `status` | `ok` | the verdict an assertion recorded |
 
 `status` is only ever `ok` here, and that is the point: the structural conditions a check would otherwise record as violated are refused at declaration instead, as above.
+
+## Querying a tree
+
+Three ways, and a predicate belongs to exactly one of them. Every query below was run against the `ast` reference declaration to produce the result shown.
+
+### 1. The projection, with ordinary SQL
+
+The usual answer, and it needs no duckent vocabulary: `tree_project` is a relation, so query it.
+
+```sql
+SELECT _level, type, name FROM tree_project('docs', 'ast') WHERE _level <= 1 ORDER BY _pre
+```
+
+| _level | type | name |
+|---|---|---|
+| 0 | module | f |
+| 1 | class | C |
+| 1 | func | g |
+
+### 2. Navigation, from an anchor row
+
+The nine navigation relations listed under **Verbs** walk from one row. The anchor is a `(root_key, pre)` pair, and **`root_key` is the `_root` struct cast to VARCHAR** -- here `{'file_path': f.py}`. That is the one thing about these macros a reader cannot guess:
+
+```sql
+SELECT type FROM tree_children('docs', 'ast', '{''file_path'': f.py}', 0) ORDER BY _pre
+```
+
+| type |
+|---|
+| class |
+| func |
+
+Handing one the struct itself, rather than its VARCHAR rendering, fails inside a macro the caller never wrote:
+
+```sql
+Binder Error: No function matches the given name and argument types 'replace(STRUCT(file_path VARCHAR), STRING_LITERAL, STRING_LITERAL)'. You might need to add explicit type casts.
+```
+
+A root or an anchor that does not exist is **not** an error: it answers with no rows, which is what a caller asking about a row that is not there is owed.
+
+### 3. Selectors, which is where predicates are used
+
+`tree_match` takes a selector and returns the rows it matches. A predicate declared on the tree is named in a step's `pseudo`, and the pair below is two types of the same tree -- one where every row satisfies `:leaf`, one where none does -- because a single count cannot tell a working predicate from one that matches everything:
+
+| type | rows | `:leaf` rows | why this one |
+|---|---|---|---|
+| `method` | 1 | 1 | every row of this type is a leaf |
+| `class` | 1 | 0 | no row of this type is a leaf |
+
+A predicate is **not** a column, and cannot be used outside a selector:
+
+```sql
+SELECT count(*) FROM tree_project('docs', 'ast') WHERE leaf
+-- Binder Error: Referenced column "leaf" not found in FROM clause!
+Candidate bindings: "labels", "_level", "file_path", "descendant_count", "name"
+```
 
 ## Selectors
 
