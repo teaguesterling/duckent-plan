@@ -159,17 +159,22 @@ ON CONFLICT DO NOTHING;
 -- tree_sql_subtree/tree_sql_children to drop the root equality.
 -- 'self' only ever arrives here as a group's first inner step, which sql/06_selector.sql
 -- enforces when the IR is built; nothing else in the compiler treats it specially.
-CREATE OR REPLACE MACRO tree_sql_comb(op, a, b, elem) AS
-  CASE op
-    WHEN 'desc'  THEN tree_sql_subtree(a, b)
-    WHEN 'child' THEN tree_sql_children(a, b)
-    WHEN 'self'  THEN tree_sql_self(a, b)
-    WHEN 'next'  THEN tree_sql_next_sibling(a, b, elem)
-    WHEN 'after' THEN tree_sql_after(a, b)
-    -- COALESCE: only the first step of the outer chain may carry a NULL op, and tree_sql_chain
-    -- defaults that one before it gets here, so a NULL arriving is hand-built IR -- which is
-    -- exactly the case that must be told what is wrong instead of receiving a NULL fragment.
-    ELSE tree_err('tree_match: unknown combinator ' || COALESCE(op, '<NULL>')) END;
+--
+-- The relation is looked up rather than branched on, so a front-end that registers a combinator
+-- is compiled without editing this macro. The templates are DERIVED from the relation macros
+-- above (sql/01_catalog.sql says why), so this is a lookup over their own output.
+--
+-- COALESCE around the lookup is load-bearing, not defensive: a miss returns NULL, and a NULL
+-- concatenated into the join text would make the whole FROM fragment NULL -- the refusal silently
+-- becoming no refusal at all. The parameter is `want_op` and not `op` because a parameter sharing
+-- a name with a column of the table it queries is a Binder Error, and `tree_sql_comb.op` is not a
+-- spelling DuckDB accepts.
+CREATE OR REPLACE MACRO tree_sql_comb(want_op, a, b, elem) AS COALESCE(
+  (SELECT replace(replace(
+            CASE WHEN elem AND c.template_elem IS NOT NULL THEN c.template_elem ELSE c.template END,
+            '{a}', a), '{b}', b)
+   FROM tree_catalog.combinators c WHERE c.op = want_op),
+  tree_err('tree_match: unknown combinator ' || COALESCE(want_op, '<NULL>')));
 
 -- The predicates the language itself defines. They are structural, so every tree has them
 -- whatever its SEMANTIC group binds, and they are never reported as unknown. One list, read by
@@ -334,16 +339,30 @@ CREATE OR REPLACE MACRO tree_sql_clause(kind, value, op, arg, alias, attr_cols, 
 -- The first step has nothing before it to join against, so its predicate becomes the WHERE. At
 -- the top level that predicate is the whole WHERE and needs no parentheses; inside a group it is
 -- ANDed with the relation to the anchor, so there it is parenthesized like every joined step's.
--- 1.5.5: list_transform's two-argument lambda indexes from 1, so steps[i - 1] is the previous step.
 -- The empty-step refusal is the fragment's own guard, not the compiler's: a group with no inner
 -- steps contributes no row to the fold's group pass, so nothing would call this for it. That case
 -- is refused in chk. This branch is what stops a direct caller emitting a FROM with no relation.
+--
+-- This used to be list_aggregate(list_transform(steps, lambda s, i: ...), 'string_agg', ' '), with
+-- steps[i - 1] reaching the previous step. tree_sql_comb now reads tree_catalog.combinators, and
+-- 1.5.5 refuses a subquery anywhere inside an expression that carries a lambda -- macro inlining
+-- puts tree_sql_comb's own SELECT inside the lambda body no matter how it is called from there.
+-- So the per-step join text is built as a plain correlated subquery instead: `cur` numbers each
+-- step with generate_subscripts, `prev` is the same list offset by one, and the LEFT JOIN on
+-- prev.i = cur.i - 1 hands step i the alias of step i - 1 as an ordinary column, not a lambda
+-- closure. Nothing inside this subquery is a lambda, so tree_sql_comb's own subquery is free to
+-- run here.
 CREATE OR REPLACE MACRO tree_sql_chain(steps, anchor, elem) AS
   CASE WHEN steps IS NULL OR len(steps) = 0 THEN tree_err('tree_match: empty group') ELSE
-    list_aggregate(list_transform(steps, lambda s, i:
-        CASE WHEN i = 1 THEN '__proj ' || (s).alias
-             ELSE 'JOIN __proj ' || (s).alias || ' ON ' || tree_sql_comb((s).op, (steps[i - 1]).alias, (s).alias, elem)
-                  || ' AND (' || (s).pred || ')' END), 'string_agg', ' ')
+    (SELECT string_agg(
+        CASE WHEN cur.i = 1 THEN '__proj ' || (cur.s).alias
+             ELSE 'JOIN __proj ' || (cur.s).alias || ' ON '
+                  || tree_sql_comb((cur.s).op, (prev.s).alias, (cur.s).alias, elem)
+                  || ' AND (' || (cur.s).pred || ')' END,
+        ' ' ORDER BY cur.i)
+     FROM (SELECT unnest(steps) AS s, generate_subscripts(steps, 1) AS i) cur
+     LEFT JOIN (SELECT unnest(steps) AS s, generate_subscripts(steps, 1) AS i) prev
+       ON prev.i = cur.i - 1)
     || ' WHERE '
     -- COALESCE, although tree_steps already defaults a group's first inner step to desc: only the
     -- first step of the OUTER chain may carry a NULL op, and there anchor is NULL and no

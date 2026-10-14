@@ -65,3 +65,44 @@ id	ID
 pseudo	PSEUDO
 type	TYPE
 where	WHERE
+
+# The compiled join condition must be identical whether it came from the macro or the registry.
+# This is the assertion that lets the registry replace the CASE at all.
+query I
+SELECT count(*) FROM (VALUES ('desc'), ('child'), ('self'), ('next'), ('after')) v(op)
+WHERE tree_sql_comb(v.op, 's0', 's1', false) IS NULL;
+----
+0
+
+# AN UNKNOWN COMBINATOR MUST REFUSE, NOT RETURN NULL. A registry lookup that misses yields NULL,
+# and a NULL concatenated into the join text makes the whole fragment NULL -- a guard that does not
+# fire, the same family as the error(NULL) audit. The CASE this replaces ended in tree_err; the
+# lookup has to keep that.
+statement error
+SELECT tree_sql_comb('sideways', 's0', 's1', false);
+----
+tree_match: unknown combinator sideways
+
+statement error
+SELECT tree_sql_comb(NULL, 's0', 's1', false);
+----
+tree_match: unknown combinator <NULL>
+
+# THE PRINTER'S SILENT DROP. tree_treeql_comb ended in ELSE NULL, and tree_treeql_step wraps it in
+# COALESCE(... || ' ', '') -- so an op the printer did not know rendered as NOTHING and the
+# combinator vanished from the printed text. The printer already refuses an unknown clause KIND
+# for exactly this reason ("a kind this printer does not know refuses rather than rendering as
+# nothing"); combinators had no equivalent. Now they do.
+statement error
+SELECT tree_selector_to_treeql([
+  {node_id: 0, parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL, arg: NULL, alias: NULL},
+  {node_id: 1, parent_id: 0, kind: 'step', value: NULL, op: 'sideways', arg: NULL, alias: NULL},
+  {node_id: 2, parent_id: 1, kind: 'type', value: 'x', op: NULL, arg: NULL, alias: NULL}]::TREE_SELECTOR);
+----
+tree_selector_to_treeql: unknown combinator sideways
+
+# and the keyword for every registered op still prints
+query I
+SELECT string_agg(tree_treeql_comb(op), ',' ORDER BY op) FROM tree_catalog_combinators();
+----
+FOLLOWING,CHILD,DESCENDANT,SIBLING,SELF
