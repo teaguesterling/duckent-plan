@@ -21,7 +21,7 @@ structural relation between two rows. Every selector language, css included, is 
 this IR; the engine never sees anything else.
 
 The seams are not the problem. Their **vocabularies** are: the set of valid kinds and the set of
-valid combinators are declarations written out by hand in a dozen places, with nothing checking
+valid combinators are declarations written out by hand at thirteen sites, with nothing checking
 that the copies agree. This design makes each vocabulary declared once, consulted everywhere, and
 — for combinators — extensible by adding a row.
 
@@ -32,7 +32,7 @@ recorded, and nothing verifies the claim it makes.
 
 Counted on `73dfd47`. Two groups, and the distinction is the whole design.
 
-**Sites that can read a declaration (7):**
+**Sites that can read a declaration (8):**
 
 | site | what it does with the set |
 |---|---|
@@ -42,10 +42,29 @@ Counted on `73dfd47`. Two groups, and the distinction is the whole design.
 | `sql/07_match.sql:418` | compiler's clause selection |
 | `sql/07_match.sql:457` | host-door kind check |
 | `sql/07_match.sql:467` | part selection (clauses + groups) |
+| `sql/07_match.sql:584` | the S-less refusal — **a partial copy**, see below |
 | `test/gen_cheatsheet.py:220` | `SELECTOR_KINDS` — generates `docs/cheatsheet.md` |
 
-That last one matters more than its position suggests: it is what writes the documentation, so a
-drifted copy there does not fail, it *publishes a false claim*.
+The cheatsheet one matters more than its position suggests: it is what writes the documentation, so
+a drifted copy there does not fail, it *publishes a false claim*.
+
+`07_match.sql:584` is the most instructive of the eight, and the first inventory of this work
+missed it. It writes the set with **five** members rather than six:
+
+```sql
+CASE WHEN ir.kind IN ('type', 'id', 'class', 'attr', 'pseudo') AND NOT (SELECT has_semantic FROM t)
+```
+
+`where` is absent because the host door reads no S slot and is available on a tree with no
+`SEMANTIC` group. So this partial copy *is* the `needs_semantic` distinction — a rule encoded as an
+omission from a list, stated nowhere, and discoverable only by noticing which member is missing.
+A search for the full set does not find it, which is why it survived the first pass.
+
+Two consequences. First, `needs_semantic` must be read **here** or it is a column declared and
+consumed by nothing — the very defect this design exists to remove, reintroduced by the design.
+Second, partial copies are the more dangerous kind precisely because they carry an exception that
+the full-set copies do not, so the lint (§8) matches on *three or more* members rather than on the
+complete set.
 
 **Sites that cannot (5):**
 
@@ -198,9 +217,11 @@ correctly on a sibling-free tree *because it said it needs sibling order*, not b
 remembered to edit a list.
 
 **`needs_semantic`** (clause kinds). True for `type`, `id`, `class`, `attr`, `pseudo`; false for
-`where`. The built-in positional predicates stay an exception on the **value**, not the kind:
-`pseudo` with a name in `tree_builtin_predicates()` reads no S slot and is exempt. That exemption
-is about which predicate was named, so it does not belong in a per-kind column and is not moved.
+`where`. Read by the S-less refusal at `07_match.sql:584`, which today encodes the same rule by
+*omitting* `where` from a five-member list (§2). The built-in positional predicates stay an
+exception on the **value**, not the kind: `pseudo` with a name in `tree_builtin_predicates()` reads
+no S slot and is exempt. That exemption is about which predicate was named, so it does not belong
+in a per-kind column and is not moved.
 
 ## 7. Decisions taken in this design
 
