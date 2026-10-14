@@ -3,7 +3,8 @@
 *Status: designed 2026-10-13. Scope: the engine that consumes parsed TREEQL — the clause-kind
 and combinator vocabularies, declared once and consulted everywhere, with the combinator set
 opened for registration. Does not cover the TREEQL text parser (M-LANG), which this design
-deliberately sets aside. Baseline: main at `73dfd47`.*
+deliberately sets aside -- though §11 settles D-N15, whose answer this design constrains.
+Baseline: main at `73dfd47`.*
 
 ## 1. What this is
 
@@ -284,7 +285,51 @@ Two constraints follow:
   paren-aware tokenizer, that such a tokenizer is expressible as a SQL macro, and that the
   round-trip contract is exact on canonical IR and normalizing on hand-built IR. That stands as
   input to a later increment; nothing here depends on it.
-- **D-N15** (`TYPE foo` versus `TYPE 'foo'`) is a text-grammar question and waits for the parser.
+- **D-N15** (`TYPE foo` versus `TYPE 'foo'`) is a text-grammar question and its implementation
+  waits for the parser — but the decision is taken, because this design has a consequence for it
+  (§11).
 - **Issue #33** (W's mutants MN9/MN10/MN11/MN16, needing a tree that splices and a frontier that
   can be unloaded) is engine *correctness*, not engine *declaration*, and is untouched here.
 - **`before`** — §7.4.
+
+## 11. D-N15 decided: bare identifiers accepted, quoted literals emitted
+
+**Decision (2026-10-13): a clause operand may be written as a bare identifier, and the printer
+goes on emitting a quoted literal.** D-N15 asked `TYPE foo` or `TYPE 'foo'` and recorded that "the
+proposal's examples use both"; the answer is both, with the two roles separated — bare on input,
+quoted on output.
+
+This follows the contract already chosen for the parser: tolerant input, canonical output. The
+round-trip theorems are stated over the *printer's* output, which stays `TYPE 'foo'`, so they are
+untouched; and every expectation already pinned in the suite — all of `(TYPE 'function_definition')`
+and its kin — remains valid. Emitting bare where a value happens to be identifier-shaped was
+considered and rejected: it would make the canonical form value-dependent, change `tree_explain`'s
+`treeql` field for some selectors and not others, and rewrite expectations across the corpus to buy
+brevity in a format whose job is canonicality.
+
+**A bare identifier needs a reserved-word rule, and css already set the precedent.** css makes you
+quote a type that collides with its own syntax — `"select" > "from"` lowers to `(TYPE 'select')` —
+so TREEQL mirrors it: a bare operand must match `[A-Za-z_][A-Za-z0-9_]*` and must not be one of the
+language's keywords. Anything else is quoted, and a value containing a quote keeps the doubling the
+printer already emits (`TYPE 'it''s'`).
+
+**The consequence this design creates.** The keyword set is no longer a fixed list in the grammar:
+it is the clause keywords plus the combinator keywords, both of which now live in the registry.
+So the reserved words are *data*, and registering a combinator enlarges them. Register one spelled
+`ANCESTOR` — as §7.5 does — and a bare `TYPE ANCESTOR` becomes ambiguous from that point on and has
+to be written `TYPE 'ANCESTOR'`.
+
+That is a real coupling between an open vocabulary and a tolerant grammar, and it is recorded here
+rather than left for the parser's author to discover:
+
+- the parser derives its reserved set from `tree_catalog.clause_kinds` and
+  `tree_catalog.combinators`, never from a literal list, for the same reason every other consumer
+  does;
+- a front-end registering a combinator is therefore making a grammar change, not only a semantics
+  change, and the registration's keyword should be chosen with that in mind;
+- the quoted form is always available and always unambiguous, so no selector becomes
+  *unexpressible* — only some become un-bare-able. That is why this coupling is acceptable rather
+  than disqualifying.
+
+Nothing in Tasks 1–7 implements any of this. It is recorded now because the registry is what makes
+the reserved set dynamic, and a reader of the registry should know what else it governs.
