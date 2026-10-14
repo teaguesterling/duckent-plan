@@ -178,9 +178,11 @@
   # tree_sql_subtree/tree_sql_children, so redefining them no longer reaches a compiled match at
   # all; verified directly (python3 test/run.py test/sql/31_match.test --mutant
   # test/mutants/MN14_cross_partition.sql now PASSES, where it used to FAIL). Removed rather than
-  # left in place, because a listed suite that no longer fails is not "extra assurance" -- it is
-  # the thing that turns this row's KILLED into a false SURVIVED the moment the other listed
-  # suite's own coverage shifts. test/sql/46_slot_registry.test's derivation gate compares a row's
+  # left in place, and the reason is unconditional rather than a future risk: run_mutants.py
+  # reports KILLED only when `all(v == "fail")` holds over expect_fail, so a listed suite that has
+  # stopped failing does not sit there as extra assurance -- it makes this row report SURVIVED
+  # immediately, however well the other listed suite does its job.
+  # test/sql/46_slot_registry.test's derivation gate compares a row's
   # frozen template against the macro called DIRECTLY, so it still sees this mutation even though
   # tree_match cannot, and takes over as this mutant's witness on the combinator-compile surface
   # (verified: it fails under this mutant with the frozen template now disagreeing with the
