@@ -142,6 +142,19 @@ CREATE OR REPLACE MACRO tree_sql_last_child(a, elem) AS
 -- adding to it, so the one-argument spelling would silently break every projection compile.
 CREATE OR REPLACE MACRO tree_sql_is_root(a) AS a || '._level = 0';
 
+-- The five relations the engine exposes, registered by DERIVATION: each template is the macro
+-- above called with placeholder aliases, so this INSERT cannot disagree with the macro it names.
+-- test/sql/46_slot_registry.test substitutes every template back and compares it against the
+-- macro's direct output, which is what keeps that true.
+INSERT INTO tree_catalog.combinators VALUES
+  ('desc',  'DESCENDANT', tree_sql_subtree('{a}','{b}'),  NULL, false),
+  ('child', 'CHILD',      tree_sql_children('{a}','{b}'), NULL, false),
+  ('self',  'SELF',       tree_sql_self('{a}','{b}'),     NULL, false),
+  ('next',  'SIBLING',    tree_sql_next_sibling('{a}','{b}', false),
+                          tree_sql_next_sibling('{a}','{b}', true),  true),
+  ('after', 'FOLLOWING',  tree_sql_after('{a}','{b}'),    NULL, true)
+ON CONFLICT DO NOTHING;
+
 -- Combinator between the previous step alias a and this step alias b. MN14 mutates
 -- tree_sql_subtree/tree_sql_children to drop the root equality.
 -- 'self' only ever arrives here as a group's first inner step, which sql/06_selector.sql
