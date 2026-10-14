@@ -59,15 +59,14 @@ SPEC = {
          " || ' AND (' || (steps[1]).pred || ')' END", 1)]),
 
     "MN06": ("sql/07_match.sql", ["tree_sql_comb", "tree_compile_match"], [
-        ("    WHEN 'next'  THEN tree_sql_next_sibling(a, b, elem)\n"
-         "    WHEN 'after' THEN tree_sql_after(a, b)\n",
-         "    -- the mutation, half one: 'next' and 'after' fall through to the ELSE below\n", 1),
-        ("    -- COALESCE: only the first step of the outer chain may carry a NULL op, and tree_sql_chain\n"
-         "    -- defaults that one before it gets here, so a NULL arriving is hand-built IR -- which is\n"
-         "    -- exactly the case that must be told what is wrong instead of receiving a NULL fragment.\n"
-         "    ELSE tree_err('tree_match: unknown combinator ' || COALESCE(op, '<NULL>')) END;",
-         "    -- ... which is a predicate that never raises and never matches\n"
-         "    ELSE 'false' END;", 1),
+        ("       FROM tree_catalog.combinators c WHERE c.op = want_op),\n",
+         "       -- the mutation, half one: 'next' and 'after' no longer match a row here, so they\n"
+         "       -- fall through to the COALESCE's second branch below, exactly like a genuinely\n"
+         "       -- unregistered op would\n"
+         "       FROM tree_catalog.combinators c WHERE c.op = want_op AND c.op NOT IN ('next', 'after')),\n", 1),
+        ("      tree_err('tree_match: unknown combinator ' || COALESCE(want_op, '<NULL>'))) END;",
+         "      -- the mutation, half two: ... which is a predicate that never raises and never matches\n"
+         "      'false') END;", 1),
         ("              WHEN (SELECT profile FROM t) = 'sibling_free'\n"
          "                   AND ((ir.kind = 'step' AND ir.op IN ('next', 'after'))\n"
          "                        OR (ir.kind = 'pseudo' AND list_contains(tree_builtin_predicates(), ir.value)))\n"

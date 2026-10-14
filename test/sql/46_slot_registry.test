@@ -88,6 +88,15 @@ SELECT tree_sql_comb(NULL, 's0', 's1', false);
 ----
 tree_match: unknown combinator <NULL>
 
+# A NULL ALIAS MUST NOT BE BLAMED ON THE OP. replace(text, '{a}', NULL) is NULL, which used to
+# fall into the SAME branch a genuinely unregistered op does -- 'child' IS registered, so this
+# must not read "unknown combinator child"; it must name the NULL alias instead. Only hand-built
+# IR reaches this (tree_steps always assigns a step an alias before a selector gets here).
+statement error
+SELECT tree_sql_comb('child', NULL, 's1', false);
+----
+combinator child given a NULL alias
+
 # THE PRINTER'S SILENT DROP. tree_treeql_comb ended in ELSE NULL, and tree_treeql_step wraps it in
 # COALESCE(... || ' ', '') -- so an op the printer did not know rendered as NOTHING and the
 # combinator vanished from the printed text. The printer already refuses an unknown clause KIND

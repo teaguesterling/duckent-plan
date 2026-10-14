@@ -37,6 +37,14 @@ CREATE OR REPLACE MACRO tree_selector_to_treeql(sel) AS (
   -- Node ids are the parent links, so a repeated one makes the parent relation a graph rather
   -- than a tree and the depth walk below a cycle. Refused before any walk is asked for.
   bad_dup AS (SELECT count(*) <> count(DISTINCT node_id) AS bad FROM n),
+  -- A step whose op is not registered has no keyword, and tree_treeql_step wraps the keyword in
+  -- COALESCE(... || ' ', '') -- so it used to render as NOTHING and the combinator vanished from
+  -- the printed text. Refused for the same reason bad_kind is refused: a printer that silently
+  -- drops part of a selector is worse than one that stops.
+  bad_comb AS (
+    SELECT min(op) AS o FROM n
+    WHERE kind = 'step' AND op IS NOT NULL
+      AND op NOT IN (SELECT c.op FROM tree_catalog.combinators c)),
   -- (step node id, part node id, part text) for every clause: the same at every level
   clause AS (
     SELECT c.parent_id AS step, c.node_id AS id, tree_treeql_clause(c.kind, c.value, c.op, c.arg) AS t
@@ -68,6 +76,8 @@ CREATE OR REPLACE MACRO tree_selector_to_treeql(sel) AS (
   SELECT CASE
     WHEN (SELECT k FROM bad_kind) IS NOT NULL
       THEN tree_err('tree_selector_to_treeql: unknown node kind ' || (SELECT k FROM bad_kind))
+    WHEN (SELECT o FROM bad_comb) IS NOT NULL
+      THEN tree_err('tree_selector_to_treeql: unknown combinator ' || (SELECT o FROM bad_comb))
     WHEN (SELECT bad FROM bad_dup)
       THEN tree_err('tree_selector_to_treeql: selector node ids are not unique')
     WHEN tree_selector_group_depth(sel) > tree_group_depth_limit()

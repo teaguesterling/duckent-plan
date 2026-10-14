@@ -76,9 +76,12 @@ WITH t AS (
 ov AS (SELECT CASE WHEN semantic IS NULL THEN NULL ELSE tree_expand_predicate(semantic) END AS sem),
 -- 1.5.5 refuses a subquery anywhere inside an expression that carries a lambda ("subqueries in
 -- lambda expressions are not supported"), and macro inlining puts the argument text inside the
--- lambda. So everything a lambda-bearing fragment (tree_sql_predicate_map, tree_sql_chain) or a
--- lambda here is handed has to arrive as a plain column reference, which is what ovp and cfg are
--- for: each is one row, joined in rather than read with (SELECT ... FROM ...).
+-- lambda. So everything a lambda-bearing fragment (tree_sql_predicate_map, and the lambda in THIS
+-- CTE's own list_transform) is handed has to arrive as a plain column reference, which is what ovp
+-- and cfg are for: each is one row, joined in rather than read with (SELECT ... FROM ...).
+-- tree_sql_chain used to be lambda-bearing too and is named here no longer: its join text is now
+-- built from a plain correlated subquery (see its own comment, sql/07_match.sql), which carries no
+-- lambda and so is in no way restricted by this.
 ovp AS (SELECT sem, list_transform(COALESCE((sem).predicate, []), lambda x: (x).name) AS names FROM ov),
 -- the selector's rows, flattened once and read by both the checks below and the n CTE
 ir AS (SELECT * FROM (SELECT unnest(sel, recursive := true))),
@@ -286,8 +289,12 @@ clause AS (
   FROM n c JOIN n s ON s.node_id = c.parent_id AND s.kind = 'step' CROSS JOIN cfg
   WHERE c.kind NOT IN ('has', 'not', 'step') AND cfg.known),
 -- Each pass is two CTEs: the first gathers a group's inner chain into one list column, the second
--- renders it. They cannot be one, because tree_sql_chain's lambda may not be handed an aggregate
--- or a subquery -- only a column.
+-- renders it. This used to be because tree_sql_chain's lambda could not be handed an aggregate or
+-- a subquery, only a column -- that stopped being true once tree_sql_chain's join text was
+-- rewritten as a plain correlated subquery (see its own comment): handing tree_sql_group the
+-- list(...) aggregate directly, with no separate gathering CTE, was tried and produced
+-- byte-identical compiled SQL. No other reason for the split was found; it is kept as-is here,
+-- unexamined, rather than merged on that one experiment's say-so.
 stepA AS (
   SELECT s.node_id, s.parent_id, s.op, s.alias,
          COALESCE((SELECT string_agg(x.txt, ' AND ' ORDER BY x.id) FROM clause x WHERE x.step = s.node_id), 'true') AS pred
