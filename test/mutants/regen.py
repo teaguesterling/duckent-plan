@@ -79,11 +79,20 @@ SPEC = {
          "                         AND ir.op IN (SELECT c.op FROM tree_catalog.combinators c\n"
          "                                       WHERE c.requires_sibling_order))\n"
          "                        OR (ir.kind = 'pseudo' AND list_contains(tree_builtin_predicates(), ir.value)))\n"
+         "              -- COALESCE around the aggregate, not decoration: string_agg over NO rows returns\n"
+         "              -- NULL, and a NULL anywhere in this concatenation makes the whole message NULL --\n"
+         "              -- which tree_err reports as \"refusal with a NULL message\", losing the one sentence\n"
+         "              -- the caller needed. That is reachable, not hypothetical: every row having\n"
+         "              -- requires_sibling_order = false is exactly what the per-op flipping this refusal\n"
+         "              -- was built for produces. The trailing ', ' lives INSIDE the COALESCE so the empty\n"
+         "              -- case reads \"...declared); :first-child and :last-child are unavailable\" rather\n"
+         "              -- than leaving a stray comma.\n"
          "              THEN tree_err('tree_match: tree ' || sch || '.' || nm\n"
          "                   || ' is sibling-free (no SIBLING_ORDER declared); '\n"
-         "                   || (SELECT string_agg(c.keyword, ', ' ORDER BY c.keyword)\n"
-         "                       FROM tree_catalog.combinators c WHERE c.requires_sibling_order)\n"
-         "                   || ', :first-child and :last-child are unavailable')\n",
+         "                   || COALESCE((SELECT string_agg(c.keyword, ', ' ORDER BY c.keyword)\n"
+         "                                FROM tree_catalog.combinators c WHERE c.requires_sibling_order)\n"
+         "                               || ', ', '')\n"
+         "                   || ':first-child and :last-child are unavailable')\n",
          "              -- the mutation, half two: the sibling-free refusal branch is gone\n", 1)]),
 
     "MN07": ("sql/07_match.sql", ["tree_sql_clause"], [

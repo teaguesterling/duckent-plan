@@ -174,3 +174,26 @@ true
 
 statement ok
 DELETE FROM tree_catalog.combinators WHERE op = 'probe_sib';
+
+# AND THE MESSAGE SURVIVES AN EMPTY CAPABILITY SET. string_agg over no rows returns NULL, and a
+# NULL anywhere in the refusal's concatenation makes the whole message NULL -- which tree_err
+# reports as "refusal with a NULL message", losing the one sentence the caller needed. That state
+# is reachable by exactly the per-op flipping above, so it is pinned rather than reasoned about.
+# The positional pseudo-classes are refused by a separate disjunct and are NOT registry-derived,
+# so they must still be named when no combinator requires sibling order at all.
+statement ok
+UPDATE tree_catalog.combinators SET requires_sibling_order = false;
+
+statement error
+FROM tree_match('main', 'nosib', tree_steps([{type: 'manager', pseudo: 'first-child'}]));
+----
+:first-child and :last-child are unavailable
+
+# ...and specifically NOT the NULL-message backstop
+statement error
+FROM tree_match('main', 'nosib', tree_steps([{type: 'manager', pseudo: 'first-child'}]));
+----
+is sibling-free
+
+statement ok
+UPDATE tree_catalog.combinators SET requires_sibling_order = (op IN ('next', 'after'));

@@ -284,11 +284,20 @@ n AS (
                          AND ir.op IN (SELECT c.op FROM tree_catalog.combinators c
                                        WHERE c.requires_sibling_order))
                         OR (ir.kind = 'pseudo' AND list_contains(tree_builtin_predicates(), ir.value)))
+              -- COALESCE around the aggregate, not decoration: string_agg over NO rows returns
+              -- NULL, and a NULL anywhere in this concatenation makes the whole message NULL --
+              -- which tree_err reports as "refusal with a NULL message", losing the one sentence
+              -- the caller needed. That is reachable, not hypothetical: every row having
+              -- requires_sibling_order = false is exactly what the per-op flipping this refusal
+              -- was built for produces. The trailing ', ' lives INSIDE the COALESCE so the empty
+              -- case reads "...declared); :first-child and :last-child are unavailable" rather
+              -- than leaving a stray comma.
               THEN tree_err('tree_match: tree ' || sch || '.' || nm
                    || ' is sibling-free (no SIBLING_ORDER declared); '
-                   || (SELECT string_agg(c.keyword, ', ' ORDER BY c.keyword)
-                       FROM tree_catalog.combinators c WHERE c.requires_sibling_order)
-                   || ', :first-child and :last-child are unavailable')
+                   || COALESCE((SELECT string_agg(c.keyword, ', ' ORDER BY c.keyword)
+                                FROM tree_catalog.combinators c WHERE c.requires_sibling_order)
+                               || ', ', '')
+                   || ':first-child and :last-child are unavailable')
               ELSE true END AS ok
   FROM ir),
 -- (step node id, part node id, part text) for every clause: the same at every level. A child of a
