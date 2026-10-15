@@ -7,11 +7,14 @@
 query I
 SELECT count(*) FROM tree_catalog_combinators() c
 WHERE replace(replace(c.template, '{a}', 's0'), '{b}', 's1') <> CASE c.op
-  WHEN 'desc'  THEN tree_sql_subtree('s0','s1')
-  WHEN 'child' THEN tree_sql_children('s0','s1')
-  WHEN 'self'  THEN tree_sql_self('s0','s1')
-  WHEN 'next'  THEN tree_sql_next_sibling('s0','s1', false)
-  WHEN 'after' THEN tree_sql_after('s0','s1') END;
+  WHEN 'desc'     THEN tree_sql_subtree('s0','s1')
+  WHEN 'child'    THEN tree_sql_children('s0','s1')
+  WHEN 'self'     THEN tree_sql_self('s0','s1')
+  WHEN 'next'     THEN tree_sql_next_sibling('s0','s1', false)
+  WHEN 'after'    THEN tree_sql_after('s0','s1')
+  WHEN 'parent'   THEN tree_sql_parent('s0','s1')
+  WHEN 'ancestor' THEN tree_sql_ancestors('s0','s1')
+  WHEN 'prev'     THEN tree_sql_prev_sibling('s0','s1', false) END;
 ----
 0
 
@@ -20,7 +23,8 @@ query I
 SELECT count(*) FROM tree_catalog_combinators() c
 WHERE c.template_elem IS NOT NULL
   AND replace(replace(c.template_elem, '{a}', 's0'), '{b}', 's1') <> CASE c.op
-        WHEN 'next' THEN tree_sql_next_sibling('s0','s1', true) END;
+        WHEN 'next' THEN tree_sql_next_sibling('s0','s1', true)
+        WHEN 'prev' THEN tree_sql_prev_sibling('s0','s1', true) END;
 ----
 0
 
@@ -29,9 +33,12 @@ query I rowsort
 SELECT op FROM tree_catalog_combinators() ORDER BY op;
 ----
 after
+ancestor
 child
 desc
 next
+parent
+prev
 self
 
 # sibling relations declare that they need SIBLING_ORDER; the others do not
@@ -39,9 +46,12 @@ query II rowsort
 SELECT op, requires_sibling_order FROM tree_catalog_combinators() ORDER BY op;
 ----
 after	true
+ancestor	false
 child	false
 desc	false
 next	true
+parent	false
+prev	true
 self	false
 
 # the clause-kind vocabulary: six rows, one per S-block slot plus the host door
@@ -114,7 +124,7 @@ tree_selector_to_treeql: unknown combinator sideways
 query I
 SELECT string_agg(tree_treeql_comb(op), ',' ORDER BY op) FROM tree_catalog_combinators();
 ----
-FOLLOWING,CHILD,DESCENDANT,SIBLING,SELF
+FOLLOWING,ANCESTOR,CHILD,DESCENDANT,SIBLING,PARENT,PRECEDING,SELF
 
 # THE SIBLING-FREE REFUSAL READS requires_sibling_order, NOT A HARDCODED OP LIST.
 #

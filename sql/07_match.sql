@@ -142,7 +142,7 @@ CREATE OR REPLACE MACRO tree_sql_last_child(a, elem) AS
 -- adding to it, so the one-argument spelling would silently break every projection compile.
 CREATE OR REPLACE MACRO tree_sql_is_root(a) AS a || '._level = 0';
 
--- The five relations the engine exposes, registered by DERIVATION: each template is the macro
+-- The relations the engine exposes, registered by DERIVATION: each template is the macro
 -- above called with placeholder aliases, so this INSERT cannot disagree with the macro it names.
 -- test/sql/46_slot_registry.test substitutes every template back and compares it against the
 -- macro's direct output, which is what keeps that true.
@@ -152,7 +152,24 @@ INSERT INTO tree_catalog.combinators VALUES
   ('self',  'SELF',       tree_sql_self('{a}','{b}'),     NULL, false),
   ('next',  'SIBLING',    tree_sql_next_sibling('{a}','{b}', false),
                           tree_sql_next_sibling('{a}','{b}', true),  true),
-  ('after', 'FOLLOWING',  tree_sql_after('{a}','{b}'),    NULL, true)
+  ('after', 'FOLLOWING',  tree_sql_after('{a}','{b}'),    NULL, true),
+  -- Three relations sql/07_match.sql already computed and TREEQL could not name:
+  -- tree_sql_parent had five callers, tree_sql_prev_sibling and tree_sql_ancestors one each, all
+  -- reached through tree_nav/tree_ancestors. They need no new logic, which is the claim this
+  -- registry makes -- a new relation is a row.
+  --
+  -- tree_sql_ancestors is defined as tree_sql_subtree(b, a), so its template is derived from a
+  -- macro that is itself derived, and the derivation gate covers it with no special case.
+  --
+  -- PRECEDING is the previous SIBLING, hence requires_sibling_order -- the first row to exercise
+  -- the capability column against a relation the old hardcoded IN ('next','after') never knew.
+  --
+  -- tree_sql_before is deliberately absent: it has zero callers anywhere, so nothing has ever
+  -- executed it. It earns tests before it earns a spelling.
+  ('parent',   'PARENT',    tree_sql_parent('{a}','{b}'),    NULL, false),
+  ('ancestor', 'ANCESTOR',  tree_sql_ancestors('{a}','{b}'), NULL, false),
+  ('prev',     'PRECEDING', tree_sql_prev_sibling('{a}','{b}', false),
+                            tree_sql_prev_sibling('{a}','{b}', true), true)
 ON CONFLICT DO NOTHING;
 
 -- Combinator between the previous step alias a and this step alias b. MN14 mutates
