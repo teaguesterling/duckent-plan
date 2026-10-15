@@ -277,3 +277,48 @@ true
 
 statement ok
 UPDATE tree_catalog.clause_kinds SET needs_semantic = true WHERE kind = 'type';
+
+# THE COMPILE-SIDE AGREEMENT GATE. tree_sql_clause keeps a literal CASE, by design: the attr arm
+# (projected column vs ATTR MAP, TRY_CAST by literal type, the negation prefix, the
+# canonical-column refusal) is not expressible as a template, so the COMPILATION of each kind
+# stays there while the registry owns the vocabulary, the keyword and needs_semantic.
+#
+# That leaves the kind set declared in TWO places -- these rows, and those CASE arms -- and the
+# agreement gate above only checks the rows against the TREE_STEP_* struct fields, which is the
+# constructor's surface, not the compiler's. Nothing checked that every registered kind has an arm.
+# The hole is not theoretical: a row added with no arm is ACCEPTED by tree_steps and by the printer
+# (both read the registry) and then refused at compile with 'unknown clause kind', so the three
+# consumers disagree about what exists. One assertion per kind, because tree_err raises and cannot
+# be aggregated over.
+statement ok
+SELECT tree_sql_clause('type', 'x', NULL, NULL, 's0', [], false, false);
+
+statement ok
+SELECT tree_sql_clause('id', 'x', NULL, NULL, 's0', [], false, false);
+
+statement ok
+SELECT tree_sql_clause('class', 'x', NULL, NULL, 's0', [], false, false);
+
+statement ok
+SELECT tree_sql_clause('pseudo', 'leaf', NULL, NULL, 's0', [], false, false);
+
+statement ok
+SELECT tree_sql_clause('attr', 'lang', '=', '''py''', 's0', [], true, false);
+
+statement ok
+SELECT tree_sql_clause('where', 'true', NULL, NULL, 's0', [], false, false);
+
+# ...and the count is pinned, so a SEVENTH row added without an arm above fails here rather than
+# being discovered when someone writes a selector that uses it.
+query I
+SELECT count(*) FROM tree_catalog_clause_kinds();
+----
+6
+
+# The converse, stated as the refusal it actually produces: a kind with no arm compiles to nothing
+# and says so by name. This is what the three consumers disagreeing looks like from the compiler's
+# side, and it is why the six assertions above exist.
+statement error
+SELECT tree_sql_clause('frobnicate', 'x', NULL, NULL, 's0', [], false, false);
+----
+tree_match: unknown clause kind frobnicate
