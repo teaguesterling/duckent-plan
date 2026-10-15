@@ -569,20 +569,32 @@ PRECEDING (TYPE 'b')
 
 # PRECEDING declares it needs sibling order, so it is refused on a sibling-free tree -- by the
 # capability column, with no edit to the refusal. This is Task 3's gate holding for a real row.
+# The fixture must be PARENT basis. sql/03_ddl.sql sets
+#   level_basis = (level IS NOT NULL OR parent IS NULL)
+#   profile     = CASE WHEN NOT level_basis AND sibling_order IS NULL THEN 'sibling_free' ELSE 'full' END
+# so ANY tree declaring `level` is 'full' and can never reach the sibling-free arm. An earlier
+# draft of this plan used the app.parquet shape here and would have asserted a refusal that
+# cannot fire. PARENT basis also requires UNIQUE KEY.
 statement ok
 CALL tree_ddl_create('main', 'nosib2', tree_spec(
-  tree_shape(root := 'file_path', level := 'depth', size := 'descendant_count',
-             semantic := tree_semantic(type := 'type', key := 'name')),
-  source := 'read_parquet(''test/data/app.parquet'')'));
+  tree_shape(unique_key := 'email', parent := 'manager_email',
+             semantic := tree_semantic(type := 'role', key := 'email')),
+  source := 'read_csv(''test/data/employees.csv'')'));
+
+# Pin the fixture's own property, so this gate cannot go vacuous if the shape rules move.
+query II
+SELECT basis, profile FROM tree_catalog_trees() WHERE tree_name = 'nosib2';
+----
+parent	sibling_free
 
 statement error
-FROM tree_match('main', 'nosib2', tree_steps([{type: 'a'}, {comb: 'prev', type: 'b'}]));
+FROM tree_match('main', 'nosib2', tree_steps([{type: 'manager'}, {comb: 'prev', type: 'engineer'}]));
 ----
 is sibling-free
 
 # PARENT and ANCESTOR do NOT need sibling order, so they stay available there
 query I
-SELECT count(*) >= 0 FROM tree_match('main', 'nosib2', tree_steps([{type: 'function_definition'}, {comb: 'parent'}]));
+SELECT count(*) >= 0 FROM tree_match('main', 'nosib2', tree_steps([{type: 'manager'}, {comb: 'parent'}]));
 ----
 true
 ```
