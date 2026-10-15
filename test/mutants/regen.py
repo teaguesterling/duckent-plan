@@ -67,11 +67,23 @@ SPEC = {
         ("      tree_err('tree_match: unknown combinator ' || COALESCE(want_op, '<NULL>'))) END;",
          "      -- the mutation, half two: ... which is a predicate that never raises and never matches\n"
          "      'false') END;", 1),
-        ("              WHEN (SELECT profile FROM t) = 'sibling_free'\n"
-         "                   AND ((ir.kind = 'step' AND ir.op IN ('next', 'after'))\n"
+        ("              -- The op list is the registry's, not a literal: a relation registered by a\n"
+         "              -- front-end declares requires_sibling_order and is refused here BECAUSE it said so.\n"
+         "              -- When this was `IN ('next','after')`, a newly registered sibling relation compiled\n"
+         "              -- against a _pre no SIBLING_ORDER governs and answered with whatever rows happened\n"
+         "              -- to land there -- the one thing this profile exists to prevent. The message is\n"
+         "              -- generated for the same reason: it used to name four spellings by hand and would\n"
+         "              -- have gone stale on the first registration.\n"
+         "              WHEN (SELECT profile FROM t) = 'sibling_free'\n"
+         "                   AND ((ir.kind = 'step'\n"
+         "                         AND ir.op IN (SELECT c.op FROM tree_catalog.combinators c\n"
+         "                                       WHERE c.requires_sibling_order))\n"
          "                        OR (ir.kind = 'pseudo' AND list_contains(tree_builtin_predicates(), ir.value)))\n"
-         "              THEN tree_err('tree_match: tree ' || sch || '.' || nm || ' is sibling-free"
-         " (no SIBLING_ORDER declared); SIBLING, FOLLOWING, :first-child and :last-child are unavailable')\n",
+         "              THEN tree_err('tree_match: tree ' || sch || '.' || nm\n"
+         "                   || ' is sibling-free (no SIBLING_ORDER declared); '\n"
+         "                   || (SELECT string_agg(c.keyword, ', ' ORDER BY c.keyword)\n"
+         "                       FROM tree_catalog.combinators c WHERE c.requires_sibling_order)\n"
+         "                   || ', :first-child and :last-child are unavailable')\n",
          "              -- the mutation, half two: the sibling-free refusal branch is gone\n", 1)]),
 
     "MN07": ("sql/07_match.sql", ["tree_sql_clause"], [

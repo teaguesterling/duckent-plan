@@ -272,10 +272,23 @@ n AS (
               -- alone, so `:first-child` on such a tree compiled to `_pre = _parent + 1` over a
               -- _pre no SIBLING_ORDER governs and answered with whatever rows happened to land
               -- there -- the one thing the sibling-free profile exists to prevent.
+              -- The op list is the registry's, not a literal: a relation registered by a
+              -- front-end declares requires_sibling_order and is refused here BECAUSE it said so.
+              -- When this was `IN ('next','after')`, a newly registered sibling relation compiled
+              -- against a _pre no SIBLING_ORDER governs and answered with whatever rows happened
+              -- to land there -- the one thing this profile exists to prevent. The message is
+              -- generated for the same reason: it used to name four spellings by hand and would
+              -- have gone stale on the first registration.
               WHEN (SELECT profile FROM t) = 'sibling_free'
-                   AND ((ir.kind = 'step' AND ir.op IN ('next', 'after'))
+                   AND ((ir.kind = 'step'
+                         AND ir.op IN (SELECT c.op FROM tree_catalog.combinators c
+                                       WHERE c.requires_sibling_order))
                         OR (ir.kind = 'pseudo' AND list_contains(tree_builtin_predicates(), ir.value)))
-              THEN tree_err('tree_match: tree ' || sch || '.' || nm || ' is sibling-free (no SIBLING_ORDER declared); SIBLING, FOLLOWING, :first-child and :last-child are unavailable')
+              THEN tree_err('tree_match: tree ' || sch || '.' || nm
+                   || ' is sibling-free (no SIBLING_ORDER declared); '
+                   || (SELECT string_agg(c.keyword, ', ' ORDER BY c.keyword)
+                       FROM tree_catalog.combinators c WHERE c.requires_sibling_order)
+                   || ', :first-child and :last-child are unavailable')
               ELSE true END AS ok
   FROM ir),
 -- (step node id, part node id, part text) for every clause: the same at every level. A child of a

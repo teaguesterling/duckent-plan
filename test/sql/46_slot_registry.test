@@ -115,3 +115,62 @@ query I
 SELECT string_agg(tree_treeql_comb(op), ',' ORDER BY op) FROM tree_catalog_combinators();
 ----
 FOLLOWING,CHILD,DESCENDANT,SIBLING,SELF
+
+# THE SIBLING-FREE REFUSAL READS requires_sibling_order, NOT A HARDCODED OP LIST.
+#
+# Verifying the mechanism first: `profile` is 'sibling_free' only when NOT level_basis (level_basis
+# is `level IS NOT NULL OR parent IS NULL`, sql/03_ddl.sql) AND sibling_order IS NULL. A LEVEL-basis
+# tree is ALWAYS 'full' regardless of SIBLING_ORDER -- 11_ddl.test's bad20 proves this directly
+# ("LEVEL basis does not take SIBLING_ORDER"). So a fixture that declares `level := 'depth'` (as
+# app.parquet fixtures elsewhere in this suite do) can never reach the sibling_free arm at all; it
+# takes a PARENT-basis tree, which requires a KEY (11_ddl.test's bad5), with no SIBLING_ORDER
+# declared (the shape 11_ddl.test's 'cats' tree and 31_match.test's 'cats' fixture already use).
+statement ok
+CALL tree_ddl_create('main', 'nosib', tree_spec(
+  tree_shape(unique_key := 'email', parent := 'manager_email',
+             semantic := tree_semantic(type := 'role', key := 'email')),
+  source := 'read_csv(''test/data/employees.csv'')'));
+
+# confirms the fixture actually lands on the capability this gate exists to test, not just a
+# tree that happens to error for some other reason
+query II
+SELECT basis, profile FROM tree_catalog_trees() WHERE tree_name = 'nosib';
+----
+parent	sibling_free
+
+# Sibling relations are unavailable on it, and the refusal must name them from the registry
+# rather than from a string literal listing four spellings by hand.
+statement error
+FROM tree_match('main', 'nosib', tree_steps([{type: 'a'}, {comb: 'next', type: 'b'}]));
+----
+is sibling-free
+
+# A relation that does NOT require sibling order is still available on the same tree -- so the
+# refusal is reading the capability, not refusing every combinator.
+query I
+SELECT count(*) >= 0 FROM tree_match('main', 'nosib', tree_steps([{type: 'manager'}, {comb: 'child', type: 'engineer'}]));
+----
+true
+
+# THE GATE WITH TEETH: register a probe relation that declares it needs sibling order, and it must
+# be refused on this tree WITHOUT any edit to the refusal. Then flip the column and the refusal
+# must stop firing. A hardcoded op list cannot pass both halves.
+statement ok
+INSERT INTO tree_catalog.combinators VALUES
+  ('probe_sib', 'PROBE', tree_sql_children('{a}','{b}'), NULL, true);
+
+statement error
+FROM tree_match('main', 'nosib', tree_steps([{type: 'a'}, {comb: 'probe_sib', type: 'b'}]));
+----
+is sibling-free
+
+statement ok
+UPDATE tree_catalog.combinators SET requires_sibling_order = false WHERE op = 'probe_sib';
+
+query I
+SELECT count(*) >= 0 FROM tree_match('main', 'nosib', tree_steps([{type: 'manager'}, {comb: 'probe_sib', type: 'engineer'}]));
+----
+true
+
+statement ok
+DELETE FROM tree_catalog.combinators WHERE op = 'probe_sib';
