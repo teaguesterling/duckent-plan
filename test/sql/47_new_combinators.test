@@ -7,6 +7,27 @@ CALL tree_ddl_create('main', 'app', tree_spec(
              semantic := tree_semantic(type := 'type', key := 'name')),
   source := 'read_parquet(''test/data/app.parquet'')'));
 
+# NON-VACUITY, pinned before anything compares sets. Every inverse-property assertion below
+# expects an EXCEPT of 0, and 0 is also what two EMPTY chains produce -- so on its own each of
+# those six assertions is satisfied by a fixture or a relation that matches nothing at all. These
+# three say the forward chains do match something; set equality in both directions then carries
+# the backward chains with them. Without this, a regression that emptied both sides would leave
+# all six green.
+query I
+SELECT count(*) > 0 FROM tree_match('main', 'app', tree_steps([{type: 'module', "as": 'p'}, {comb: 'child'}]));
+----
+true
+
+query I
+SELECT count(*) > 0 FROM tree_match('main', 'app', tree_steps([{type: 'module', "as": 'a'}, {comb: 'desc'}]));
+----
+true
+
+query I
+SELECT count(*) > 0 FROM tree_match('main', 'app', tree_steps([{type: 'function_definition', "as": 'x'}, {comb: 'next'}]));
+----
+true
+
 # PARENT is the inverse of CHILD, so the pair must agree on the same fixture: every (parent, child)
 # the CHILD chain finds must be the (child, parent) the PARENT chain finds. Asserted as a set
 # difference in BOTH directions -- a one-sided EXCEPT only proves containment, not equality.
