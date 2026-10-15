@@ -207,3 +207,73 @@ is sibling-free
 
 statement ok
 UPDATE tree_catalog.combinators SET requires_sibling_order = (op IN ('next', 'after'));
+
+# the node-kind list the IR allows: the four structural kinds plus every registered clause kind
+query I
+SELECT list_sort(tree_ir_kinds()) = list_sort(['selector','step','has','not'] ||
+       (SELECT list(kind) FROM tree_catalog_clause_kinds()));
+----
+true
+
+# THE AGREEMENT GATE. TREE_STEP_L0/L1/L2 are STRUCT types whose field lists are fixed at
+# definition and cannot be generated from the registry, so this duplication cannot be removed --
+# it is verified instead. Both directions, because each fails differently: a registry row with no
+# struct field cannot be BUILT by tree_steps, and a struct field with no row is accepted by the
+# constructor and then refused by the compiler.
+query I
+SELECT count(*) FROM tree_catalog_clause_kinds() k
+WHERE k.step_field NOT IN (SELECT column_name FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L0)));
+----
+0
+
+query I
+SELECT count(*) FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L0)) d
+WHERE d.column_name NOT IN ('comb', 'as', 'has', 'not')
+  AND d.column_name NOT IN (SELECT k.step_field FROM tree_catalog_clause_kinds() k);
+----
+0
+
+# the printer's clause keyword comes from the registry
+query I
+SELECT tree_treeql_clause('type', 'x', NULL, NULL);
+----
+TYPE 'x'
+
+# and an unregistered kind still refuses at the printer, as it did before
+statement error
+SELECT tree_selector_to_treeql([
+  {node_id: 0, parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL, arg: NULL, alias: NULL},
+  {node_id: 1, parent_id: 0, kind: 'step', value: NULL, op: NULL, arg: NULL, alias: NULL},
+  {node_id: 2, parent_id: 1, kind: 'frobnicate', value: 'x', op: NULL, arg: NULL, alias: NULL}]::TREE_SELECTOR);
+----
+unknown node kind frobnicate
+
+# A tree with no SEMANTIC group: the five slot kinds refuse, WHERE does not. The refusal must come
+# from needs_semantic, so flipping the column changes behaviour -- which a site reading the column
+# without acting on it cannot fake.
+statement ok
+CALL tree_ddl_create('main', 'nosem', tree_spec(
+  tree_shape(root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count'),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+
+statement error
+FROM tree_match('main', 'nosem', tree_steps([{type: 'module'}]));
+----
+has no SEMANTIC group
+
+# WHERE is the host door and needs no S slot, so it stays available
+query I
+SELECT count(*) >= 0 FROM tree_match('main', 'nosem', tree_steps([{"where": '_level = 0'}]));
+----
+true
+
+statement ok
+UPDATE tree_catalog.clause_kinds SET needs_semantic = false WHERE kind = 'type';
+
+query I
+SELECT count(*) >= 0 FROM tree_match('main', 'nosem', tree_steps([{type: 'module'}]));
+----
+true
+
+statement ok
+UPDATE tree_catalog.clause_kinds SET needs_semantic = true WHERE kind = 'type';

@@ -117,7 +117,7 @@ bad_empty AS (
   WHERE g.kind IN ('has', 'not') AND NOT EXISTS (SELECT 1 FROM ir s WHERE s.parent_id = g.node_id AND s.kind = 'step')),
 bad_clause AS (
   SELECT min(c.kind) AS k FROM ir c
-  WHERE c.kind IN ('type', 'id', 'class', 'attr', 'pseudo', 'where')
+  WHERE list_contains(tree_clause_kinds(), c.kind)
     AND NOT EXISTS (SELECT 1 FROM ir s WHERE s.node_id = c.parent_id AND s.kind = 'step')),
 -- Node ids ARE the parent links, so a repeated one turns the parent relation into a graph: the
 -- depth walk tree_selector_group_depth runs below then never terminates (0 -> 1, 1 -> 2, 2 -> 1).
@@ -156,7 +156,7 @@ bad_kind AS (
   SELECT min(c.node_id) AS id, min_by(COALESCE(c.kind, '<NULL>'), c.node_id) AS k
   FROM ir c LEFT JOIN ir p ON p.node_id = c.parent_id
   WHERE c.kind IS NULL
-     OR (c.kind NOT IN ('selector', 'step', 'has', 'not', 'type', 'id', 'class', 'attr', 'pseudo', 'where')
+     OR (NOT list_contains(tree_ir_kinds(), c.kind)
          AND p.kind IS DISTINCT FROM 'step')),
 -- The shape of the IR, as one rule: what may hang off what. The fold reaches a node only through
 -- the parent link its kind is expected to have, so a node hung somewhere else is not compiled --
@@ -166,7 +166,7 @@ bad_kind AS (
 bad_parent AS (
   SELECT min(c.node_id) AS id, min_by(c.kind, c.node_id) AS k, min_by(COALESCE(p.kind, '<none>'), c.node_id) AS pk
   FROM ir c LEFT JOIN ir p ON p.node_id = c.parent_id
-  WHERE c.kind IN ('step', 'has', 'not', 'type', 'id', 'class', 'attr', 'pseudo', 'where')
+  WHERE (c.kind = 'step' OR c.kind IN ('has', 'not') OR list_contains(tree_clause_kinds(), c.kind))
     AND NOT COALESCE(CASE WHEN c.kind = 'step' THEN p.kind IN ('selector', 'has', 'not')
                           ELSE p.kind = 'step' END, false)),
 -- SELF says the step IS the row the group hangs off, which only means anything for the first
@@ -277,13 +277,13 @@ n AS (
                    AND NOT list_contains(COALESCE((SELECT known_predicates FROM t), []), value)
                    AND (semantic IS NULL OR NOT list_contains((SELECT names FROM ovp), value)) THEN 'pseudo_unknown' ELSE kind END AS kind,
          value, op, arg, COALESCE(alias, 's' || node_id) AS alias,
-         -- The S-less refusal, with the built-in positional predicates exempted: they are
-         -- structural (they compile through the navigation fragments, read no S slot and bind
-         -- nothing from the SEMANTIC group), so there is nothing about them for an R-only tree to
-         -- be missing. Refusing them said "this tree has no SEMANTIC group" about a clause that
-         -- never wanted one. An unknown pseudo on the same tree still refuses: `ir.kind` is read
-         -- here, not the `pseudo_unknown` the column above computes.
-         CASE WHEN ir.kind IN ('type', 'id', 'class', 'attr', 'pseudo') AND NOT (SELECT has_semantic FROM t)
+         -- needs_semantic comes from the registry. This used to be a FIVE-member list with
+         -- `where` left out, so the rule "the host door reads no S slot" was encoded as an
+         -- omission that nothing stated -- and a search for the clause-kind set did not even find
+         -- this site. The built-in positional predicates stay exempt on the VALUE, not the kind:
+         -- they compile through the navigation fragments, read no S slot and bind nothing.
+         CASE WHEN ir.kind IN (SELECT k.kind FROM tree_catalog.clause_kinds k WHERE k.needs_semantic)
+                   AND NOT (SELECT has_semantic FROM t)
                    AND NOT (ir.kind = 'pseudo' AND list_contains(tree_builtin_predicates(), ir.value))
               THEN tree_err('tree_match: tree ' || sch || '.' || nm || ' has no SEMANTIC group; only combinators and WHERE are available. Add one with tree_ddl_alter or pass semantic :=')
               -- The sibling-free refusal, which covers the POSITIONAL built-ins too: "first" and

@@ -111,3 +111,10 @@ CREATE OR REPLACE MACRO tree_catalog_assertions() AS TABLE SELECT * FROM tree_st
 CREATE OR REPLACE MACRO tree_catalog_languages() AS TABLE SELECT * FROM tree_catalog.selector_languages;
 CREATE OR REPLACE MACRO tree_catalog_clause_kinds() AS TABLE SELECT * FROM tree_catalog.clause_kinds;
 CREATE OR REPLACE MACRO tree_catalog_combinators() AS TABLE SELECT * FROM tree_catalog.combinators;
+
+-- Every node kind the IR allows: the four STRUCTURAL kinds, which are the IR's own shape and not a
+-- vocabulary anything extends, plus every registered clause kind. Read by the constructor, the
+-- printer and the compiler, so the set is stated here once instead of at six sites.
+CREATE OR REPLACE MACRO tree_ir_kinds() AS
+  ['selector', 'step', 'has', 'not'] || (SELECT list(kind) FROM tree_catalog.clause_kinds);
+CREATE OR REPLACE MACRO tree_clause_kinds() AS (SELECT list(kind) FROM tree_catalog.clause_kinds);

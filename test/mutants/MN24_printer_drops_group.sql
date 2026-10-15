@@ -47,7 +47,7 @@ CREATE OR REPLACE MACRO tree_selector_to_treeql(sel) AS (
   bad_kind AS (
     SELECT min(COALESCE(kind, '<NULL>')) AS k FROM n
     WHERE kind IS NULL
-       OR kind NOT IN ('selector', 'step', 'has', 'not', 'type', 'id', 'class', 'attr', 'pseudo', 'where')),
+       OR NOT list_contains(tree_ir_kinds(), kind)),
   -- Node ids are the parent links, so a repeated one makes the parent relation a graph rather
   -- than a tree and the depth walk below a cycle. Refused before any walk is asked for.
   bad_dup AS (SELECT count(*) <> count(DISTINCT node_id) AS bad FROM n),
@@ -62,7 +62,7 @@ CREATE OR REPLACE MACRO tree_selector_to_treeql(sel) AS (
   -- (step node id, part node id, part text) for every clause: the same at every level
   clause AS (
     SELECT c.parent_id AS step, c.node_id AS id, tree_treeql_clause(c.kind, c.value, c.op, c.arg) AS t
-    FROM n c WHERE c.kind IN ('type', 'id', 'class', 'attr', 'pseudo', 'where')),
+    FROM n c WHERE list_contains(tree_clause_kinds(), c.kind)),
   stepA AS (
     SELECT s.node_id, s.parent_id, s.op, s.alias,
            (SELECT string_agg(p.t, ', ' ORDER BY p.id) FROM clause p WHERE p.step = s.node_id) AS body
