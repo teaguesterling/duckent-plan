@@ -2,11 +2,29 @@
 # description: the clause-kind and combinator vocabularies, declared once and derived from the macros
 
 # THE DERIVATION GATE. A row's template must be the macro's own output, not a copy of it. If
-# someone hand-edits a template, substituting it stops matching the macro and this fails. That is
-# the only thing standing between "derived" and "transcribed".
+# someone hand-edits a template, substituting it stops matching the macro and this fails. For
+# every row the registry holds -- including one a front-end registered that this file has never
+# heard of, which fails here by the ELSE below rather than being skipped.
+#
+# THE ELSE AND THE `IS DISTINCT FROM` ARE THE GATE, not tidiness. Written as
+# `template <> CASE ... END` with no ELSE, the CASE yields NULL for any op it does not name,
+# `template <> NULL` is NULL, and WHERE does not count the row -- so a row whose template was
+# TRANSCRIBED BY HAND passed silently, in the OPEN half of the registry that spec section 9
+# exists to provide. Measured, before this was fixed:
+#
+#   INSERT INTO tree_catalog.combinators
+#     VALUES ('sideways','SIDEWAYS','{b}._root = 1 /* nonsense */',NULL,false);
+#   -- the gate reported 0, and tree_sql_comb('sideways',...) emitted s1._root = 1 /* nonsense */
+#
+# The ELSE is a sentinel string no relation macro can produce, so an op this CASE does not name
+# is now counted and this fails. `IS DISTINCT FROM` rather than `<>` for the same reason in the
+# other direction: a NULL template would otherwise be skipped too. What this gate therefore
+# covers is: EVERY registered op, by name against its macro for the eight sql/07_match.sql
+# registers, and by refusal for any other -- so registering a ninth row means adding its macro
+# call here, which is what keeps "derived" from decaying into "transcribed".
 query I
 SELECT count(*) FROM tree_catalog_combinators() c
-WHERE replace(replace(c.template, '{a}', 's0'), '{b}', 's1') <> CASE c.op
+WHERE replace(replace(c.template, '{a}', 's0'), '{b}', 's1') IS DISTINCT FROM CASE c.op
   WHEN 'desc'     THEN tree_sql_subtree('s0','s1')
   WHEN 'child'    THEN tree_sql_children('s0','s1')
   WHEN 'self'     THEN tree_sql_self('s0','s1')
@@ -14,17 +32,27 @@ WHERE replace(replace(c.template, '{a}', 's0'), '{b}', 's1') <> CASE c.op
   WHEN 'after'    THEN tree_sql_after('s0','s1')
   WHEN 'parent'   THEN tree_sql_parent('s0','s1')
   WHEN 'ancestor' THEN tree_sql_ancestors('s0','s1')
-  WHEN 'prev'     THEN tree_sql_prev_sibling('s0','s1', false) END;
+  WHEN 'prev'     THEN tree_sql_prev_sibling('s0','s1', false)
+  ELSE '<<derivation gate: no relation macro is named for this op>>' END;
 ----
 0
 
-# the ELEMENT-aware arm, for the rows that have one
+# No separate "count of ops the CASE knows" is pinned here, deliberately: the ELSE makes an
+# unnamed op FAIL, which is strictly stronger than a count, and the registered set is already
+# pinned row by row by the `SELECT op FROM tree_catalog_combinators()` assertion below. A second
+# written-out copy of the combinator set in this file would be the fourteenth site this whole
+# increment exists to remove.
+
+# the ELEMENT-aware arm, for the rows that have one -- with the same ELSE sentinel, for the same
+# reason: a newly registered relation that declares a template_elem must have its macro named
+# here, not be waved through by a NULL comparison.
 query I
 SELECT count(*) FROM tree_catalog_combinators() c
 WHERE c.template_elem IS NOT NULL
-  AND replace(replace(c.template_elem, '{a}', 's0'), '{b}', 's1') <> CASE c.op
+  AND replace(replace(c.template_elem, '{a}', 's0'), '{b}', 's1') IS DISTINCT FROM CASE c.op
         WHEN 'next' THEN tree_sql_next_sibling('s0','s1', true)
-        WHEN 'prev' THEN tree_sql_prev_sibling('s0','s1', true) END;
+        WHEN 'prev' THEN tree_sql_prev_sibling('s0','s1', true)
+        ELSE '<<derivation gate: no ELEMENT-aware macro is named for this op>>' END;
 ----
 0
 
@@ -191,6 +219,16 @@ DELETE FROM tree_catalog.combinators WHERE op = 'probe_sib';
 # is reachable by exactly the per-op flipping above, so it is pinned rather than reasoned about.
 # The positional pseudo-classes are refused by a separate disjunct and are NOT registry-derived,
 # so they must still be named when no combinator requires sibling order at all.
+#
+# SAVED FIRST, and restored from the save rather than re-asserted as a literal. The restore below
+# used to read `SET requires_sibling_order = (op IN ('next', 'after'))`, which transcribed the
+# capability column by hand: it left `prev` FALSE, contradicting this same file's pinned
+# `prev true` 150 lines above, and re-planted by hand the exact pair MN31 exists to plant as a
+# DEFECT. It was harmless only because nothing later in the file reads the column -- not a
+# property to rely on. A snapshot cannot drift from the registry, because it IS the registry.
+statement ok
+CREATE TEMP TABLE sib_saved AS SELECT op, requires_sibling_order FROM tree_catalog.combinators;
+
 statement ok
 UPDATE tree_catalog.combinators SET requires_sibling_order = false;
 
@@ -206,7 +244,22 @@ FROM tree_match('main', 'nosib', tree_steps([{type: 'manager', pseudo: 'first-ch
 is sibling-free
 
 statement ok
-UPDATE tree_catalog.combinators SET requires_sibling_order = (op IN ('next', 'after'));
+UPDATE tree_catalog.combinators AS c SET requires_sibling_order =
+  (SELECT s.requires_sibling_order FROM sib_saved s WHERE s.op = c.op);
+
+# ...and the restore is itself checked, because an UPDATE that matched nothing would leave every
+# row FALSE and look exactly like success. Symmetric difference against the snapshot, so it
+# catches both a row left behind and a row set to the wrong value, without naming a value here.
+query I
+SELECT (SELECT count(*) FROM (SELECT op, requires_sibling_order FROM tree_catalog.combinators
+                              EXCEPT SELECT op, requires_sibling_order FROM sib_saved))
+     + (SELECT count(*) FROM (SELECT op, requires_sibling_order FROM sib_saved
+                              EXCEPT SELECT op, requires_sibling_order FROM tree_catalog.combinators));
+----
+0
+
+statement ok
+DROP TABLE sib_saved;
 
 # the node-kind list the IR allows: the four structural kinds plus every registered clause kind
 query I
@@ -220,16 +273,48 @@ true
 # it is verified instead. Both directions, because each fails differently: a registry row with no
 # struct field cannot be BUILT by tree_steps, and a struct field with no row is accepted by the
 # constructor and then refused by the compiler.
+#
+# ALL THREE LEVELS, not just L0. Spec section 2 names THREE irreducible struct copies
+# (sql/00_types.sql: TREE_STEP_L0, L1 and L2 -- one per literal nesting level, because the
+# constructor nests three), and both queries here used to read TREE_STEP_L0 alone, so L1 and L2
+# were unchecked in BOTH directions while sql/01_catalog.sql's comment claimed the duplication was
+# "verified instead" with no such qualification. The levels are enumerated as rows rather than
+# repeated as three statement pairs, so a fourth level is one VALUES entry and cannot be added to
+# one direction only.
 query I
-SELECT count(*) FROM tree_catalog_clause_kinds() k
-WHERE k.step_field NOT IN (SELECT column_name FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L0)));
+WITH stepfield AS (
+    SELECT 'TREE_STEP_L0' AS lvl, column_name AS f FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L0))
+    UNION ALL SELECT 'TREE_STEP_L1', column_name FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L1))
+    UNION ALL SELECT 'TREE_STEP_L2', column_name FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L2)))
+SELECT count(*) FROM tree_catalog_clause_kinds() k,
+                     (VALUES ('TREE_STEP_L0'), ('TREE_STEP_L1'), ('TREE_STEP_L2')) v(lvl)
+WHERE NOT EXISTS (SELECT 1 FROM stepfield d WHERE d.lvl = v.lvl AND d.f = k.step_field);
 ----
 0
 
+# ...and each level actually contributes rows to that CTE, so neither direction can read 0 because
+# a level turned out to be empty -- an absence assertion over nothing passes vacuously. 8 fields on
+# L0, 10 each on L1 and L2 (comb/as plus the six kinds, and has/not on the two nesting levels),
+# which also pins "three levels, not two".
 query I
-SELECT count(*) FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L0)) d
-WHERE d.column_name NOT IN ('comb', 'as', 'has', 'not')
-  AND d.column_name NOT IN (SELECT k.step_field FROM tree_catalog_clause_kinds() k);
+WITH stepfield AS (
+    SELECT 'TREE_STEP_L0' AS lvl, column_name AS f FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L0))
+    UNION ALL SELECT 'TREE_STEP_L1', column_name FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L1))
+    UNION ALL SELECT 'TREE_STEP_L2', column_name FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L2)))
+SELECT string_agg(lvl || '=' || n, ' ' ORDER BY lvl)
+FROM (SELECT lvl, count(*) AS n FROM stepfield GROUP BY lvl);
+----
+TREE_STEP_L0=8 TREE_STEP_L1=10 TREE_STEP_L2=10
+
+# the other direction, over all three levels too: a struct field with no registry row
+query I
+WITH stepfield AS (
+    SELECT 'TREE_STEP_L0' AS lvl, column_name AS f FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L0))
+    UNION ALL SELECT 'TREE_STEP_L1', column_name FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L1))
+    UNION ALL SELECT 'TREE_STEP_L2', column_name FROM (DESCRIBE SELECT unnest(NULL::TREE_STEP_L2)))
+SELECT count(*) FROM stepfield d
+WHERE d.f NOT IN ('comb', 'as', 'has', 'not')
+  AND d.f NOT IN (SELECT k.step_field FROM tree_catalog_clause_kinds() k);
 ----
 0
 

@@ -248,8 +248,8 @@ removed.
 | gate | what it catches | how it is proven to have teeth |
 |---|---|---|
 | **delete a row** | a site that kept a private copy of the set | remove each row in turn; every consumer must fail, and fail legibly — not render the clause as nothing, not accept at the door and refuse at compile |
-| **derivation** | a hand-edited `template` drifting from its macro | for every row, substituted `template` equals the macro called directly on those aliases |
-| **agreement** | registry versus the irreducible struct surface (§2) | every `clause_kinds.step_field` is a field of `TREE_STEP_L0`; every non-structural field of `TREE_STEP_L0` (not `comb`, not `as`) has a row |
+| **derivation** | a hand-edited `template` drifting from its macro | for every row, substituted `template` equals the macro called directly on those aliases — **and an op the gate does not name fails on a sentinel `ELSE` rather than being skipped** (2026-10-16: without it the `CASE` yielded `NULL`, `template <> NULL` is `NULL`, and `WHERE` dropped the row, so a hand-transcribed template for a newly registered op passed silently in the open half of the registry) |
+| **agreement** | registry versus the irreducible struct surface (§2) | every `clause_kinds.step_field` is a field of **each of `TREE_STEP_L0`, `L1` and `L2`**; every non-structural field of **each** (not `comb`, not `as`, not `has`, not `not`) has a row (2026-10-16: both queries read `L0` alone, so a field added to `L1` or `L2` and nowhere else passed every gate in the repo) |
 | **no literals remain** | the seven collapsed copies coming back | a lint over `sql/` and `test/` for the written-out kind set, in the style of `scripts/check_macro_identity.py` |
 | **capability** | a registered relation bypassing the sibling-free refusal | register a probe combinator with `requires_sibling_order = true`, assert it refuses on a sibling-free tree; flip the column, assert it stops refusing |
 | **mutants** | a template nothing exercises | mutate each template; the corpus must kill it. A template whose mutation survives is reported, not quietly skipped |
@@ -284,6 +284,38 @@ Two constraints follow:
   paren-aware tokenizer, that such a tokenizer is expressible as a SQL macro, and that the
   round-trip contract is exact on canonical IR and normalizing on hand-built IR. That stands as
   input to a later increment; nothing here depends on it.
+- **The clause slot ORDER.** *Recorded 2026-10-16, as a follow-up, during the final whole-branch
+  review.* This increment collapses the clause-kind and combinator **sets** into two catalog
+  tables. It does **not** collapse the clause slot **order** — the per-kind ordinal that decides
+  which clause of a compound gets which node id. `clause_kinds` has no `order` column, so that
+  declaration remains written out three times:
+
+  | copy | ordinals |
+  |---|---|
+  | `sql/06_selector.sql`, the `clauses` CTE | 1..6 (`type`, `id`, `class`, `attr`, `pseudo`, `where`) |
+  | `sql/09_css.sql`, stage 6's `clause` CTE | 1..5 (css has no `WHERE` syntax) |
+  | `test/css_parser.py`, `CLAUSE_SLOT` | 1..5 |
+
+  Order affects canonical node numbering and therefore the printed TREEQL the round-trip contract
+  rests on. It does **not** affect match results — clauses are ANDed and AND is commutative —
+  which is exactly why a disagreement is invisible to every behavioural suite, and why the
+  verification gap was worth closing on its own. The earlier claim that `38_css_lower.test` bound
+  these copies by node_id-inclusive struct comparison was **wrong**: that file's one comparison
+  against `tree_steps` was a single-clause step, which has no order to get wrong. Measured on this
+  branch, the `attr`/`pseudo` ordinal in `sql/06_selector.sql` could be swapped and 852 assertions
+  across eleven other suite files still passed.
+
+  Closed now, as verification only: `38_css_lower.test` compares a step carrying a clause in every
+  css-reachable slot, written in non-slot order, as whole structs including `node_id`, across all
+  three copies. Slot 6 (`where`) has no css spelling and so stays bound only by `06_selector.sql`
+  being its sole producer.
+
+  **The obvious next step is an `order` column on `tree_catalog.clause_kinds`**, read by both SQL
+  copies, leaving `test/css_parser.py` deliberately independent (Ruling R7: it is the second
+  reading that makes the differential worth anything, and it has no database connection). That is
+  a schema change to a table this increment's seventeen commits have already settled, and it is
+  **out of scope here** — deliberately, not by oversight.
+
 - **D-N15** (`TYPE foo` versus `TYPE 'foo'`) is a text-grammar question and waits for the parser.
 - **Issue #33** (W's mutants MN9/MN10/MN11/MN16, needing a tree that splices and a frontier that
   can be unloaded) is engine *correctness*, not engine *declaration*, and is untouched here.

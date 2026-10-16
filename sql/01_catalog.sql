@@ -45,7 +45,10 @@ INSERT INTO tree_catalog.selector_languages VALUES ('treeql', NULL, 'tree_select
 --
 -- step_field is the TREE_STEP_* field that builds the kind, and it exists for the agreement gate:
 -- TREE_STEP_L0/L1/L2 are DuckDB STRUCT types whose field lists are fixed at definition and cannot
--- be generated from this table, so the duplication cannot be removed and is verified instead.
+-- be generated from this table, so the duplication cannot be removed and is verified instead --
+-- at ALL THREE levels, in both directions, by test/sql/46_slot_registry.test. That qualification
+-- was missing and the claim was overstated: both agreement queries read TREE_STEP_L0 alone, so a
+-- field added to L1 or L2 and nowhere else passed every gate in the repo. It no longer does.
 CREATE TABLE IF NOT EXISTS tree_catalog.clause_kinds(
   kind VARCHAR PRIMARY KEY, keyword VARCHAR, slot VARCHAR, needs_semantic BOOLEAN, step_field VARCHAR);
 INSERT INTO tree_catalog.clause_kinds VALUES

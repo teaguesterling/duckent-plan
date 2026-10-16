@@ -145,7 +145,13 @@ CREATE OR REPLACE MACRO tree_sql_is_root(a) AS a || '._level = 0';
 -- The relations the engine exposes, registered by DERIVATION: each template is the macro
 -- above called with placeholder aliases, so this INSERT cannot disagree with the macro it names.
 -- test/sql/46_slot_registry.test substitutes every template back and compares it against the
--- macro's direct output, which is what keeps that true.
+-- macro it names there by hand -- and, for an op that CASE does NOT name, fails on a sentinel
+-- ELSE rather than skipping the row. So the gate covers every registered op, but it covers the
+-- eight below BY NAME: registering a ninth row anywhere, a front-end extension's own .sql file
+-- included, means adding its macro call to that CASE. Without the ELSE the gate was blind to
+-- precisely that case -- the CASE yielded NULL, `template <> NULL` is NULL, and WHERE dropped the
+-- row -- so a HAND-TRANSCRIBED template passed silently in the OPEN half of the registry. The
+-- measurement is recorded at the gate.
 INSERT INTO tree_catalog.combinators VALUES
   ('desc',  'DESCENDANT', tree_sql_subtree('{a}','{b}'),  NULL, false),
   ('child', 'CHILD',      tree_sql_children('{a}','{b}'), NULL, false),
