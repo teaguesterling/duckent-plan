@@ -210,6 +210,21 @@ SPEC = {
          "    -- resolvable function calls -- so 'no calls' reads exactly like purity and the\n"
          "    -- body is recorded 'pure' instead of refused\n", 1)]),
 
+    # --- Task 7 (slot engine): the capability column read but not acted on. Pre-Task-3, the
+    # --- sibling-free refusal tested a hardcoded op list, so a relation registered later
+    # --- (PRECEDING, say) would compile against a sibling-free tree with no refusal at all --
+    # --- the exact bug that passed every test in the repo until Task 3 added a probe for it.
+    "MN31": ("sql/07_match.sql", ["tree_compile_match"], [
+        ("                   AND ((ir.kind = 'step'\n"
+         "                         AND ir.op IN (SELECT c.op FROM tree_catalog.combinators c\n"
+         "                                       WHERE c.requires_sibling_order))\n"
+         "                        OR (ir.kind = 'pseudo' AND list_contains(tree_builtin_predicates(), ir.value)))",
+         "                   AND ((ir.kind = 'step'\n"
+         "                         -- the mutation: a hardcoded op list, not the registry's\n"
+         "                         -- requires_sibling_order column -- the exact pre-Task-3 behaviour\n"
+         "                         AND ir.op IN ('next','after'))\n"
+         "                        OR (ir.kind = 'pseudo' AND list_contains(tree_builtin_predicates(), ir.value)))", 1)]),
+
     "MN29": ("sql/00_types.sql", ["tree_sql_check_semantic"], [
         ("    WHEN len(list_distinct(list_transform(COALESCE((sem).predicate, []), lambda x: (x).name)))"
          " <> len(COALESCE((sem).predicate, []))",
