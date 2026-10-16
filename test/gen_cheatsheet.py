@@ -213,11 +213,13 @@ IR_OK = ("[{node_id: 0, parent_id: NULL, kind: 'selector', value: NULL, op: NULL
          " {node_id: 1, parent_id: 0, kind: 'step', value: NULL, op: NULL, arg: NULL, alias: NULL},"
          " {node_id: 2, parent_id: 1, kind: 'type', value: 'class', op: NULL, arg: NULL, alias: NULL}]")
 
-# The IR's node kinds. AUTHORED here, and render() asserts the list against EVERY place the
-# implementation writes the whitelist -- today the printer's in sql/06_selector.sql and the match
-# path's in sql/07_match.sql. So this list cannot drift from the implementation, and the two
-# copies cannot drift from each other, which nothing else checks.
-SELECTOR_KINDS = ["selector", "step", "has", "not", "type", "id", "class", "attr", "pseudo", "where"]
+# The IR's node kinds used to be AUTHORED here as a literal, with render() asserting it against
+# every place the implementation wrote the whitelist by hand -- the printer in sql/06_selector.sql
+# and the match path in sql/07_match.sql. Task 5 replaced both hand-written copies with
+# list_contains(tree_ir_kinds(), ...), so there is no literal left to check THIS list against:
+# the four structural kinds plus every registered clause kind are now read straight off
+# tree_ir_kinds() in render() (see Measured.kind_whitelist_sites below for what the cross-check
+# became instead of what it checked before).
 
 # Hand-built IR the match path must REFUSE, rendered with the message it refuses it with. A
 # front-end's output is only as trustworthy as these checks, because nothing parsed it.
@@ -350,18 +352,36 @@ class Measured:
         self.s.execute("CALL tree_ddl_drop('docs', '%s');" % nm)
         return "verdict", verdict
 
-    def kind_whitelists(self):
-        """The node-kind whitelist as each source file writes it, keyed by file.
+    def kind_whitelist_sites(self):
+        """Whether each place that tests "is this a valid IR kind" reads tree_ir_kinds() rather
+        than carrying its own copy, keyed by file.
 
-        Read from the SQL rather than from the catalog because it is a literal inside a macro
-        body, not a value the catalog exposes. Two files carry it; a doc that listed the kinds
-        without checking both would be a declaration with nothing verifying it.
+        Before Task 5 this method (then kind_whitelists) grepped sql/06_selector.sql and
+        sql/07_match.sql for a literal `kind NOT IN ('selector', ...)` list and compared both
+        against SELECTOR_KINDS above -- which is how a doc that stated the kinds without checking
+        both files would have been a declaration with nothing verifying it. Task 5 replaced both
+        literals with `list_contains(tree_ir_kinds(), ...)`, so the literal this check grepped for
+        is gone -- correctly: the two copies no longer exist to drift from each other or from this
+        doc. What CAN still drift, silently, is the registry read itself being replaced by a new
+        hand-written list, which is exactly the failure mode Task 6's lint also watches for in the
+        source tree; this is the same property, checked here because this generator must refuse
+        to write a doc it can no longer verify.
+
+        Returns {file: True/False/None}: True if the site reads tree_ir_kinds(), False if a site
+        was found testing kind membership but not through the registry (a resurrected literal),
+        None if no such test could be found in the file at all. Both False and None are failures.
         """
         found = {}
         for rel in ("sql/06_selector.sql", "sql/07_match.sql"):
             text = open(os.path.join(ROOT, rel)).read()
-            m = re.search(r"kind NOT IN \(\s*('selector'[^)]*)\)", text)
-            found[rel] = [x.strip().strip("'") for x in m.group(1).split(",")] if m else None
+            via_registry = re.search(r"list_contains\(tree_ir_kinds\(\),\s*[\w.\"]+\)", text)
+            literal_copy = re.search(r"kind NOT IN \(\s*'selector'[^)]*\)", text)
+            if via_registry:
+                found[rel] = True
+            elif literal_copy:
+                found[rel] = False
+            else:
+                found[rel] = None
         return found
 
     def ir_layout(self):
@@ -705,9 +725,28 @@ def render(m):
     layout = m.ir_layout()
     table(out, ["column", "type"], [[code(c), code(t)] for c, t in layout])
 
+    # tree_ir_kinds() concatenates a literal ['selector', 'step', 'has', 'not'] onto
+    # list(kind) FROM tree_catalog.clause_kinds -- an aggregate with no ORDER BY, so its result
+    # order is not something this doc can commit to being stable across machines or DuckDB
+    # versions. Reading the clause kinds back out sorted keeps the generated file reproducible.
+    clause_kinds = [r[0] for r in m.rows("SELECT kind FROM tree_catalog.clause_kinds ORDER BY kind")[1]]
+    ir_kinds = ["selector", "step", "has", "not"] + clause_kinds
     out.write("`node_id` and `parent_id` are the structure: one %s row is the root, every "
-              "other row names its parent. A kind is one of %s.\n\n"
-              % (code("selector"), ", ".join(code(k) for k in SELECTOR_KINDS)))
+              "other row names its parent. A kind is one of %s -- the four structural kinds "
+              "(`selector`, `step`, `has`, `not`), which are the IR's own shape, plus every "
+              "registered clause kind.\n\n"
+              % (code("selector"), ", ".join(code(k) for k in ir_kinds)))
+
+    out.write("### Combinators\n\n")
+    out.write("The relation between one step and the step before it, keyed by `op` in the IR "
+              "and spelled with `keyword` in TREEQL text. `requires_sibling_order` is a "
+              "capability check: a combinator that needs it is refused on a tree whose PARENT "
+              "basis declares no SIBLING_ORDER (see \"What a declaration is refused for\" "
+              "above) -- `PARENT`, `ANCESTOR` and `PRECEDING` are registered here like any "
+              "other relation.\n\n")
+    comb_cols, comb_rows = m.rows(
+        "SELECT keyword, op, requires_sibling_order FROM tree_catalog_combinators() ORDER BY op")
+    table(out, comb_cols, [[code(r[0]), code(r[1]), fmt(r[2])] for r in comb_rows])
 
     out.write("The door is checked, not trusted -- nothing parsed these rows, so the match "
               "path validates them. Each refusal below is the real message:\n\n")
@@ -778,13 +817,12 @@ def render(m):
         stale.append("the navigation walkthrough query returned no rows")
     if pred_bad:
         stale.append("the predicate pair no longer discriminates: " + "; ".join(pred_bad))
-    for rel, found in m.kind_whitelists().items():
-        if found is None:
-            stale.append("could not find the node-kind whitelist in %s; SELECTOR_KINDS is "
-                         "no longer checked against it" % rel)
-        elif found != SELECTOR_KINDS:
-            stale.append("SELECTOR_KINDS disagrees with %s: doc has %r, that file has %r"
-                         % (rel, SELECTOR_KINDS, found))
+    for rel, via_registry in m.kind_whitelist_sites().items():
+        if via_registry is None:
+            stale.append("could not find the IR-kind whitelist test in %s at all" % rel)
+        elif via_registry is False:
+            stale.append("%s tests the IR-kind whitelist against a hand-written literal again, "
+                         "not list_contains(tree_ir_kinds(), ...)" % rel)
     if ir_missing:
         stale.append("hand-built IR the doc claims is refused was ACCEPTED: "
                      + ", ".join(ir_missing))

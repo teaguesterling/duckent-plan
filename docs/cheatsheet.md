@@ -219,7 +219,22 @@ TREEQL's text form has no parser yet, so a selector given as text is refused (th
 | `arg` | `VARCHAR` |
 | `alias` | `VARCHAR` |
 
-`node_id` and `parent_id` are the structure: one `selector` row is the root, every other row names its parent. A kind is one of `selector`, `step`, `has`, `not`, `type`, `id`, `class`, `attr`, `pseudo`, `where`.
+`node_id` and `parent_id` are the structure: one `selector` row is the root, every other row names its parent. A kind is one of `selector`, `step`, `has`, `not`, `attr`, `class`, `id`, `pseudo`, `type`, `where` -- the four structural kinds (`selector`, `step`, `has`, `not`), which are the IR's own shape, plus every registered clause kind.
+
+### Combinators
+
+The relation between one step and the step before it, keyed by `op` in the IR and spelled with `keyword` in TREEQL text. `requires_sibling_order` is a capability check: a combinator that needs it is refused on a tree whose PARENT basis declares no SIBLING_ORDER (see "What a declaration is refused for" above) -- `PARENT`, `ANCESTOR` and `PRECEDING` are registered here like any other relation.
+
+| keyword | op | requires_sibling_order |
+|---|---|---|
+| `FOLLOWING` | `after` | true |
+| `ANCESTOR` | `ancestor` | false |
+| `CHILD` | `child` | false |
+| `DESCENDANT` | `desc` | false |
+| `SIBLING` | `next` | true |
+| `PARENT` | `parent` | false |
+| `PRECEDING` | `prev` | true |
+| `SELF` | `self` | false |
 
 The door is checked, not trusted -- nothing parsed these rows, so the match path validates them. Each refusal below is the real message:
 
