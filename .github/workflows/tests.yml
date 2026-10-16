@@ -61,6 +61,14 @@ jobs:
         run: python test/gen_cheatsheet.py --check
       - name: The clause-kind and combinator vocabularies are still declared once
         run: python scripts/check_vocabulary_single_source.py
+      # The scan above can only report "nothing was flagged", which is also what a broken detector
+      # reports. --self-test is that lint's proof of teeth -- must-flag and must-NOT-flag lines,
+      # the per-construct exemption being narrow enough to still flag other lines of an exempt
+      # file, and the positive registry-read check being able to report an absence at all -- and
+      # it was not a standing check: it was run by hand during Task 6 and recorded in the ledger.
+      # A gate whose proof of teeth is never re-run is a gate held up by trust.
+      - name: ...and the lint that says so can still tell the difference
+        run: python scripts/check_vocabulary_single_source.py --self-test
 
   mutants:
     name: mutant harness

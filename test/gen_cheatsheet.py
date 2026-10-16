@@ -370,16 +370,25 @@ class Measured:
         Returns {file: True/False/None}: True if the site reads tree_ir_kinds(), False if a site
         was found testing kind membership but not through the registry (a resurrected literal),
         None if no such test could be found in the file at all. Both False and None are failures.
+
+        A RESURRECTED LITERAL WINS OVER A SURVIVING REGISTRY READ, which is why the literal is
+        tested FIRST. Written the other way round -- `if via_registry: True / elif literal_copy:
+        False` -- the False branch was unreachable in practice: each of these two files holds
+        exactly one tree_ir_kinds() call today, so a literal added BESIDE the existing read, or a
+        second tree_ir_kinds() call added anywhere, left via_registry truthy and this reported
+        green with the literal sitting there. The question being asked is "has a hand-written list
+        come back", and one coming back is a failure whether or not a registry read also survives
+        elsewhere in the file.
         """
         found = {}
         for rel in ("sql/06_selector.sql", "sql/07_match.sql"):
             text = open(os.path.join(ROOT, rel)).read()
             via_registry = re.search(r"list_contains\(tree_ir_kinds\(\),\s*[\w.\"]+\)", text)
             literal_copy = re.search(r"kind NOT IN \(\s*'selector'[^)]*\)", text)
-            if via_registry:
-                found[rel] = True
-            elif literal_copy:
+            if literal_copy:
                 found[rel] = False
+            elif via_registry:
+                found[rel] = True
             else:
                 found[rel] = None
         return found
