@@ -33,7 +33,7 @@ CREATE TREE sitting_duck_ast (
   SIZE descendant_count OPTIMIZE                     -- native column; test-equals its default
 );
 
-FROM 'code.parquet' USING TREE sitting_duck_ast MATCH .fn:not(:has(:docblock)) SELECT name;
+FROM 'code.parquet' USING TREE SHAPE sitting_duck_ast MATCH WITH css .fn:not(:has(:docblock)) SELECT name;
 ```
 
 The same compiler, pointed at a Markdown document, answers `h2 + table`; pointed at an org chart declared with `PARENT manager_id`, it answers `manager:has(> engineer)`.
@@ -80,8 +80,10 @@ Two things named `KEY` are deliberately distinguished by that rule. The S-block 
 
 - `CREATE TREE t (SHAPE ONLY, ...)` declares an abstract tree. `SHAPE ONLY` is required whenever there is no `AS` clause.
 - `CREATE TREE t LIKE shape AS FROM ...` instantiates. `LIKE` copies semantics, never source.
-- `FROM src USING TREE <name | (rules)> MATCH ...` applies a shape ad hoc, as a `USING SAMPLE`-style modifier on a FROM item.
-- Bare `MATCH` flows into the clause pipeline and ends at the next top-level SQL keyword. `MATCH $( ... )` is the delimited form, required once a host escape appears.
+- `FROM src USING TREE SHAPE <name | (rules)> MATCH ...` applies a shape ad hoc, as a `USING SAMPLE`-style modifier on a FROM item. *(2026-10-15: the noun `SHAPE` was added, superseding the bare `USING TREE <name>` of doc 14 §2b — see §2k there.)*
+- **`USING <KIND> SHAPE <name>` is one grammar for a family of shaped relations.** `TREE` is duckent's; `NDARRAY` presents n-D arrays as relations under the same contract discipline (sibling project, working name czarr); `TABLE` inherits another table's structure, e.g. `FROM src USING TABLE SHAPE foo INCLUDING CONSTRAINTS, FOREIGN KEYS`. Granular inheritance rides on `LIKE … INCLUDING/EXCLUDING`, which is why `SHAPE` — the skeleton — does not need to swallow `SCHEMA`'s richer connotation. The noun is `SHAPE` and not `SCHEMA` because `schema` is semantically loaded with SQL's own namespace concept while `shape` is not a DuckDB keyword at all (verified on v1.5.6), and because `SHAPE` is already duckent's value-level noun: `TREE_SHAPE` is a type and `tree_ddl_create(db, schema, name, tree_spec(tree_shape(...)))` already holds both words apart in one signature.
+- `MATCH [WITH <lang>] <selector>` names its dialect; `<lang>` resolves through `tree_catalog.selector_languages`. **TREEQL is the default, so a CSS selector requires `MATCH WITH css`.** Bare `MATCH` flows into the clause pipeline and ends at the next top-level SQL keyword. `MATCH $( ... )` is the delimited form, required once a host escape appears.
+- **Caveat on that default, as of 2026-10-15:** TREEQL is the IR's own spelling and its *text* parser is M-LANG, still unshipped — `selector_languages` holds `('treeql', NULL, ...)`, where NULL is the parser column — so a bare `MATCH` is refused by that registry lookup and `MATCH WITH css` is the only spelling that resolves today. Which lands first, the TREEQL text parser or a release documenting CSS as the working default, is an open release decision (doc 14 §2k).
 - `*[WHERE <sql>]` is the host escape: a full SQL predicate at any node position, compiled against the node's projection view. It needs an explicit head; bare `[WHERE]` is a parse error.
 - DML is tree-granular by `ROOT`: `INSERT INTO` appends trees, `DELETE` drops by key, `INSERT OR REPLACE` re-derives.
 - Pre-2.0, all of this compiles to a macro bridge: a shape is a projection macro over canonical columns, and `MATCH` generates its query against those columns only. That mechanism is verified on shipped DuckDB and enforces the visibility rule for free.
