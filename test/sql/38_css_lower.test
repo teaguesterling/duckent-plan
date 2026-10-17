@@ -367,6 +367,66 @@ SELECT tree_selector_to_treeql(tree_parse_css('#greet.fn'));
 ----
 (ID 'greet', CLASS 'fn')
 
+# THE SLOT ORDINALS, BOUND ACROSS ALL THREE COPIES THAT DECLARE THEM.
+#
+# The clause slot ORDER is a per-kind declaration the registry does NOT hold -- there is no
+# `order` column on tree_catalog.clause_kinds -- so it is written out three times:
+#   sql/06_selector.sql   the `clauses` CTE, 1..6 (type, id, class, attr, pseudo, where)
+#   sql/09_css.sql        stage 6's `clause` CTE, 1..5 (css has no WHERE syntax)
+#   test/css_parser.py    CLAUSE_SLOT, 1..5
+# Order is not cosmetic: it decides canonical node numbering and therefore the printed TREEQL,
+# which the round-trip contract rests on. It does NOT affect match results -- the clauses are
+# ANDed and AND is commutative -- which is exactly why a disagreement here would be invisible to
+# every behavioural suite.
+#
+# The ledger credited this file with binding those copies by node_id-inclusive struct comparison.
+# It did not: the ONE comparison against tree_steps above is a SINGLE-clause step ('.fn' with a
+# child group), and a single clause has no order to get wrong. The TREEQL assertions in this
+# section pin the css side's ordinals against the printer, and the generated `= [...]` literals
+# pin css_parser.py against tree_parse_css -- but tree_steps' own 1..6, the copy the compiler and
+# the constructor read, was bound by nothing.
+#
+# So: one step carrying a clause in every css-reachable slot, WRITTEN in an order that is not slot
+# order (type, pseudo, attr, class, id), compared against the tree_steps rows as whole structs.
+# node_id is part of the struct, so this fails if either copy renumbers. The `selector` root is
+# filtered out because its `value` is the one row the two front-ends differ on by design (css vs
+# treeql, asserted directly above).
+#
+# SLOT 6 (`where`) IS NOT COVERED HERE and cannot be: css has no WHERE syntax, so no css text
+# produces that clause. Its ordinal remains bound only by sql/06_selector.sql being the sole
+# producer of it. Recorded, not papered over.
+query I
+SELECT list_filter(tree_parse_css('x:first-child[name="y"].fn#greet')::STRUCT(node_id INTEGER, parent_id INTEGER, kind VARCHAR, value VARCHAR, op VARCHAR, arg VARCHAR, alias VARCHAR)[], lambda r: (r).kind <> 'selector')
+     = list_filter(tree_steps([{type: 'x', id: 'greet', class: 'fn', attr: 'name = ''y''', pseudo: 'first-child'}])::STRUCT(node_id INTEGER, parent_id INTEGER, kind VARCHAR, value VARCHAR, op VARCHAR, arg VARCHAR, alias VARCHAR)[], lambda r: (r).kind <> 'selector');
+----
+true
+
+# ...and the printed form of that same step, so a failure above is legible as an ORDER failure
+# rather than only as `false`. Both front-ends print through tree_selector_to_treeql, so this is
+# the ordinals themselves, named.
+query I
+SELECT tree_selector_to_treeql(tree_parse_css('x:first-child[name="y"].fn#greet'));
+----
+(TYPE 'x', ID 'greet', CLASS 'fn', ATTR name = 'y', PSEUDO 'first-child')
+
+query I
+SELECT tree_selector_to_treeql(tree_steps([{type: 'x', id: 'greet', class: 'fn', attr: 'name = ''y''', pseudo: 'first-child'}]));
+----
+(TYPE 'x', ID 'greet', CLASS 'fn', ATTR name = 'y', PSEUDO 'first-child')
+
+# AND THE THIRD COPY. The two assertions above route through tree_parse_css, which is
+# sql/09_css.sql -- so they bind the 09 copy to the 06 copy and nothing more. test/css_parser.py's
+# CLAUSE_SLOT is reached by `language := 'css'`, which test/run.py rewrites through
+# css_parser.to_sql(css_parser.parse(text)) -- a different code path, and the third declaration of
+# the same ordinals. Same step, same expectation, so all three copies are now bound on all five
+# css-reachable slots rather than on the id/class pair alone (which 37_css_parser.test:137 and
+# 40_corpus.test:73 already covered, and which is all they covered).
+query I
+SELECT (tree_explain('main', 'app', 'x:first-child[name="y"].fn#greet', language := 'css')).treeql
+     = tree_selector_to_treeql(tree_steps([{type: 'x', id: 'greet', class: 'fn', attr: 'name = ''y''', pseudo: 'first-child'}]));
+----
+true
+
 # ... but two clauses of one kind, which no tree_steps literal can express, keep the order
 # they were written in
 query I

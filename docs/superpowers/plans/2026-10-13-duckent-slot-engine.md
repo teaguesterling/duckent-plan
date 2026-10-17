@@ -569,20 +569,32 @@ PRECEDING (TYPE 'b')
 
 # PRECEDING declares it needs sibling order, so it is refused on a sibling-free tree -- by the
 # capability column, with no edit to the refusal. This is Task 3's gate holding for a real row.
+# The fixture must be PARENT basis. sql/03_ddl.sql sets
+#   level_basis = (level IS NOT NULL OR parent IS NULL)
+#   profile     = CASE WHEN NOT level_basis AND sibling_order IS NULL THEN 'sibling_free' ELSE 'full' END
+# so ANY tree declaring `level` is 'full' and can never reach the sibling-free arm. An earlier
+# draft of this plan used the app.parquet shape here and would have asserted a refusal that
+# cannot fire. PARENT basis also requires UNIQUE KEY.
 statement ok
 CALL tree_ddl_create('main', 'nosib2', tree_spec(
-  tree_shape(root := 'file_path', level := 'depth', size := 'descendant_count',
-             semantic := tree_semantic(type := 'type', key := 'name')),
-  source := 'read_parquet(''test/data/app.parquet'')'));
+  tree_shape(unique_key := 'email', parent := 'manager_email',
+             semantic := tree_semantic(type := 'role', key := 'email')),
+  source := 'read_csv(''test/data/employees.csv'')'));
+
+# Pin the fixture's own property, so this gate cannot go vacuous if the shape rules move.
+query II
+SELECT basis, profile FROM tree_catalog_trees() WHERE tree_name = 'nosib2';
+----
+parent	sibling_free
 
 statement error
-FROM tree_match('main', 'nosib2', tree_steps([{type: 'a'}, {comb: 'prev', type: 'b'}]));
+FROM tree_match('main', 'nosib2', tree_steps([{type: 'manager'}, {comb: 'prev', type: 'engineer'}]));
 ----
 is sibling-free
 
 # PARENT and ANCESTOR do NOT need sibling order, so they stay available there
 query I
-SELECT count(*) >= 0 FROM tree_match('main', 'nosib2', tree_steps([{type: 'function_definition'}, {comb: 'parent'}]));
+SELECT count(*) >= 0 FROM tree_match('main', 'nosib2', tree_steps([{type: 'manager'}, {comb: 'parent'}]));
 ----
 true
 ```
@@ -952,7 +964,10 @@ git commit -m "test(engine): lint the vocabularies back to one declaration, and 
 ### Task 7: mutants
 
 **Files:**
-- Create: `test/mutants/MN24_comb_template.sql`, `test/mutants/MN25_capability_ignored.sql`
+- Create: `test/mutants/MN30_comb_template.sql`, `test/mutants/MN31_capability_ignored.sql`
+  (MN24 and MN25 are ALREADY TAKEN. The manifest carries MN01-08, MN12-15, MN17-19, MN21-22,
+  MN24-29, and its first line is "id is permanent". The gaps MN09/10/11/16 are W's deferred
+  mutants, MN20 is retired-but-reserved, MN23 is reserved for M-LANG — none of them is free.)
 - Modify: `test/mutants/manifest.yaml`
 
 **Interfaces:**
@@ -965,14 +980,14 @@ Read the header of `test/mutants/manifest.yaml`. It records that most mutants ar
 a whole macro, that a kill says nothing about the planted edit if the copy has drifted from the
 macro, and which two checks hold that claim up. Both mutants below must satisfy those checks.
 
-- [ ] **Step 2: MN24 — a combinator template that is subtly wrong**
+- [ ] **Step 2: MN30 — a combinator template that is subtly wrong**
 
-`test/mutants/MN24_comb_template.sql`: re-register `child` with the root equality dropped from its
+`test/mutants/MN30_comb_template.sql`: re-register `child` with the root equality dropped from its
 template — the same defect MN14 plants in `tree_sql_children` itself, but reached through the
 registry. It proves the template is what the compiler uses:
 
 ```sql
--- MN24: the registry's child template loses the root equality. MN14 plants the same defect in
+-- MN30: the registry's child template loses the root equality. MN14 plants the same defect in
 -- tree_sql_children; this one plants it in the ROW, so a kill proves the compiler reads the
 -- template rather than the macro.
 UPDATE tree_catalog.combinators
@@ -980,9 +995,9 @@ UPDATE tree_catalog.combinators
  WHERE op = 'child';
 ```
 
-- [ ] **Step 3: MN25 — the capability column read but not acted on**
+- [ ] **Step 3: MN31 — the capability column read but not acted on**
 
-`test/mutants/MN25_capability_ignored.sql`: restore the sibling-free arm to a hardcoded
+`test/mutants/MN31_capability_ignored.sql`: restore the sibling-free arm to a hardcoded
 `IN ('next','after')`. This is the exact pre-Task-3 behaviour, and the mutant exists because that
 behaviour *passed every test in the repo* before Task 3 added its probe. It must now be killed by
 `46_slot_registry.test` and `47_new_combinators.test`.
@@ -990,25 +1005,25 @@ behaviour *passed every test in the repo* before Task 3 added its probe. It must
 - [ ] **Step 4: Declare both in the manifest with their `expect_fail` lists**
 
 ```yaml
-- id: MN24
-  file: MN24_comb_template.sql
+- id: MN30
+  file: MN30_comb_template.sql
   expect_fail: [test/sql/47_new_combinators.test, test/sql/31_match.test]
-- id: MN25
-  file: MN25_capability_ignored.sql
+- id: MN31
+  file: MN31_capability_ignored.sql
   expect_fail: [test/sql/46_slot_registry.test, test/sql/47_new_combinators.test]
 ```
 
 - [ ] **Step 5: Run the mutant harness**
 
 Run: `python3 test/run_mutants.py`
-Expected: MN24 and MN25 both KILLED, every control passing, and every pre-existing mutant's status
+Expected: MN30 and MN31 both KILLED, every control passing, and every pre-existing mutant's status
 unchanged. A mutant reported killed by a file not in its `expect_fail` list is a mis-declared
 mutant, not a pass.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add test/mutants/MN24_comb_template.sql test/mutants/MN25_capability_ignored.sql test/mutants/manifest.yaml
+git add test/mutants/MN30_comb_template.sql test/mutants/MN31_capability_ignored.sql test/mutants/manifest.yaml
 git commit -m "test(mutants): plant a wrong template and an ignored capability column"
 ```
 
