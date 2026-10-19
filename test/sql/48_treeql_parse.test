@@ -10,6 +10,12 @@ SELECT ord, part FROM tree_treeql_split('TYPE ''x'', WHERE name IN (''a'', ''b''
 1	TYPE 'x'
 2	WHERE name IN ('a', 'b')
 
+# WHICH NAIVE READER EACH CASE DEFEATS, because they are not all the same one. A split on ', '
+# gets this case RIGHT -- there is no comma in it. What it defeats is a reader that trusts ')' as
+# structure: `split on ')'` yields ["ATTR lang = 'p", "y'"]. That is the reader the optional
+# step-parentheses tolerance (spec §4) will be, so this case is load-bearing for a later task and
+# must not be removed by anyone re-running a comma-only discrimination probe and finding it
+# "passes both".
 query II
 SELECT ord, part FROM tree_treeql_split('ATTR lang = ''p)y''', ',') ORDER BY ord;
 ----
