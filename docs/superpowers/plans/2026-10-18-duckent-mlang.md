@@ -314,6 +314,9 @@ Requirements the implementer must satisfy, each with its reason:
 3. **The alias is split off before the parentheses are read**, because `AS` may follow `)` and an alias is an identifier — validate it with `tree_sql_is_ident`, the rule `tree_steps` already applies, rather than restating it.
 4. **A step with no parentheses is legal** and yields `body = NULL`.
 5. **`tree_treeql_reserved()` derives the set** from both registries plus the three structural words. It is the only place that set appears.
+6. **The step's clause-list parentheses are OPTIONAL on input** (decided 2026-10-18). `CLASS fn` and `CHILD TYPE block` must parse as `(CLASS 'fn')` and `CHILD (TYPE 'block')` do. With bare identifiers from D-N15, this is what makes TREEQL hand-writable — the reason it is getting a reader at all. The printer is unchanged; this widens the accepted set only.
+7. **A GROUP's parentheses are NOT optional.** A group's inner chain is space-separated and the enclosing clause list continues after it, so `HAS CHILD TYPE 'b' PSEUDO 'p'` cannot say whether `PSEUDO 'p'` is the inner step's or the outer's. Refuse a group with no parentheses; do not attempt to infer the boundary.
+8. **Within a group, a parenless step is distinguishable only because a clause keyword never begins a step and a combinator keyword always does** — and that holds because the printer emits a combinator for every inner step, even one the constructor omitted (`tree_steps([{type:'f', has:[{type:'b'}]}])` prints `HAS ( DESCENDANT (TYPE 'b') )`). **That invariant is the constructor's, not the grammar's**, and hand-built IR through the host door is not bound by it — so Task 5 adds the refusal that keeps this tolerance resting on the grammar. Do not rely on the invariant without that refusal.
 
 - [ ] **Step 4: Run the test and the three gates**
 
@@ -387,6 +390,10 @@ One assertion per refusal, each pinning the message by its distinguishing words:
 | unbalanced parentheses | `tree_parse_treeql: unbalanced parentheses` |
 | empty input, or no steps | `tree_parse_treeql: selector has no steps` |
 | nesting past the limit | the printer's wording, reused verbatim |
+| a parenless inner step with no combinator | `tree_parse_treeql: a step inside HAS/NOT needs a combinator or parentheses, so its clauses can be told from the next step's` |
+| a group with no parentheses | `tree_parse_treeql: HAS/NOT needs parentheses around its chain` |
+
+The first of those two new rows is what makes the parenless step form safe rather than lucky. Inside a group, steps are space-separated, and a parenless step is unambiguous only because every inner step carries a combinator — an invariant `tree_steps_group` maintains by coalescing to `desc`, which hand-built IR arriving through the host door is under no obligation to honour. Without this refusal the bare form would be unambiguous only for input the printer happened to produce, which is a property of the producer rather than of the grammar. Assert it against hand-built IR, not against printer output, or the test cannot reach the case.
 
 Plus **the documented limit**, which is the point of this task: a `WHERE` body with a **top-level** comma — `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` — is genuinely ambiguous, because the separator and the body's comma are indistinguishable at depth 0. No valid boolean predicate has a bare top-level comma, so this is unreachable from valid input. Assert what actually happens, with a comment saying it is a limit rather than a bug, so the claim "unreachable" is tested instead of argued.
 

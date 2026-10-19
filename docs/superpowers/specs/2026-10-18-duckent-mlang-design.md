@@ -150,6 +150,50 @@ pinned in the corpus stays valid.
 A bare operand must match `[A-Za-z_][A-Za-z0-9_]*` and must not be a reserved word. Anything else
 is quoted; a value containing a quote keeps the printer's doubling.
 
+**A step's clause-list parentheses are optional on input (decided 2026-10-18).** `CLASS fn` and
+`CHILD TYPE block` parse as `(CLASS 'fn')` and `CHILD (TYPE 'block')` do. Combined with bare
+identifiers this is what makes TREEQL hand-writable, which is the whole point of giving it a
+reader:
+
+```
+printed (canonical)                       accepted (bare)
+(CLASS 'fn')                              CLASS fn
+CHILD (TYPE 'block')                      CHILD TYPE block
+(TYPE 'block', ID 'x', ATTR name = 'y')   TYPE block, ID x, ATTR name = 'y'
+SIBLING (TYPE 'string')                   SIBLING TYPE string
+```
+
+**A GROUP's parentheses are NOT optional, and that asymmetry is load-bearing rather than
+arbitrary.** A group's inner chain is space-separated *and* the enclosing clause list continues
+after the group — `(TYPE 'f', PSEUDO 'p', HAS ( CHILD (TYPE 'b') ))`. Strip the group's
+parentheses and `HAS CHILD TYPE 'b' PSEUDO 'p'` is genuinely ambiguous: nothing says whether
+`PSEUDO 'p'` belongs to the inner step or the outer one. The step's parentheses carry no such
+duty, because at top level a newline ends the step and inside a group the next combinator keyword
+does.
+
+**Why a parenless step is unambiguous, and the refusal that makes the reasoning safe.** Within a
+group, steps are separated by a single space, so a reader must decide whether a token begins a new
+step or continues the current one. It can, because the vocabularies are disjoint and a *clause*
+keyword can never begin a step while a *combinator* keyword always does. Measured on `260d272`:
+the printer emits a combinator for every inner step even when the constructor omitted one —
+`tree_steps([{type:'f', has:[{type:'b'}]}])` prints `(TYPE 'f', HAS ( DESCENDANT (TYPE 'b') ))`.
+
+But that invariant is the **constructor's**, not the grammar's. `tree_steps_group` coalesces an
+inner first step's op to `desc`; hand-built IR arriving through the host door is under no such
+obligation, and the host door exists precisely to accept rows nothing canonical produced. So the
+reader must **refuse a parenless inner step that carries no combinator** rather than guess which
+step its clauses belong to. That refusal is what lets this tolerance rest on the grammar instead
+of on an invariant enforced elsewhere; without it, the bare form would be unambiguous only for
+input the printer happened to produce.
+
+**Not adopted: dropping the parentheses from the printed form.** Considered and rejected, and not
+only for corpus churn (every pinned `(TYPE '…')`, `tree_explain`'s `treeql` field, and the
+extension's mirrored suites). On a one-clause step the parentheses are noise; on
+`(TYPE 'block', ID 'x', ATTR name = 'y')` they are the only thing showing those three predicates
+constrain **one row** rather than forming a sequence. And since groups keep theirs regardless,
+removing the step's would make the two constructs look *less* alike, not more. The canonical form
+optimises for being unambiguous on the page; the accepted set optimises for being typed.
+
 ### 4.1 The reserved set is data, not a list in the parser
 
 This is the slot engine's dividend and it is load-bearing. The reserved words are
