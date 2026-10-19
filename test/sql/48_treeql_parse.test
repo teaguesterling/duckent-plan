@@ -1,0 +1,37 @@
+# name: test/sql/48_treeql_parse.test
+# description: M-LANG -- the reader for TREEQL text. parse(print(ir)) == ir on canonical IR.
+
+# THE SEPARATORS OCCUR INSIDE CLAUSE BODIES, which is why this needs a tokenizer and not a split.
+# ATTR and WHERE bodies are emitted unquoted and unescaped by the printer, so a clause list can
+# contain ", " and ")" that are not structure. Each case below is one a naive split gets wrong.
+query II
+SELECT ord, part FROM tree_treeql_split('TYPE ''x'', WHERE name IN (''a'', ''b'')', ',') ORDER BY ord;
+----
+1	TYPE 'x'
+2	WHERE name IN ('a', 'b')
+
+query II
+SELECT ord, part FROM tree_treeql_split('ATTR lang = ''p)y''', ',') ORDER BY ord;
+----
+1	ATTR lang = 'p)y'
+
+# a comma-SPACE inside a quoted literal: the case that discriminates against a split on ', '
+query II
+SELECT ord, part FROM tree_treeql_split('TYPE ''a, b'', PSEUDO ''p''', ',') ORDER BY ord;
+----
+1	TYPE 'a, b'
+2	PSEUDO 'p'
+
+# the doubled-quote escape, which parity handles for free
+query II
+SELECT ord, part FROM tree_treeql_split('TYPE ''it''''s, ok'', PSEUDO ''p''', ',') ORDER BY ord;
+----
+1	TYPE 'it''s, ok'
+2	PSEUDO 'p'
+
+# a group is ONE part, however many commas it contains
+query II
+SELECT ord, part FROM tree_treeql_split('TYPE ''f'', HAS ( (TYPE ''b'', PSEUDO ''q'') )', ',') ORDER BY ord;
+----
+1	TYPE 'f'
+2	HAS ( (TYPE 'b', PSEUDO 'q') )
