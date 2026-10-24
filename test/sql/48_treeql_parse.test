@@ -41,3 +41,51 @@ SELECT ord, part FROM tree_treeql_split('TYPE ''f'', HAS ( (TYPE ''b'', PSEUDO '
 ----
 1	TYPE 'f'
 2	HAS ( (TYPE 'b', PSEUDO 'q') )
+
+# One clause's text to its IR fields. The KEYWORD is matched from tree_catalog.clause_kinds, so
+# this reader learns a new clause kind the day one is registered -- there is no list of kinds here.
+query I
+SELECT tree_treeql_clause_parse('TYPE ''fn''').kind;
+----
+type
+
+query I
+SELECT tree_treeql_clause_parse('TYPE ''fn''').value;
+----
+fn
+
+# TOLERANT INPUT: keyword case is free and a bare identifier is accepted (D-N15), while the
+# printer goes on emitting the quoted form.
+query I
+SELECT tree_treeql_clause_parse('type fn').value;
+----
+fn
+
+# the printer's doubled-quote escape, undone
+query I
+SELECT tree_treeql_clause_parse('TYPE ''it''''s''').value;
+----
+it's
+
+# ATTR is the one clause with three fields, and its body is emitted UNQUOTED
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR lang = ''py''') AS c);
+----
+lang	=	'py'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name LIKE ''a%''') AS c);
+----
+name	LIKE	'a%'
+
+# WHERE is the host door: its body is raw SQL and is carried verbatim
+query I
+SELECT tree_treeql_clause_parse('WHERE length(name) > 3').value;
+----
+length(name) > 3
+
+# an unregistered keyword yields NULL, which the refusal arm in Task 5 turns into a message
+query I
+SELECT tree_treeql_clause_parse('FROBNICATE ''x''') IS NULL;
+----
+true
