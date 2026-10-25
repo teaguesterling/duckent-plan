@@ -23,6 +23,13 @@
 -- "Inside a quote" is the PARITY of quote characters strictly before a position, which is what
 -- makes the '' escape free: two quotes restore the parity. Paren depth is a second window over
 -- the column the first produced, which needs its own CTE -- window functions do not nest.
+--
+-- `sep` IS ONE CHARACTER. The scan compares `c = sep` per character, so a two-character separator
+-- never matches and the input comes back silently as one part -- a wrong answer, not an error.
+-- Every separator this parser needs is one character: ',' between clauses, and the combinator
+-- characters between steps. Whoever needs a longer one changes `c = sep` to a slice comparison.
+-- There is deliberately NO test pinning the current multi-character behaviour: a test would
+-- enshrine the wrong answer as the intended one.
 CREATE OR REPLACE MACRO tree_treeql_split(s, sep) AS TABLE (
   WITH chars AS (SELECT i, s[i:i] AS c FROM generate_series(1, length(s)) t(i)),
   quoted AS (

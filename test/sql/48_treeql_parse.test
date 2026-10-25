@@ -21,6 +21,25 @@ SELECT ord, part FROM tree_treeql_split('ATTR lang = ''p)y''', ',') ORDER BY ord
 ----
 1	ATTR lang = 'p)y'
 
+# R4: THE QUOTED PAREN NEXT TO A REAL SEPARATOR, which is what makes the quote guard in the depth
+# CASE load-bearing. The `ATTR lang = 'p)y'` case above is a single part, so no separator depends
+# on its depth and the guard could be deleted without that case noticing. These two add the
+# separator. Without `WHEN inq THEN 0`, the quoted paren moves the running depth and the comma is
+# no longer at depth 0, so the input does not split at all and BOTH parts come back as one.
+# The pair is not a duplicate: ')' drives depth to -1 and '(' drives it to +1, and the test is
+# `depth = 0`, not `depth <= 0`, so each sign fails it for a different reason.
+query II
+SELECT ord, part FROM tree_treeql_split('ATTR a = ''p)y'', TYPE ''x''', ',') ORDER BY ord;
+----
+1	ATTR a = 'p)y'
+2	TYPE 'x'
+
+query II
+SELECT ord, part FROM tree_treeql_split('ATTR a = ''(y'', TYPE ''x''', ',') ORDER BY ord;
+----
+1	ATTR a = '(y'
+2	TYPE 'x'
+
 # a comma-SPACE inside a quoted literal: the case that discriminates against a split on ', '
 query II
 SELECT ord, part FROM tree_treeql_split('TYPE ''a, b'', PSEUDO ''p''', ',') ORDER BY ord;
