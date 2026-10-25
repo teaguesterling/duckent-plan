@@ -104,12 +104,21 @@ name	LIKE	'a%'
 # their position the body starts with '!', 'I' or 'N', which no other entry can match -- but
 # nothing covered them either.
 #
-# The alternation is written TWICE, in the op regexp_extract and in the arg one. Each copy's order
-# is load-bearing on its own, so a red step must break them in SEPARATE runs: `<` first in op
-# alone gives op '<', and `<` first in arg alone gives arg "= '10'". Breaking both at once proves
-# only that one of them matters.
+# The alternation is written TWICE, in the op regexp_extract and in the arg one, and each copy
+# carries its own order. ONE red run breaking both copies is enough to attribute both: the two
+# regexp_extract calls are independent, and each assertion below is a `query III` that compares op
+# and arg as separate columns, so a wrong op can only have come from the op copy and a wrong arg
+# only from the arg copy. (These eight were first proved in two separate runs -- `<` first in op
+# alone gives op '<'; `<` first in arg alone gives arg "= '10'" -- which cost an extra run and
+# proved nothing the single run would not have. Recorded so the next person does not repeat it.)
 #
-# These ten assertions plus the two above are the whole alternation. It is the one duckent
+# These eight assertions plus the two above are the whole alternation.
+#
+# NOT covered here, and NOT a claim this file makes: operator CASE is not free. `ATTR name like
+# 'a%'` returns an empty op and an empty arg -- a silent wrong value, not a NULL -- while the
+# clause KEYWORD is matched case-insensitively and `type fn` works. That inconsistency is a
+# tolerance defect carried to Task 3, and it is deliberately not pinned by a test here: pinning
+# the current answer would enshrine the wrong one. It is the one duckent
 # vocabulary with no registry behind it -- `sql/06_selector.sql` writes it out at four more sites
 # -- so until there is an operator table, these are what stop a silent edit.
 query III
