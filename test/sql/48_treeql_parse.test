@@ -97,6 +97,61 @@ SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR na
 ----
 name	LIKE	'a%'
 
+# R12: EVERY ENTRY OF THE ATTR OPERATOR ALTERNATION, because three of them are reachable only by
+# their position in it. `<=`, `>=` and `<>` are each tried BEFORE the one-character prefix that
+# would otherwise swallow them: put `<` first and `ATTR size <= '10'` yields op '<' with the rest
+# of the operator stranded in arg. `!=`, `ILIKE` and `NOT LIKE` are NOT order-dependent -- at
+# their position the body starts with '!', 'I' or 'N', which no other entry can match -- but
+# nothing covered them either.
+#
+# The alternation is written TWICE, in the op regexp_extract and in the arg one. Each copy's order
+# is load-bearing on its own, so a red step must break them in SEPARATE runs: `<` first in op
+# alone gives op '<', and `<` first in arg alone gives arg "= '10'". Breaking both at once proves
+# only that one of them matters.
+#
+# These ten assertions plus the two above are the whole alternation. It is the one duckent
+# vocabulary with no registry behind it -- `sql/06_selector.sql` writes it out at four more sites
+# -- so until there is an operator table, these are what stop a silent edit.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size != ''10''') AS c);
+----
+size	!=	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size <> ''10''') AS c);
+----
+size	<>	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size <= ''10''') AS c);
+----
+size	<=	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size >= ''10''') AS c);
+----
+size	>=	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size < ''10''') AS c);
+----
+size	<	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size > ''10''') AS c);
+----
+size	>	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name ILIKE ''a%''') AS c);
+----
+name	ILIKE	'a%'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name NOT LIKE ''a%''') AS c);
+----
+name	NOT LIKE	'a%'
+
 # WHERE is the host door: its body is raw SQL and is carried verbatim
 query I
 SELECT tree_treeql_clause_parse('WHERE length(name) > 3').value;
