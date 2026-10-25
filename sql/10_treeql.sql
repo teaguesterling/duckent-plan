@@ -139,3 +139,94 @@ CREATE OR REPLACE MACRO tree_treeql_clause_parse(txt) AS (
                            THEN upper(regexp_replace(COALESCE(nullif(m.sym, ''), m.word), '\s+', ' ', 'g')) END,
                   arg:   CASE kind WHEN 'attr' THEN m.arg END}
           FROM a) END);
+
+-- THE RESERVED WORD SET, derived: both registries plus the three STRUCTURAL words. This is the
+-- only place that set appears, and it gains a word the day a combinator or a clause kind is
+-- registered. AS, HAS and NOT are structural -- measured today, neither registry holds any of
+-- them -- so they are the only part written out, and they are written out once.
+--
+-- Sorted, so the list has one printed form rather than whatever order the UNION produced.
+CREATE OR REPLACE MACRO tree_treeql_reserved() AS
+  (SELECT list(keyword ORDER BY keyword) FROM (
+     SELECT keyword FROM tree_catalog.clause_kinds
+     UNION SELECT keyword FROM tree_catalog.combinators
+     UNION SELECT unnest(['AS', 'HAS', 'NOT']) AS keyword));
+
+-- One step's text to {op, body, alias, unknown_word}. The printer is the specification:
+-- tree_treeql_step emits `rtrim(comb? '(' clauses ')'? (' AS ' alias)?)`, so all three parts are
+-- optional, a combinator can appear with no clause list at all (`CHILD` prints bare), and the
+-- alias is last.
+--
+-- WHY FOUR FIELDS AND NOT THREE.
+--   * `body` is NULL ONLY when there is no clause list at all. A PARENLESS clause list returns
+--     its text exactly as a parenthesised one does -- requirement 6 makes `CLASS fn` legal, and
+--     with `body` NULL whenever the parentheses are absent the clause list would just vanish.
+--   * `unknown_word` holds the leading word that is in NEITHER registry. Without it,
+--     `KID (TYPE 'b')` and `KID TYPE 'b'` would both arrive as op NULL with a body -- which is
+--     indistinguishable from a step that has no combinator, so Task 5 could not refuse an
+--     unknown combinator BY NAME. HAS and NOT land here too, which is what lets Task 5 refuse a
+--     parenless group. This reader adds NO group logic and NO refusal: groups are Task 4's and
+--     the refusals are Task 5's.
+--
+-- "IN NEITHER REGISTRY" IS WELL FORMED ONLY BECAUSE THE TWO KEYWORD SETS ARE DISJOINT. Measured:
+-- clause_kinds.keyword INTERSECT combinators.keyword returns 0 rows, and 48_treeql_parse.test
+-- asserts it, because requirement 2 depends on it silently.
+--
+-- THE COMBINATOR KEYWORD IS LOOKED UP IN tree_catalog.combinators, case-insensitively, so there
+-- is no list of keywords here: PARENT, ANCESTOR and PRECEDING were added to the engine as rows
+-- with no macro changed, and this reader inherits a ninth the same way.
+--
+-- THE ALIAS COMES OFF FIRST (requirement 3), because `AS` may follow `)`. It is found by an
+-- ANCHORED TAIL MATCH and not by tree_treeql_split(step, ' AS '): that splitter compares one
+-- character at a time, so a two-character separator matches nothing and returns the step as one
+-- part -- the alias would be always NULL and every test without an alias would still pass.
+--
+-- The anchor is what makes it correct with no depth or quote scan: a quoted or parenthesised `AS`
+-- is never followed by a bare identifier at END-OF-STRING. `(ATTR t = 'X AS y')` and
+-- `(WHERE CAST(n AS INT) = 1)` both have an `AS` and neither has an alias. The captured token is
+-- deliberately LOOSE (`\S+`) and tree_sql_is_ident decides whether it is an alias, so the
+-- identifier rule lives in that macro and is not restated here; a token that fails it is not
+-- stripped either, and stays in the text for Task 5 to refuse rather than disappearing.
+--
+-- KNOWN LIMIT, documented rather than inferred away: a PARENLESS `WHERE n AS m` is genuinely
+-- ambiguous and is read as body `WHERE n` with alias `m`. That is a limit for Task 5 to refuse,
+-- not something this reader can decide.
+--
+-- The outer parentheses are stripped only when the remainder both starts with '(' and ends with
+-- ')'. A clause list always starts with a keyword, so a leading '(' is the step's own.
+CREATE OR REPLACE MACRO tree_treeql_step_parse(txt) AS (
+  WITH s0 AS (SELECT trim(txt, tree_treeql_ws()) AS s),
+  cap AS (SELECT s, nullif(regexp_extract(s, '(?i)\s+AS\s+(\S+)\s*$', 1), '') AS tok FROM s0),
+  al AS (SELECT s, CASE WHEN tree_sql_is_ident(tok) THEN tok END AS alias FROM cap),
+  r AS (SELECT alias,
+               trim(CASE WHEN alias IS NULL THEN s
+                         ELSE regexp_replace(s, '(?i)\s+AS\s+\S+\s*$', '') END,
+                    tree_treeql_ws()) AS rest
+        FROM al),
+  -- the leading WORD, which is lexing and not identifier validation: it is what the two
+  -- registries are consulted about. NULL when the remainder begins with '(' or is empty.
+  w AS (SELECT alias, rest, nullif(regexp_extract(rest, '^([A-Za-z_][A-Za-z0-9_]*)', 1), '') AS lead
+        FROM r),
+  k AS (SELECT alias, rest, lead,
+               (SELECT x.op FROM tree_catalog.combinators x WHERE upper(x.keyword) = upper(w.lead)) AS op,
+               EXISTS (SELECT 1 FROM tree_catalog.clause_kinds k WHERE upper(k.keyword) = upper(w.lead))
+                 AS is_clause
+        FROM w),
+  -- the leading word is CONSUMED when it is a combinator or an unknown word, and LEFT when it is
+  -- a clause keyword -- in that case it is the start of the clause list, not a combinator slot.
+  u AS (SELECT alias, rest, lead, op,
+               CASE WHEN lead IS NOT NULL AND op IS NULL AND NOT is_clause THEN lead END AS unknown_word
+        FROM k),
+  t AS (SELECT alias, op, unknown_word,
+               trim(CASE WHEN op IS NOT NULL OR unknown_word IS NOT NULL
+                         THEN rest[length(lead) + 1 : ] ELSE rest END,
+                    tree_treeql_ws()) AS tail
+        FROM u)
+  SELECT {op: op,
+          body: CASE WHEN tail = '' THEN NULL
+                     WHEN tail LIKE '(%' AND tail LIKE '%)'
+                       THEN trim(tail[2 : length(tail) - 1], tree_treeql_ws())
+                     ELSE tail END,
+          alias: alias,
+          unknown_word: unknown_word}
+  FROM t);

@@ -345,3 +345,267 @@ query III
 SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size<=''10''') AS c);
 ----
 size	<=	'10'
+
+# ==============================================================================================
+# THE STEP READER. The printer is the specification: tree_treeql_step emits
+# `rtrim(comb? '(' clauses ')'? (' AS ' alias)?)`, so all three parts are optional, a combinator
+# can appear with no clause list at all (`CHILD` prints bare), and the alias is last.
+#
+# THE STRUCT IS FOUR FIELDS, {op, body, alias, unknown_word} (R17). The brief said three, and
+# three cannot carry the grammar:
+#   * `body` is NULL ONLY when there is no clause list at all. A PARENLESS clause list returns
+#     its text exactly as a parenthesised one does, because requirement 6 makes `CLASS fn` legal
+#     -- with `body` NULL for a parenless step the clause list would simply vanish.
+#   * `unknown_word` holds the leading word that is in NEITHER registry, and is NULL when the
+#     leading word is a registered combinator, is a clause keyword, or is absent. Without it,
+#     `KID (TYPE 'b')` and `KID TYPE 'b'` would both arrive as op NULL with a body, which is
+#     indistinguishable from a step that has no combinator -- and Task 5 could not refuse an
+#     unknown combinator BY NAME. HAS and NOT land here too, which is what lets Task 5 refuse a
+#     parenless group. This reader adds no group logic and no refusal: both are Task 4's and
+#     Task 5's.
+#
+# THAT RULE IS WELL FORMED ONLY BECAUSE THE TWO KEYWORD SETS ARE DISJOINT, which requirement 2
+# depends on silently, so it is asserted here rather than assumed.
+query I
+SELECT count(*) FROM (SELECT keyword FROM tree_catalog.clause_kinds
+                      INTERSECT SELECT keyword FROM tree_catalog.combinators);
+----
+0
+
+# a bare clause list, parenthesised and not: the same body either way
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('TYPE ''fn''') AS s);
+----
+NULL	TYPE 'fn'	NULL	NULL
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('(TYPE ''fn'')') AS s);
+----
+NULL	TYPE 'fn'	NULL	NULL
+
+# a combinator plus a clause list
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD (TYPE ''b'')') AS s);
+----
+child	TYPE 'b'	NULL	NULL
+
+# A COMBINATOR ALONE, which is a form the printer EMITS -- `CHILD` with no clause list. This is
+# the one case where body is NULL, and it is what makes `body IS NULL` mean "no clause list"
+# rather than "no parentheses".
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD') AS s);
+----
+child	NULL	NULL	NULL
+
+# an alias, and a combinator with alias and clauses together
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('(TYPE ''b'') AS a') AS s);
+----
+NULL	TYPE 'b'	a	NULL
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD (TYPE ''b'') AS x') AS s);
+----
+child	TYPE 'b'	x	NULL
+
+# a combinator with an alias and NO clause list: the alias is split off before the parentheses are
+# read, which is the whole reason requirement 3 orders it that way
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD AS x') AS s);
+----
+child	NULL	x	NULL
+
+# TOLERANT INPUT: keyword case is free, the AS is case-insensitive, and the whitespace between the
+# parts is any whitespace in any quantity. The body's own case is NOT normalised -- it is the
+# clause reader's input, and that reader has its own tolerance.
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('child (type ''b'') as x') AS s);
+----
+child	type 'b'	x	NULL
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('  CHILD   (TYPE ''b'')   AS   x  ') AS s);
+----
+child	TYPE 'b'	x	NULL
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD' || chr(9) || '(TYPE ''b'')' || chr(10) || 'AS' || chr(9) || 'x') AS s);
+----
+child	TYPE 'b'	x	NULL
+
+# ==============================================================================================
+# R18: THE ALIAS IS FOUND WITH AN ANCHORED TAIL MATCH, not with a split on ' AS '.
+#
+# tree_treeql_split compares ONE CHARACTER at a time, so `tree_treeql_split(step, ' AS ')` matches
+# nothing and returns the step as one part -- the alias would be ALWAYS NULL and every test
+# without an alias would still pass. Widening the splitter needs variable width, rightmost match
+# and case-insensitivity at once, in a macro fifteen committed assertions rest on, so the alias
+# is found by anchoring to end-of-string instead.
+#
+# THE ANCHOR IS WHAT MAKES IT CORRECT WITH NO DEPTH OR QUOTE SCAN: a quoted or parenthesised `AS`
+# is never followed by a bare identifier at end-of-string. These four cases are the ones that
+# defeat a naive split, and the third is both of the first two in one step.
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('(ATTR t = ''X AS y'')') AS s);
+----
+ATTR t = 'X AS y'	NULL
+
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('(WHERE CAST(n AS INT) = 1)') AS s);
+----
+WHERE CAST(n AS INT) = 1	NULL
+
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('(WHERE CAST(n AS INT) = 1) AS a') AS s);
+----
+WHERE CAST(n AS INT) = 1	a
+
+# THE CAPTURE IS VALIDATED WITH tree_sql_is_ident, the rule tree_steps already applies, rather
+# than restated here -- so the tail match captures a loose token and is_ident decides. A
+# non-identifier is NOT an alias, and is NOT stripped from the step either: it stays in the text
+# for Task 5 to refuse rather than disappearing silently.
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('CHILD AS 9x') AS s);
+----
+AS 9x	NULL
+
+# THE PRINTER'S OWN NESTING, which is the case an unanchored alias search gets wrong: an alias
+# INSIDE a group, and another on the step itself. Only the outer one is the step's.
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD (TYPE ''f'', HAS ( DESCENDANT (TYPE ''b'') AS y )) AS x') AS s);
+----
+child	TYPE 'f', HAS ( DESCENDANT (TYPE 'b') AS y )	x	NULL
+
+# ==============================================================================================
+# EVERY REGISTERED COMBINATOR KEYWORD RESOLVES TO ITS OP, fed from the PRINTER and matched
+# against the REGISTRY -- so this gains a combinator the day one is registered and there is no
+# list of keywords in this file or in sql/10_treeql.sql. PARENT, ANCESTOR and PRECEDING were
+# added to the engine as rows with no macro changed, and this reader inherits them the same way.
+#
+# NO COUNT IS WRITTEN OUT: the assertion is that every row matched and that there was at least
+# one row, so it cannot go stale on registration and cannot pass vacuously on an empty registry.
+#
+# THE OUTER ALIAS IS `cb`, NOT `c`: tree_treeql_comb's own lookup is written
+# `SELECT c.keyword FROM tree_catalog.combinators c WHERE c.op = want_op`, and macro inlining
+# puts that `c` inside any query whose own scan is also aliased `c` -- the predicate then
+# compares the table to itself and DuckDB raises "More than one row returned by a subquery used
+# as an expression". Measured today; a pre-existing hazard of the printer macro, not of this
+# reader, and avoided here by not reusing the alias.
+query III
+SELECT count(*) > 0,
+       count(*) FILTER (WHERE (tree_treeql_step_parse(tree_treeql_step(cb.op, 'TYPE ''b''', NULL))).op = cb.op) = count(*),
+       count(*) FILTER (WHERE (tree_treeql_step_parse(lower(tree_treeql_step(cb.op, 'TYPE ''b''', NULL)))).op = cb.op) = count(*)
+FROM tree_catalog.combinators cb;
+----
+true	true	true
+
+# the printer's three-part form and its bare form, round-tripped for every registered row
+query II
+SELECT count(*) FILTER (WHERE (tree_treeql_step_parse(tree_treeql_step(cb.op, 'TYPE ''b''', 'al'))).body = 'TYPE ''b'''
+                          AND (tree_treeql_step_parse(tree_treeql_step(cb.op, 'TYPE ''b''', 'al'))).alias = 'al'
+                          AND (tree_treeql_step_parse(tree_treeql_step(cb.op, 'TYPE ''b''', 'al'))).unknown_word IS NULL) = count(*),
+       count(*) FILTER (WHERE (tree_treeql_step_parse(tree_treeql_step(cb.op, NULL, NULL))).op = cb.op
+                          AND (tree_treeql_step_parse(tree_treeql_step(cb.op, NULL, NULL))).body IS NULL) = count(*)
+FROM tree_catalog.combinators cb;
+----
+true	true
+
+# ==============================================================================================
+# REQUIREMENT 6: THE STEP'S CLAUSE-LIST PARENTHESES ARE OPTIONAL ON INPUT (decided 2026-10-18).
+# With bare identifiers from D-N15 this is what makes TREEQL hand-writable, which is the reason
+# it is getting a reader at all. The printer is unchanged; this widens only what is accepted.
+#
+# THIS TOLERANCE DEPENDS ON TASK 5. A parenless step is distinguishable only because a clause
+# keyword never begins a step and a combinator keyword always does -- and that holds because the
+# CONSTRUCTOR emits a combinator for every inner step. That invariant is the constructor's, not
+# the grammar's, and IR built through the host door is not bound by it. Task 5 adds the refusal
+# that puts this tolerance back on the grammar. It is deliberately not added here.
+query II
+SELECT (s).body = (t).body, (s).op IS NOT DISTINCT FROM (t).op
+FROM (SELECT tree_treeql_step_parse('CLASS fn') AS s, tree_treeql_step_parse('(CLASS fn)') AS t);
+----
+true	true
+
+query II
+SELECT (s).body = (t).body, (s).op IS NOT DISTINCT FROM (t).op
+FROM (SELECT tree_treeql_step_parse('CHILD TYPE ''block''') AS s,
+             tree_treeql_step_parse('CHILD (TYPE ''block'')') AS t);
+----
+true	true
+
+# ==============================================================================================
+# AN UNREGISTERED LEADING WORD IS LEFT FOR TASK 5'S REFUSAL (requirement 2), not silently
+# treated as part of the clause list. The parenless and the parenthesised form must be
+# DISTINGUISHABLE from a step with no combinator, which is what the fourth field buys -- and
+# `body` is the clause list either way, never NULL.
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('KID (TYPE ''b'')') AS s);
+----
+NULL	TYPE 'b'	NULL	KID
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('KID TYPE ''b''') AS s);
+----
+NULL	TYPE 'b'	NULL	KID
+
+# A LEADING CLAUSE KEYWORD IS NOT AN UNKNOWN WORD. It is the start of the clause list, so the
+# fourth field stays NULL and the whole text is the body -- the case that would otherwise be
+# confused with `KID TYPE 'b'`.
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('ATTR lang = ''py''') AS s);
+----
+NULL	ATTR lang = 'py'	NULL	NULL
+
+# HAS AND NOT ARE NOT COMBINATORS, so a step beginning with either lands in the fourth field --
+# which is exactly what Task 5 needs in order to refuse a parenless group. No group logic and no
+# refusal message is added here; groups are Task 4's.
+query II
+SELECT (s).unknown_word, (s).body FROM (SELECT tree_treeql_step_parse('HAS ( DESCENDANT (TYPE ''b'') )') AS s);
+----
+HAS	DESCENDANT (TYPE 'b')
+
+query II
+SELECT (s).unknown_word, (s).body FROM (SELECT tree_treeql_step_parse('NOT ( TYPE ''b'' )') AS s);
+----
+NOT	TYPE 'b'
+
+# ==============================================================================================
+# tree_treeql_reserved() IS DERIVED, and is the only place the reserved set appears. Asserted
+# against the REGISTRY and not against a literal list, in three parts, so it cannot go stale when
+# a combinator is registered and cannot pass by returning everything or nothing:
+#   * nothing the registries declare is missing
+#   * the three structural words are present
+#   * nothing else is in it
+query I
+SELECT count(*) FROM (SELECT keyword FROM tree_catalog.clause_kinds
+                      UNION ALL SELECT keyword FROM tree_catalog.combinators) x
+WHERE NOT list_contains(tree_treeql_reserved(), x.keyword);
+----
+0
+
+query I
+SELECT list_has_all(tree_treeql_reserved(), ['AS', 'HAS', 'NOT']);
+----
+true
+
+query I
+SELECT count(*) FROM (SELECT unnest(tree_treeql_reserved()) AS w)
+WHERE w NOT IN (SELECT keyword FROM tree_catalog.clause_kinds)
+  AND w NOT IN (SELECT keyword FROM tree_catalog.combinators)
+  AND w NOT IN ('AS', 'HAS', 'NOT');
+----
+0
