@@ -590,25 +590,37 @@ NOT	TYPE 'b'
 #   * nothing the registries declare is missing
 #   * the three structural words are present
 #   * nothing else is in it
-query I
-SELECT count(*) FROM (SELECT keyword FROM tree_catalog.clause_kinds
-                      UNION ALL SELECT keyword FROM tree_catalog.combinators) x
-WHERE NOT list_contains(tree_treeql_reserved(), x.keyword);
+#
+# N3: EACH OF THE THREE MUST FAIL ON A NULL RETURN, and two of them did not. The first was
+# `count(*) WHERE NOT list_contains(reserved(), kw) = 0` -- against NULL, list_contains is NULL,
+# WHERE drops every row and the count is 0, which is the expected value. The third was a count
+# over `unnest(reserved())`, and unnest(NULL) yields no rows, so that count was 0 too. Both
+# passed vacuously; only list_has_all failed on NULL, so one assertion was carrying the trio.
+#
+# Both are now stated POSITIVELY -- "every keyword was found", with `count(*) > 0` beside it --
+# so a NULL or an empty list fails the count rather than satisfying an empty WHERE. Measured: all
+# three now fail on a NULL return AND on an empty-list return.
+query II
+SELECT count(*) > 0,
+       count(*) FILTER (WHERE list_contains(tree_treeql_reserved(), x.keyword)) = count(*)
+FROM (SELECT keyword FROM tree_catalog.clause_kinds
+      UNION ALL SELECT keyword FROM tree_catalog.combinators) x;
 ----
-0
+true	true
 
 query I
 SELECT list_has_all(tree_treeql_reserved(), ['AS', 'HAS', 'NOT']);
 ----
 true
 
-query I
-SELECT count(*) FROM (SELECT unnest(tree_treeql_reserved()) AS w)
-WHERE w NOT IN (SELECT keyword FROM tree_catalog.clause_kinds)
-  AND w NOT IN (SELECT keyword FROM tree_catalog.combinators)
-  AND w NOT IN ('AS', 'HAS', 'NOT');
+query II
+SELECT count(*) > 0,
+       count(*) FILTER (WHERE w NOT IN (SELECT keyword FROM tree_catalog.clause_kinds)
+                          AND w NOT IN (SELECT keyword FROM tree_catalog.combinators)
+                          AND w NOT IN ('AS', 'HAS', 'NOT'))
+FROM (SELECT unnest(tree_treeql_reserved()) AS w);
 ----
-0
+true	0
 
 # ==============================================================================================
 # M1, AND R18'S ANCHOR AMENDED: THE PRINTER EMITS A STEP THAT CARRIES ONLY AN ALIAS, and the
@@ -691,3 +703,103 @@ query II
 SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('TYPE ''a'' AS as') AS s);
 ----
 TYPE 'a'	as
+
+# ==============================================================================================
+# S1: WHITESPACE HAD TWO DEFINITIONS, and the regex sites used the other one.
+#
+# tree_treeql_ws() declared four characters while five regex sites used RE2's `\s`, which is one
+# character wider. The consequence was the exact failure mode R11 exists to remove, not a new
+# one -- measured before the fix:
+#
+#   TYPE<FF>'fn'          -> value "<FF>'fn'"   a SILENT WRONG VALUE: `\s` accepted the form feed
+#                                               as the keyword separator, then the body trim could
+#                                               not remove it, so tree_treeql_unlit saw a string
+#                                               that does not start with a quote and passed it on
+#   TYPE<FF>              -> a clause whose value is a form feed, not the NULL the no-body guard
+#                                               promises and that this file pins twice for TAB
+#   CHILD<FF>(TYPE 'b')   -> body "<FF>(TYPE 'b')"  the form feed survived at the head of `tail`,
+#                                               so `tail LIKE '('` was false and the step's own
+#                                               parentheses were never stripped
+#
+# THE RULING: tree_treeql_ws() is EXACTLY RE2's `\s` -- space, TAB, LF, FF, CR. R11's "four
+# characters" is superseded. The principle was always ONE definition of whitespace; five is the
+# set that makes the trim and the regexes agree BY CONSTRUCTION rather than by inspection.
+#
+# THE FIRST ASSERTION IS THE ONE THAT MATTERS, and it is DERIVED: for every ASCII character, being
+# in tree_treeql_ws() and matching `\s` must be the same thing. It states the ruling itself, so it
+# cannot go stale and it cannot be satisfied by adding the one character this round happened to
+# find. Measured: 1 disagreement before (chr(12)), 0 after.
+query I
+SELECT count(*) FROM generate_series(1, 127) t(i)
+WHERE regexp_matches(chr(i::INTEGER), '\s') <> contains(tree_treeql_ws(), chr(i::INTEGER));
+----
+0
+
+# the form feed, as a concrete case of the silent wrong value
+query I
+SELECT tree_treeql_clause_parse('TYPE' || chr(12) || '''fn''').value;
+----
+fn
+
+# and the no-body guard, which the wider separator had been defeating
+query I
+SELECT tree_treeql_clause_parse('TYPE' || chr(12)) IS NULL;
+----
+true
+
+# the step reader's paren strip, which reads the same set
+query I
+SELECT (tree_treeql_step_parse('CHILD' || chr(12) || '(TYPE ''b'')')).body;
+----
+TYPE 'b'
+
+# THE VERTICAL TAB STAYS OUT. chr(11) is whitespace to a C programmer and is NOT in RE2's `\s`
+# -- measured. This pins the set to RE2's `\s` and not to "every character someone calls
+# whitespace", which is what makes the derived assertion above meaningful rather than circular.
+# It PASSED before the fix, so it is a pin; the break that fells it is recorded in the report.
+query I
+SELECT tree_treeql_clause_parse('TYPE' || chr(11) || '''fn''') IS NULL;
+----
+true
+
+# ==============================================================================================
+# S3: THE MERGED TOKENISATION LOST "OPERATOR PRESENT, ARGUMENT MISSING" -- and invented an
+# operator in the process.
+#
+# The single match's tail was `\s*(?s)(.+)$`, and `(.+)` requires a character. So a body ending at
+# the operator failed the WHOLE match and reported an empty op -- indistinguishable from a body
+# with no operator at all. R13 makes Task 5 refuse an empty op and an empty arg as SEPARATE named
+# refusals, so the collapse makes Task 5 misdiagnose: it would tell an author that `ATTR name =`
+# has no operator when it plainly has one.
+#
+# WORSE THAN A LOST DISTINCTION, and not in the review -- measured: `ATTR name <=` returned
+# op '<' with arg '='. With no argument to consume, the symbol alternation BACKTRACKED from `<=`
+# to `<` so that `=` could serve as the argument. That is R19's own defect class -- an operator
+# the text does not contain -- surviving in the no-argument corner the merge created.
+#
+# THE FIX IS `(.*)` FOR THE ARGUMENT, nothing else: the operator is still required, so a body with
+# no operator still reports an empty op. Measured: no change to any of the eighteen attr cases
+# above, and the backtracking disappears because the argument no longer has to be fed.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name =') AS c);
+----
+name	=	(empty)
+
+# the contrast that makes the first one mean something: no operator at all, still an empty op.
+# This PASSED before the fix -- it is the half of the distinction that was already right.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name') AS c);
+----
+name	(empty)	(empty)
+
+# a WORD operator with no argument, which is the same case on the other branch
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name LIKE') AS c);
+----
+name	LIKE	(empty)
+
+# THE INVENTED OPERATOR: `<=` entire, not `<` with `=` stranded in arg
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name <=') AS c);
+----
+name	<=	(empty)

@@ -24,7 +24,22 @@
 --
 -- Declared once, read at every site, because four sites patched one at a time is how the same
 -- defect survives in three places.
-CREATE OR REPLACE MACRO tree_treeql_ws() AS ' ' || chr(9) || chr(10) || chr(13);
+--
+-- THIS SET IS EXACTLY RE2's `\s` -- space, TAB, LF, FF, CR -- and that is the point, not a
+-- coincidence. The trim sites read this macro; the five regex sites in this file write `\s`, and
+-- a regex cannot read a macro. So the only way the two can agree is for them to BE the same set.
+-- R11 originally declared four characters, which left `\s` one character wider, and the gap
+-- behaved exactly like the defect R11 exists to remove: `\s` accepted a form feed as a keyword
+-- separator, the trim then could not remove it, and `TYPE<FF>'fn'` came back with the VALUE
+-- "<FF>'fn'" -- silently wrong, measured. R11's four characters are superseded; the principle was
+-- always ONE definition.
+--
+-- The VERTICAL TAB chr(11) is deliberately absent: it is whitespace to a C programmer and is NOT
+-- in RE2's `\s` -- measured, not assumed. Adding it would recreate the gap in the other
+-- direction. test/sql/48_treeql_parse.test asserts the agreement over every ASCII character
+-- rather than pinning the one character this round found, so the invariant is stated and not
+-- sampled.
+CREATE OR REPLACE MACRO tree_treeql_ws() AS ' ' || chr(9) || chr(10) || chr(12) || chr(13);
 
 -- A clause list split on `sep` at paren depth 0 and outside single quotes.
 --
@@ -109,6 +124,15 @@ CREATE OR REPLACE MACRO tree_treeql_unlit(v) AS
 --     them -- the order inside the symbol group is load-bearing exactly as before.
 --   * `(?s)` on the arg, because `.` does not match a newline by default and a WHERE-shaped
 --     literal can contain one; without it the whole match fails and the operator vanishes.
+--   * `(.*)` and NOT `(.+)` for the arg, so an operator with NO argument is still REPORTED. With
+--     `(.+)` a body ending at the operator failed the whole match and reported an EMPTY op --
+--     indistinguishable from a body with no operator at all, while R13 has Task 5 refuse those two
+--     as SEPARATE named refusals, so Task 5 would have told an author that `ATTR name =` has no
+--     operator. Worse, and measured: `ATTR name <=` returned op '<' with arg '=', because with no
+--     argument to consume the symbol alternation BACKTRACKED from `<=` to `<` so that `=` could
+--     serve as the argument -- an operator the text does not contain, which is R19's own defect
+--     class surviving in the corner `(.+)` created. The operator itself is still REQUIRED, so a
+--     body with no operator still reports an empty op, which is what R13 wants.
 --
 -- `value` keeps its own extract of the maximal leading identifier, for two reasons: it must still
 -- be reported for a body with NO operator (an empty op is the correct answer there, and R13 makes
@@ -126,7 +150,7 @@ CREATE OR REPLACE MACRO tree_treeql_clause_parse(txt) AS (
          WHERE regexp_matches(upper((SELECT s FROM t)), '^' || upper(k.keyword) || '\s')),
   a AS (SELECT kind, body,
                regexp_extract(body,
-                 '^([A-Za-z_][A-Za-z0-9_]*)(?:\s*(<=|>=|<>|!=|=|<|>)|\s+((?i)NOT\s+LIKE|ILIKE|LIKE)\b)\s*(?s)(.+)$',
+                 '^([A-Za-z_][A-Za-z0-9_]*)(?:\s*(<=|>=|<>|!=|=|<|>)|\s+((?i)NOT\s+LIKE|ILIKE|LIKE)\b)\s*(?s)(.*)$',
                  ['v', 'sym', 'word', 'arg']) AS m
          FROM kw)
   SELECT CASE
@@ -212,8 +236,26 @@ CREATE OR REPLACE MACRO tree_treeql_reserved() AS
 -- ambiguous and is read as body `WHERE n` with alias `m`. That is a limit for Task 5 to refuse,
 -- not something this reader can decide.
 --
--- The outer parentheses are stripped only when the remainder both starts with '(' and ends with
--- ')'. A clause list always starts with a keyword, so a leading '(' is the step's own.
+-- The outer parentheses are stripped when the remainder both starts with '(' and ends with ')'.
+--
+-- THAT IS NOT A BALANCE CHECK, AND THIS COMMENT USED TO CLAIM MORE THAN THE CODE DOES. "A clause
+-- list always starts with a keyword, so a leading '(' is the step's own" establishes the LEADING
+-- parenthesis and says nothing about the trailing one being its partner. Measured, the input that
+-- shows the gap:
+--
+--     tree_treeql_step_parse('(TYPE ''a'') (TYPE ''b'')')  -> body "TYPE 'a') (TYPE 'b'"
+--
+-- and fed on to the clause reader that yields a `type` clause whose value is `a') (TYPE 'b` --
+-- a malformed step wearing the shape of a well-formed one. The printer never emits this, so the
+-- round-trip contract is safe, but `(TYPE 'a') (CLASS 'b')` is a plausible hand-written mistake,
+-- which is the input class requirement 6 exists to serve.
+--
+-- NO BALANCE CHECK IS ADDED, and that is adjudicated rather than overlooked: a real check needs
+-- the depth scan, which lives in a TABLE macro and cannot be called from this scalar one, and the
+-- two refusals already exist downstream. R6 makes unbalanced parentheses Task 5's, and R13 makes
+-- "a value still carrying its delimiters" a named refusal -- which is what that garbage value is.
+-- So this is a DOCUMENTED LIMIT owned by Task 5, not a defect this macro hides. No test pins the
+-- garbage value: pinning it would enshrine a wrong answer as the intended one.
 CREATE OR REPLACE MACRO tree_treeql_as_re() AS '(?i)(?:^|\s+)AS\s+(\S+)\s*$';
 
 CREATE OR REPLACE MACRO tree_treeql_step_parse(txt) AS (
