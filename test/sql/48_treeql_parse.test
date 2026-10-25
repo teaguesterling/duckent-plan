@@ -729,11 +729,21 @@ TYPE 'a'	as
 # in tree_treeql_ws() and matching `\s` must be the same thing. It states the ruling itself, so it
 # cannot go stale and it cannot be satisfied by adding the one character this round happened to
 # find. Measured: 1 disagreement before (chr(12)), 0 after.
-query I
-SELECT count(*) FROM generate_series(1, 127) t(i)
-WHERE regexp_matches(chr(i::INTEGER), '\s') <> contains(tree_treeql_ws(), chr(i::INTEGER));
+#
+# IT COUNTS AGREEMENTS, NOT DISAGREEMENTS, and that is not a style choice. The first shape of this
+# assertion counted disagreements and expected 0, with no guard that anything was compared. Were
+# tree_treeql_ws() ever to return NULL, every `<>` would be NULL, no row would qualify, the count
+# would be 0 and the assertion would PASS while comparing nothing. Measured, by overriding the
+# macro to NULL in a live session: the old shape returned 0 and passed; this shape returns
+# (true, false) and fails. A gate that incomplete information can satisfy is not a gate -- the
+# same defect this file had just criticised two assertions down.
+query II
+SELECT count(*) > 0,
+       count(*) FILTER (WHERE regexp_matches(chr(i::INTEGER), '\s')
+                            = contains(tree_treeql_ws(), chr(i::INTEGER))) = count(*)
+FROM generate_series(1, 127) t(i);
 ----
-0
+true	true
 
 # the form feed, as a concrete case of the silent wrong value
 query I
@@ -803,3 +813,22 @@ query III
 SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name <=') AS c);
 ----
 name	<=	(empty)
+
+# ITS TWO ORDER-DEPENDENT SIBLINGS, unpinned until now. `<=` was the only one asserted, and the
+# backtrack that invented `<` from `<=` is not special to `<=`: with no argument to consume it
+# would equally report `>` with `=` stranded, and `<` with `>` stranded. One assertion per
+# alternative, because the alternation's ORDER is what makes each reachable.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name >=') AS c);
+----
+name	>=	(empty)
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name <>') AS c);
+----
+name	<>	(empty)
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name !=') AS c);
+----
+name	!=	(empty)

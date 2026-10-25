@@ -256,8 +256,18 @@ CREATE OR REPLACE MACRO tree_treeql_reserved() AS
 -- "a value still carrying its delimiters" a named refusal -- which is what that garbage value is.
 -- So this is a DOCUMENTED LIMIT owned by Task 5, not a defect this macro hides. No test pins the
 -- garbage value: pinning it would enshrine a wrong answer as the intended one.
+-- The alias pattern, declared ONCE. It is read at two sites below -- the capture and the strip --
+-- and they must not drift apart, because a capture that finds an alias the strip then leaves in
+-- the text would report both at once.
+--
+-- `(?:^|\s+)` and not `\s+`: a step that is NOTHING BUT an alias prints as ` AS x`, because
+-- tree_treeql_step uses a right-only rtrim, so after the leading space is trimmed `AS` is the
+-- first character and there is no whitespace left in front of it to match.
 CREATE OR REPLACE MACRO tree_treeql_as_re() AS '(?i)(?:^|\s+)AS\s+(\S+)\s*$';
 
+-- ONE STEP'S TEXT to {op, body, alias, unknown_word}. The block above this macro's own header
+-- documents the four fields, the alias rule and the paren-strip limit; it is long because each
+-- part of it is a ruling, and it sits with the code it governs.
 CREATE OR REPLACE MACRO tree_treeql_step_parse(txt) AS (
   WITH s0 AS (SELECT trim(txt, tree_treeql_ws()) AS s),
   cap AS (SELECT s, nullif(regexp_extract(s, tree_treeql_as_re(), 1), '') AS tok FROM s0),
