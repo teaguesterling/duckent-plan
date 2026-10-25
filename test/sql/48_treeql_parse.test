@@ -104,23 +104,23 @@ name	LIKE	'a%'
 # their position the body starts with '!', 'I' or 'N', which no other entry can match -- but
 # nothing covered them either.
 #
-# The alternation is written TWICE, in the op regexp_extract and in the arg one, and each copy
-# carries its own order. ONE red run breaking both copies is enough to attribute both: the two
-# regexp_extract calls are independent, and each assertion below is a `query III` that compares op
-# and arg as separate columns, so a wrong op can only have come from the op copy and a wrong arg
-# only from the arg copy. (These eight were first proved in two separate runs -- `<` first in op
-# alone gives op '<'; `<` first in arg alone gives arg "= '10'" -- which cost an extra run and
-# proved nothing the single run would not have. Recorded so the next person does not repeat it.)
+# The alternation used to be written TWICE, in the op regexp_extract and in the arg one, each
+# copy carrying its own order. R19 merged them into ONE regexp_extract with named groups, because
+# two copies that re-tokenised the body independently were free to disagree about where the
+# identifier ended -- which is the defect the R19 block at the end of this file records. A wrong
+# op and a wrong arg now have ONE possible source. (The eight were first proved in two separate
+# runs -- `<` first in op alone gives op '<'; `<` first in arg alone gives arg "= '10'" -- which
+# cost an extra run and proved nothing one run would not have. Recorded so the next person does
+# not repeat it.)
 #
-# These eight assertions plus the two above are the whole alternation.
+# These eight assertions plus the two above are the whole alternation, and the ORDER inside the
+# symbol group is still load-bearing: these eight are still what gate it.
 #
-# NOT covered here, and NOT a claim this file makes: operator CASE is not free. `ATTR name like
-# 'a%'` returns an empty op and an empty arg -- a silent wrong value, not a NULL -- while the
-# clause KEYWORD is matched case-insensitively and `type fn` works. That inconsistency is a
-# tolerance defect carried to Task 3, and it is deliberately not pinned by a test here: pinning
-# the current answer would enshrine the wrong one. It is the one duckent
-# vocabulary with no registry behind it -- `sql/06_selector.sql` writes it out at four more sites
-# -- so until there is an operator table, these are what stop a silent edit.
+# OPERATOR CASE IS NOW FREE, and the canonical output is upper case -- see the R19 block at the
+# end of this file, which pins both that tolerance and the defect it would otherwise have
+# widened. The operator spelling is still the one duckent vocabulary with no registry behind it --
+# `sql/06_selector.sql` writes it out at four more sites -- so until there is an operator table,
+# these are what stop a silent edit.
 query III
 SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size != ''10''') AS c);
 ----
@@ -172,3 +172,176 @@ query I
 SELECT tree_treeql_clause_parse('FROBNICATE ''x''') IS NULL;
 ----
 true
+
+# ==============================================================================================
+# R11: ALL WHITESPACE IS FREE AT CLAUSE LEVEL -- space, TAB, LF and CR alike.
+#
+# The parser family treated the ASCII space as the only whitespace, and the failure was SILENT
+# rather than loud. Measured before the fix: `TYPE<TAB>'fn'` returned NULL, and `TYPE <TAB>'fn'`
+# returned the VALUE "<TAB>'fn'" -- a wrong answer dressed as a right one. CRLF is the same
+# defect, not a second one.
+#
+# WHY THE CONTRACT IS "ALL WHITESPACE". Only a depth-0 newline in the FULL selector is
+# structural, and Task 4 splits those upstream, so a newline that reaches a clause list is
+# whitespace and carries no meaning at all. Treating it as free here cannot swallow a step
+# boundary, because the step boundaries were already decided before this macro ran.
+#
+# THE WHITESPACE IS WRITTEN AS chr() CALLS, never as a literal tab or newline: the expected rows
+# of a sqllogictest record are TAB-SEPARATED columns and the record itself ends at a blank line,
+# so a literal tab or newline in a value would be read as structure. Where a value could still
+# carry whitespace after the fix, it is bracketed so a leftover is visible rather than invisible.
+
+# the keyword separated from its body by a TAB: NULL before the fix
+query I
+SELECT tree_treeql_clause_parse('TYPE' || chr(9) || '''fn''').value;
+----
+fn
+
+# a space AND a tab: the silent wrong value, which is the worse half of this defect
+query I
+SELECT tree_treeql_clause_parse('TYPE ' || chr(9) || '''fn''').value;
+----
+fn
+
+# LF before, CR after, and a doubled tab inside: one assertion for the whole character set
+query I
+SELECT tree_treeql_clause_parse(chr(10) || 'TYPE ' || chr(9) || chr(9) || '''fn''' || chr(13)).value;
+----
+fn
+
+# THE NO-BODY GUARD MUST SURVIVE THE WIDENING. A keyword with no operand falls through to NULL
+# (refused by name in Task 5) rather than parsing to a clause with no value. Widening the
+# keyword match from a literal space to any whitespace is exactly the edit that could drop this,
+# so both the bare keyword and the keyword-plus-whitespace case are pinned.
+query I
+SELECT tree_treeql_clause_parse('TYPE') IS NULL;
+----
+true
+
+query I
+SELECT tree_treeql_clause_parse('TYPE' || chr(9)) IS NULL;
+----
+true
+
+# ATTR's own body, tab-separated at both operator sides. This one PASSED before the fix -- the
+# op and arg regexes already wrote `\s*` -- and is pinned because the new single tokenisation
+# could lose it.
+query III
+SELECT (c).value, (c).op, (c).arg
+FROM (SELECT tree_treeql_clause_parse('ATTR lang' || chr(9) || '=' || chr(9) || '''py''') AS c);
+----
+lang	=	'py'
+
+# THE SPLITTER'S TWO SITES: the part text, and the part boundaries. The boundaries are decided by
+# separator position alone -- whitespace moves neither the quote parity nor the paren depth -- so
+# these four cases put whitespace after a separator, before a separator, at both ends of the
+# whole input, and alone in a trailing part. Measured: the part-text trim covers all four, and no
+# boundary-level defect remained once it took the full character set.
+query II
+SELECT ord, '[' || part || ']' FROM tree_treeql_split('TYPE ''x'',' || chr(9) || 'PSEUDO ''p''', ',') ORDER BY ord;
+----
+1	[TYPE 'x']
+2	[PSEUDO 'p']
+
+query II
+SELECT ord, '[' || part || ']' FROM tree_treeql_split('TYPE ''x''' || chr(10) || ', PSEUDO ''p''', ',') ORDER BY ord;
+----
+1	[TYPE 'x']
+2	[PSEUDO 'p']
+
+# CRLF at both ends of the whole input, which is the form a hand-written selector arrives in from
+# a Windows editor
+query II
+SELECT ord, '[' || part || ']'
+FROM tree_treeql_split(chr(13) || chr(10) || 'TYPE ''x'', PSEUDO ''p''' || chr(13) || chr(10), ',') ORDER BY ord;
+----
+1	[TYPE 'x']
+2	[PSEUDO 'p']
+
+# a trailing part that is whitespace ONLY: it must come back empty, not as the whitespace itself
+query II
+SELECT ord, '[' || part || ']' FROM tree_treeql_split('TYPE ''x'',' || chr(9) || chr(10), ',') ORDER BY ord;
+----
+1	[TYPE 'x']
+2	[]
+
+# ==============================================================================================
+# R19: THE ATTR PARSER INVENTED AN OPERATOR, and keyword-case tolerance would have widened it.
+#
+# Measured before the fix: `ATTR ALIKE 'x'` returned op LIKE and arg 'x'. There is no operator in
+# that text at all. `value`, `op` and `arg` were three independent regexp_extract calls over the
+# same body, and nothing made them agree where the identifier ended: the op regex BACKTRACKED the
+# greedy identifier and found LIKE inside the name that `value` reported whole. Lowercase `alike`
+# escaped only because the alternation was case-sensitive -- so making operator case free, which
+# this commit does, would have widened the defect to every identifier containing `like`.
+#
+# THE FIX IS ONE TOKENISATION. op and arg now come from a SINGLE regexp_extract with named
+# groups, so the two cannot disagree by construction rather than by inspection. A WORD operator
+# requires whitespace separation from the identifier and a word boundary after itself; a SYMBOL
+# operator requires neither, because `ATTR size<='10'` worked and must keep working. `value` keeps
+# its own extract of the maximal leading identifier: it is still reported for a body with no
+# operator at all, and it cannot disagree with the single tokenisation, because the only character
+# that could extend the identifier further is itself an identifier character -- which is neither
+# whitespace nor the start of any symbol operator.
+#
+# The reported op is CANONICAL -- upper-cased and internal whitespace collapsed -- which is the
+# plan's standing "tolerant input, canonical output".
+#
+# An EMPTY op is the correct answer for a body with no operator, not a NULL: R13 makes Task 5
+# refuse it by name.
+
+# the three cases that invented an operator. ALIKE and aLIKE returned LIKE; `alike` escaped by
+# case alone, and is the one that the case-insensitivity would otherwise have broken.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR ALIKE ''x''') AS c);
+----
+ALIKE	(empty)	(empty)
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR aLIKE ''x''') AS c);
+----
+aLIKE	(empty)	(empty)
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR alike ''x''') AS c);
+----
+alike	(empty)	(empty)
+
+# the SAME defect on the right-hand side of the word: `LIKEx` is not an operator either, and
+# without the word boundary the op regex reported LIKE with "x 'a'" stranded in arg
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name LIKEx ''a''') AS c);
+----
+name	(empty)	(empty)
+
+# OPERATOR CASE IS NOW FREE, and the canonical output is upper case -- the same tolerance the
+# clause KEYWORD already had, whose absence here was the inconsistency Task 2 recorded and left.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name like ''a%''') AS c);
+----
+name	LIKE	'a%'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name ilike ''a%''') AS c);
+----
+name	ILIKE	'a%'
+
+# CANONICAL means internal whitespace collapsed as well as upper-cased, so the two-word operator
+# has exactly one printed form however it was spaced on input
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name not   like ''a%''') AS c);
+----
+name	NOT LIKE	'a%'
+
+query III
+SELECT (c).value, (c).op, (c).arg
+FROM (SELECT tree_treeql_clause_parse('ATTR name not' || chr(9) || 'like ''a%''') AS c);
+----
+name	NOT LIKE	'a%'
+
+# A SYMBOL OPERATOR NEEDS NO SEPARATION. This passed before the fix and is pinned because the
+# obvious way to require separation for the word operators is to require it for all of them.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size<=''10''') AS c);
+----
+size	<=	'10'
