@@ -609,3 +609,85 @@ WHERE w NOT IN (SELECT keyword FROM tree_catalog.clause_kinds)
   AND w NOT IN ('AS', 'HAS', 'NOT');
 ----
 0
+
+# ==============================================================================================
+# M1, AND R18'S ANCHOR AMENDED: THE PRINTER EMITS A STEP THAT CARRIES ONLY AN ALIAS, and the
+# anchor has to match at position 0 to read it.
+#
+# tree_treeql_step (sql/06_selector.sql:313-314) is
+# `rtrim(comb? '(' clauses ')'? (' AS ' alias)?)`. With op NULL and clauses NULL the first two
+# parts collapse to '' and rtrim trims only the RIGHT side, so the printed step is ' AS x' -- the
+# AS is the first non-space character. The reader trims that leading space away, and an anchor of
+# `\s+AS\s+` cannot match at position 0. So the alias was missed, `AS` became an unrecognised
+# leading word, and Task 5 would have refused legal printer output by name:
+# measured `{op: NULL, body: 'x', alias: NULL, unknown_word: 'AS'}` where the IR says
+# `{op: NULL, body: NULL, alias: 'x', unknown_word: NULL}`. parse(print(ir)) != ir.
+#
+# THE SHAPE IS REACHABLE THROUGH THE ORDINARY CONSTRUCTOR, not only by calling the printer macro
+# by hand -- measured, `tree_steps([{'as': 'x'}])` builds it and the whole printer emits ' AS x'.
+# `as` is in the step shape's key set, nothing requires a step to carry a clause, and an alias is
+# confined to depth 0 where a written combinator is refused outright -- so an alias-only step is
+# OBLIGED to print with no combinator and no parentheses, which is exactly the shape that broke.
+# Both routes are asserted, because the constructor route is the one an author reaches.
+#
+# WHY NO EXISTING ASSERTION CAUGHT IT: the two registry-driven round trips below feed printer
+# output for every registered combinator, so `op` is never NULL in a printer-fed assertion, and
+# the `op IS NULL` alias cases are all hand-written text carrying the space `\s+` needed.
+#
+# R18's anchor is amended to `(?i)(?:^|\s+)AS\s+(\S+)\s*$`. Measured 18/18 over every alias shape
+# in this file; the old anchor scores 17/18 and the single case that separates them is the
+# trimmed `AS x` below.
+
+# the printer macro's own output, op NULL and clauses NULL
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse(tree_treeql_step(NULL, NULL, 'x')) AS s);
+----
+NULL	NULL	x	NULL
+
+# the same IR through the ORDINARY CONSTRUCTOR and the whole printer
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse(tree_selector_to_treeql(tree_steps([{'as': 'x'}]))) AS s);
+----
+NULL	NULL	x	NULL
+
+# and the trimmed text the reader actually sees: the one case the old anchor missed
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('AS x') AS s);
+----
+NULL	NULL	x	NULL
+
+# WHAT THE WIDENED ANCHOR MUST NOT START MATCHING. Letting AS match at position 0 is how AS stops
+# being a WORD and becomes a PREFIX.
+#
+# These two are GATES, and each falls to its own wrong fix -- both mutants measured:
+#   * `ASx y`, a word merely STARTING with AS: treating AS as a prefix (`AS\S*\s+(\S+)$`) reads
+#     `y` as the alias.
+#   * `ATTR as = x`, an attribute NAMED as with a bare identifier value (D-N15): searching for AS
+#     anywhere and taking the final token (`AS\b.*\s(\S+)$`) reads `x` as the alias.
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('ASx y') AS s);
+----
+NULL	y	NULL	ASx
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('ATTR as = x') AS s);
+----
+NULL	ATTR as = x	NULL	NULL
+
+# These two are REGRESSION PINS, not gates. I could construct no wrong anchor that breaks either:
+# tree_sql_is_ident refuses `'x'` in the first, and leftmost matching settles the second. Recorded
+# as pins so the next person does not go hunting for a mutant that fails them.
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('(ATTR as = ''x'')') AS s);
+----
+ATTR as = 'x'	NULL
+
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('TYPE ''a'' AS as') AS s);
+----
+TYPE 'a'	as

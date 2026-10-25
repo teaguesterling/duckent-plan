@@ -188,19 +188,41 @@ CREATE OR REPLACE MACRO tree_treeql_reserved() AS
 -- identifier rule lives in that macro and is not restated here; a token that fails it is not
 -- stripped either, and stays in the text for Task 5 to refuse rather than disappearing.
 --
+-- `(?:^|\s+)` AND NOT `\s+`, because the printer emits a step that is NOTHING BUT an alias.
+-- tree_treeql_step is `rtrim(comb? '(' clauses ')'? (' AS ' alias)?)`; with op NULL and clauses
+-- NULL the first two parts collapse to '' and rtrim trims only the RIGHT side, so the step prints
+-- as ' AS x' and the AS is the first non-space character once this macro has trimmed. `\s+` --
+-- R18's original anchor, measured on 11 cases that did not include this shape -- cannot match at
+-- position 0, so the alias was missed and `AS` was reported as an unknown leading word: legal
+-- printer output refused by name. The shape is reachable through the ordinary constructor, not
+-- only by calling the printer by hand, and an alias-only step is OBLIGED to take it: an alias is
+-- confined to depth 0, where a written combinator is refused outright.
+--
+-- Widening to position 0 is also how `AS` could stop being a WORD and become a PREFIX. The two
+-- gates for that are in the test file: `ASx y` (a word starting with AS) and `ATTR as = x` (an
+-- attribute named `as` with a bare identifier value), each with its own measured wrong fix.
+--
+-- ONE PATTERN, read at both sites. It was written twice -- once to capture and once to strip --
+-- which is the two-copies shape the R19 comment above argues against, and M1's fix had to land on
+-- both lines or the alias would be captured and then not stripped. The capture group does not
+-- change what the pattern matches, so regexp_replace strips the whole match with the identical
+-- pattern and there is nothing left to keep in step.
+--
 -- KNOWN LIMIT, documented rather than inferred away: a PARENLESS `WHERE n AS m` is genuinely
 -- ambiguous and is read as body `WHERE n` with alias `m`. That is a limit for Task 5 to refuse,
 -- not something this reader can decide.
 --
 -- The outer parentheses are stripped only when the remainder both starts with '(' and ends with
 -- ')'. A clause list always starts with a keyword, so a leading '(' is the step's own.
+CREATE OR REPLACE MACRO tree_treeql_as_re() AS '(?i)(?:^|\s+)AS\s+(\S+)\s*$';
+
 CREATE OR REPLACE MACRO tree_treeql_step_parse(txt) AS (
   WITH s0 AS (SELECT trim(txt, tree_treeql_ws()) AS s),
-  cap AS (SELECT s, nullif(regexp_extract(s, '(?i)\s+AS\s+(\S+)\s*$', 1), '') AS tok FROM s0),
+  cap AS (SELECT s, nullif(regexp_extract(s, tree_treeql_as_re(), 1), '') AS tok FROM s0),
   al AS (SELECT s, CASE WHEN tree_sql_is_ident(tok) THEN tok END AS alias FROM cap),
   r AS (SELECT alias,
                trim(CASE WHEN alias IS NULL THEN s
-                         ELSE regexp_replace(s, '(?i)\s+AS\s+\S+\s*$', '') END,
+                         ELSE regexp_replace(s, tree_treeql_as_re(), '') END,
                     tree_treeql_ws()) AS rest
         FROM al),
   -- the leading WORD, which is lexing and not identifier validation: it is what the two
