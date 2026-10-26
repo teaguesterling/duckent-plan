@@ -2337,15 +2337,28 @@ FROM (SELECT unnest(tree_parse_treeql('(TYPE ''a'', HAS ( WHERE a = 1 TYPE ''b''
 ----
 selector:treeql | step:~ | type:a | has:~ | step:~ | where:a = 1 TYPE 'b'
 
-# F3. THE ONE NO THEOREM AND NO SWEEP CAN EVER SEE, which is why a record is the only gate it will
-# ever have. Two parenthesised steps side by side collapse into ONE step whose attr `arg` holds the
-# rest of the text. tree_treeql_wrapped's closure is CONDITIONAL: on raw-bodied text it falls back
-# to the SF-3 first-and-last-character test, which `(ATTR a = 1) (ATTR b = 2)` satisfies with
-# MISMATCHED parentheses.
+# F3. THE ONE WHOSE ONLY GATE IS A RECORD, and fix round 4 had to correct WHY. Two parenthesised
+# steps side by side collapse into ONE step whose attr `arg` holds the rest of the text.
+# tree_treeql_wrapped's closure is CONDITIONAL: on raw-bodied text it falls back to the SF-3
+# first-and-last-character test, which `(ATTR a = 1) (ATTR b = 2)` satisfies with MISMATCHED
+# parentheses.
 #
-# The `arg` below is `1) (ATTR b = 2`, which tree_steps will not build -- so the IR is not
-# constructible, yet it REPRINTS BYTE-IDENTICALLY. Both theorems are therefore blind to it: EXACT
-# compares to an IR nobody can construct, and REPRINT compares equal. Identical on BASE.
+# THE ROUND-3 MECHANISM WAS MEASURED FALSE IN FIX ROUND 4, and the claim is withdrawn here rather
+# than a thousand lines away. It said this header's own "NO THEOREM AND NO SWEEP CAN EVER SEE",
+# and that the `arg` below "is IR tree_steps will not build -- so the IR is not constructible".
+# It came from the coordinator's fix-round-3 brief (task-5-fix-round-3.md:60 and :111) and was
+# transcribed in good faith. MEASURED in fix round 4, on this worktree's sql and on a BASE 3384ede
+# tree, identical on both: tree_steps([{attr: 'a = 1) (ATTR b = 2'}]) BUILDS (three nodes), prints
+# exactly the text below, and satisfies EXACT and NORMALISING. The IR IS constructible and BOTH
+# theorems are SATISFIED on it, not blind. The FIX ROUND 4 block at the end of this file pins that.
+#
+# WHAT IT ACTUALLY IS: a HAND-WRITTEN-INPUT defect, requirement 6's class. A person who writes this
+# text means two steps, and the printer never writes it for a two-step IR -- measured over
+# tree_catalog.combinators, the seven combinators legal at depth 0 and the `desc` default all print
+# `(ATTR a = 1)` and `<KEYWORD> (ATTR b = 2)` on TWO lines, and `self` refuses. So the parser is
+# free to read the text as the one-step IR, and does. No theorem over printer output can cover
+# that, because the theorems quantify over printer output and this text IS printer output with a
+# correct round trip. Hence a record and not a theorem. Identical on BASE.
 query I
 SELECT string_agg(kind || ':' || COALESCE(value, '~') || '/' || COALESCE(arg, '~'), ' | '
                   ORDER BY node_id)
@@ -2353,10 +2366,46 @@ FROM (SELECT unnest(tree_parse_treeql('(ATTR a = 1) (ATTR b = 2)'), recursive :=
 ----
 selector:treeql/~ | step:~/~ | attr:a/1) (ATTR b = 2
 
-# ...and this is the row that proves the theorems cannot see it. BEYOND THE BRIEF's four records,
-# and load-bearing: without it, "no theorem can see this" is an argument rather than a measurement.
+# ...and this is the row that shows WHY no theorem over printer output catches it: the normalising
+# theorem RUNS on this text and PASSES, byte for byte. Round 3 read this row as proof that "the
+# theorems cannot see it"; fix round 4 measured that it proves the opposite -- the theorem is
+# satisfied, which is exactly what leaves the misread uncovered. Still BEYOND THE ROUND-3 BRIEF's
+# four records and still load-bearing, for the corrected reason: without it, "no theorem over
+# printer output can cover this" is an argument rather than a measurement.
 query I
 SELECT tree_selector_to_treeql(tree_parse_treeql('(ATTR a = 1) (ATTR b = 2)'))
      = '(ATTR a = 1) (ATTR b = 2)';
 ----
+true
+
+# ==============================================================================================
+# FIX ROUND 4 -- ONE RECORD, SO THE WITHDRAWN SENTENCE CANNOT COME BACK
+#
+# WHY IT EXISTS: fix round 3 wrote, at F3 above and at sql/10_treeql.sql, that the one-step IR
+# behind `(ATTR a = 1) (ATTR b = 2)` is "IR tree_steps will not build" and that "NEITHER theorem
+# ... can ever see it". Both clauses were measured FALSE in fix round 4. Prose can drift back; a
+# record cannot. This record pins the three facts that killed the sentence.
+#
+# THE BAR FOR IT IS NOT "RED BEFORE, GREEN AFTER". It pins behaviour that is IDENTICAL on BASE
+# 3384ede and is not changing in this round. The bar is that it goes RED if someone later makes
+# that IR unbuildable, changes what it prints, or breaks EXACT on it -- which is what would let
+# the withdrawn sentence look true again.
+#
+# Row 1: the constructor BUILDS it -- three nodes, so `tree_steps will not build` is false.
+# Row 2: it prints the F3 text byte for byte, so the F3 text is legitimate printer output.
+# Row 3: EXACT holds, so the exact theorem is SATISFIED on it rather than blind to it.
+# ==============================================================================================
+query I
+SELECT ok FROM (
+  SELECT 1 AS i, len(tree_steps([{attr: 'a = 1) (ATTR b = 2'}])) = 3 AS ok
+  UNION ALL
+  SELECT 2, tree_selector_to_treeql(tree_steps([{attr: 'a = 1) (ATTR b = 2'}]))
+            = '(ATTR a = 1) (ATTR b = 2)'
+  UNION ALL
+  SELECT 3, tree_parse_treeql(tree_selector_to_treeql(tree_steps([{attr: 'a = 1) (ATTR b = 2'}])))
+            = tree_steps([{attr: 'a = 1) (ATTR b = 2'}])
+) ORDER BY i;
+----
+true
+true
 true

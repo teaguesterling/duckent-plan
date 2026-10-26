@@ -285,9 +285,33 @@ CREATE OR REPLACE MACRO tree_treeql_quotes_trusted(s) AS
 --     (TYPE 'a') (TYPE 'b')       REFUSED -- no raw body, so the trusted test applies
 --
 -- THE FIRST ROW IS THE WORST SHAPE IN THIS FILE, and it is why a record and not a theorem gates
--- it: that `arg` is IR tree_steps will not build, and yet the text REPRINTS BYTE-IDENTICALLY. The
--- exact theorem compares against an IR nobody can construct, and the normalising theorem compares
--- equal, so NEITHER theorem and no acceptance sweep can ever see it. It took a reader to find.
+-- it. THE MECHANISM FIX ROUND 3 RECORDED HERE WAS MEASURED FALSE IN FIX ROUND 4, and it is
+-- withdrawn at the place it sat rather than a thousand lines away. It said: "that `arg` is IR
+-- tree_steps will not build ... so NEITHER theorem and no acceptance sweep can ever see it". It
+-- came from the coordinator's fix-round-3 brief (task-5-fix-round-3.md:60 and :111) and was
+-- transcribed in good faith. MEASURED by me in fix round 4, on this worktree's sql and on a BASE
+-- 3384ede tree, identical on both:
+--
+--     tree_steps([{attr: 'a = 1) (ATTR b = 2'}])   BUILDS -- three nodes
+--       prints                                     (ATTR a = 1) (ATTR b = 2)   -- the row above
+--       EXACT         parse(print(ir)) == ir       TRUE
+--       NORMALISING   print(parse(print(ir)))      TRUE
+--
+-- So the IR IS constructible and BOTH theorems are SATISFIED on it -- not blind. The round trip on
+-- that text is CORRECT, so this is not a round-trip defect at all.
+--
+-- WHAT IT ACTUALLY IS: a HAND-WRITTEN-INPUT defect, requirement 6's class. A person who writes
+-- that text means TWO parenthesised steps, and the printer never writes it for a two-step IR.
+-- MEASURED, over the registry: of the eight combinators in tree_catalog.combinators, the seven
+-- that are legal at depth 0 each print the two-step IR on TWO LINES as `(ATTR a = 1)` then
+-- `<KEYWORD> (ATTR b = 2)`, the `desc` default prints the DESCENDANT form, and `self` refuses
+-- outright -- none of them prints the one-line text. So the parser is free to read that text as
+-- the ONE-step IR, and does. NO THEOREM OVER PRINTER OUTPUT CAN COVER THAT, because the theorems
+-- quantify over printer output and this text IS printer output whose round trip is correct. That
+-- is why its only gate is a record: the FIX ROUND 4 block in test/sql/48_treeql_parse.test.
+--
+-- The re-review's replacement mechanism -- "the printer is ambiguous for that IR" -- was measured
+-- false too, by the same sweep: no two-step IR prints this text, so the preimage is not ambiguous.
 -- Identical on BASE 3384ede. Not fixed here by ruling -- the fallback is what keeps raw-bodied
 -- text no worse off than BASE, and removing it is a behaviour change.
 --
@@ -517,8 +541,17 @@ CREATE OR REPLACE MACRO tree_treeql_reserved() AS
 -- tree_treeql_wrapped decides by quote-aware depth.
 --
 -- THAT USED TO BE A FIRST-AND-LAST-CHARACTER TEST, and this comment used to record it as a
--- documented limit owned by Task 5. Task 5 closed it instead, because it was one cause with five
--- effects rather than a corner. "A clause list always starts with a keyword, so a leading '(' is
+-- documented limit owned by Task 5. Task 5 closed it CONDITIONALLY instead, because it was one
+-- cause with five effects rather than a corner. CONDITIONALLY is fix round 4's correction: this
+-- line said "closed" flat, and the same file says at tree_treeql_depths and at
+-- tree_treeql_wrapped above that the closure holds only where the quote scan can be TRUSTED --
+-- one file with two answers. The argument is there and is not restated here. Measured by me in
+-- fix round 4, on this worktree's sql: tree_treeql_no_raw_body('(ATTR a = 1) (ATTR b = 2)') is
+-- FALSE, so tree_treeql_wrapped takes the fallback and answers TRUE on mismatched parentheses.
+-- On raw-bodied text the limit is therefore still open.
+--
+-- WHY IT WAS ONE CAUSE AND NOT A CORNER. "A clause list always starts with a keyword, so a
+-- leading '(' is
 -- the step's own" establishes the LEADING parenthesis and says nothing about the trailing one
 -- being its partner. Measured at BASE, the input that showed the gap:
 --
