@@ -479,8 +479,30 @@ CREATE OR REPLACE MACRO tree_parse_treeql(txt) AS (
 WITH
 -- LEVEL 0: the top-level chain. Requirement 1 -- the split is on a DEPTH-0 newline, so a newline
 -- inside a quoted value or a clause list cannot end a step.
-lvl0 AS (SELECT (x).ord AS i0, (x).part AS part
+raw0 AS (SELECT (x).ord AS ord, (x).part AS part
          FROM (SELECT unnest(tree_treeql_split_parts(txt, chr(10))) AS x)),
+-- R26: A BLANK TOP-LEVEL PART IS DROPPED. A trailing newline otherwise assembled an INVENTED
+-- step -- op 'desc', no clauses -- and that step is not inert: it compiles to a DESCENDANT with
+-- no predicate and matches different rows. Every file and every editor adds that newline unasked,
+-- and Task 6 reads selector text out of a table where it comes with the data.
+--
+-- THE TWO SEPARATORS ARE DELIBERATELY NOT SYMMETRIC, which is what keeps this from contradicting
+-- R6. R6 makes an empty part in the CLAUSE list a syntax error, and that is right there: the
+-- separator is a comma, and nobody types a comma by accident. Here the separator is a NEWLINE,
+-- which comes from the medium and not from the author, so dropping it is whitespace tolerance of
+-- the same kind that makes keyword case free -- "tolerant input, canonical output". Clause-list
+-- behaviour is untouched; an empty clause part still comes back as a part.
+--
+-- THE RENUMBERING IS LOAD-BEARING. `i0` decides which step is FIRST, and only the first step of
+-- the outer chain keeps a NULL combinator. Filter on the splitter's own ordinals and a LEADING
+-- newline leaves the surviving step at i0 = 2, which then defaults to desc -- so the selector
+-- would gain a combinator its text does not contain. Measured: with the renumbering removed the
+-- leading-newline assertion in 48_treeql_parse.test is the one record that fails.
+--
+-- If this leaves NO parts the selector has no steps, which the refusal set below reports; Task 5
+-- owns the wording for it.
+lvl0 AS (SELECT CAST(row_number() OVER (ORDER BY ord) AS INTEGER) AS i0, part
+         FROM raw0 WHERE trim(part, tree_treeql_ws()) <> ''),
 rd0 AS (SELECT i0, part, tree_treeql_step_parse(part) AS p FROM lvl0),
 stp0 AS (SELECT i0, part,
            CASE WHEN i0 = 1 THEN (p).op ELSE COALESCE((p).op, 'desc') END AS op,
@@ -630,8 +652,14 @@ asm AS (SELECT list({node_id: node_id, parent_id: parent_id, kind: kind, value: 
 --   * an EMPTY group, which tests nothing and which tree_steps also refuses to build. The chain
 --     reader answers NULL for it, so there is nothing to put under the group node.
 --   * a group at the LAST level, whose keyword is read but whose inside is not.
+--   * NO STEPS AT ALL, which is what R26's dropping of blank parts leaves for an empty or
+--     whitespace-only text. The fragment is the input itself, so the message still names what
+--     was handed over; `<NULL>` follows tree_err's own convention for a NULL rather than being
+--     new wording, and the COALESCE is there because a NULL anywhere in a refusal message makes
+--     the whole message NULL -- a defect this repo has shipped twice.
 bad AS (SELECT min(f) AS f FROM (
-      SELECT part AS f FROM stp0 WHERE uw IS NOT NULL
+      SELECT COALESCE(txt, '<NULL>') AS f WHERE NOT EXISTS (SELECT 1 FROM lvl0)
+      UNION ALL SELECT part FROM stp0 WHERE uw IS NOT NULL
       UNION ALL SELECT part FROM stp1 WHERE uw IS NOT NULL
       UNION ALL SELECT part FROM stp2 WHERE uw IS NOT NULL
       UNION ALL SELECT part FROM sl0 WHERE cl IS NULL AND gkind IS NULL

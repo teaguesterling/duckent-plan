@@ -1405,3 +1405,73 @@ SELECT tree_parse_treeql('(CLASS ''f'', HAS ( (TYPE ''b'', NOT ( (TYPE ''c'') ))
      = tree_steps([{class: 'f', has: [{type: 'b', "not": [{type: 'c'}]}]}]);
 ----
 true
+
+# ==============================================================================================
+# R26: A BLANK TOP-LEVEL PART IS DROPPED, NOT ASSEMBLED.
+#
+# Before this, a trailing newline produced an INVENTED step: `(TYPE 'a')` plus chr(10) parsed to
+# four nodes, the second step carrying op='desc' and no clauses at all. That is not an inert
+# node -- it compiles to a DESCENDANT with no predicate, so it matches different rows -- and
+# every file and every editor adds that newline unasked. A leading newline and a blank line
+# between two real steps did the same.
+#
+# WHY THIS IS TOLERANCE AND NOT A SYNTAX ERROR, which is the whole of the ruling. R6 makes an
+# empty part in the CLAUSE list an error, and that is right there: the separator is a comma, and
+# a comma is never incidental -- somebody typed it. At STEP level the separator is a NEWLINE,
+# which arrives from the medium rather than from the author. So the two levels are deliberately
+# NOT symmetric, and this is "tolerant input, canonical output" -- the same principle that makes
+# keyword case free and a bare identifier acceptable.
+#
+# THE RENUMBERING IS LOAD-BEARING, and the leading-newline case below is the one that proves it.
+# `i0` decides which step is first, and the first step of the outer chain is the one that keeps a
+# NULL combinator. Drop part 1 and keep the splitter's own ordinals and the surviving step is
+# i0=2, which defaults to desc -- so the selector would gain a combinator the text does not have
+# and still not equal the constructor's IR. The parts are renumbered after the filter, not before.
+#
+# Clause-list behaviour is UNCHANGED: `(TYPE 'x',<TAB><LF>)` still answers an empty second part,
+# which the assertions earlier in this file pin.
+# ==============================================================================================
+
+# a TRAILING newline, which is how text arrives from a file or a table column
+query I
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(10)) = tree_steps([{type: 'a'}]);
+----
+true
+
+# a LEADING newline: the surviving step must still be the FIRST step, so its op stays NULL
+query I
+SELECT tree_parse_treeql(chr(10) || '(TYPE ''a'')') = tree_steps([{type: 'a'}]);
+----
+true
+
+# a BLANK LINE between two real steps, which must not become a third step between them
+query I
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(10) || chr(10) || 'CHILD (TYPE ''b'')')
+     = tree_steps([{type: 'a'}, {comb: 'child', type: 'b'}]);
+----
+true
+
+# a CRLF trailing pair, the form a selector arrives in from a Windows editor. The \r is inside
+# tree_treeql_ws(), so the part trims to empty and is dropped rather than parsed as a step whose
+# text is a carriage return.
+query I
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(13) || chr(10)) = tree_steps([{type: 'a'}]);
+----
+true
+
+# THE EXACT THEOREM, on text that carries a trailing newline. This is the assertion that matters
+# for Task 6: it reads selector text out of a table, where the newline comes with the data.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: 'a'}, {comb: 'child', type: 'b'}])) || chr(10))
+     = tree_steps([{type: 'a'}, {comb: 'child', type: 'b'}]);
+----
+true
+
+# ...and when dropping the blank parts leaves NONE, there is nothing to assemble. That is Task 5's
+# `selector has no steps` row, so this emits the ONE generic refusal rather than wording Task 5
+# owns -- the assertion pins the prefix only, which is what Task 5 will replace.
+statement error
+SELECT tree_parse_treeql('');
+----
+tree_parse_treeql: cannot read
