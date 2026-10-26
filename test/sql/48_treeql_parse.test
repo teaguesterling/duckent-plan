@@ -2468,3 +2468,114 @@ SELECT ok FROM (
 true
 true
 true
+
+# ==============================================================================================
+# TASK 6 -- REGISTRATION AND DISPATCH: a TREEQL selector given as TEXT reaches tree_match
+#
+# Everything above this line parses text to IR and never matches a row with it. These records
+# are the increment: tree_catalog.selector_languages.parser stops being NULL for the treeql row
+# (sql/10_treeql.sql), and test/run.py resolves a text selector's front-end by READING THAT
+# COLUMN rather than by a branch on the language's name.
+#
+# WHY `language := 'treeql'` IS NAMED ON THESE RECORDS. tree_catalog.settings's default is css
+# (sql/09_css.sql), so a bare text selector goes to the css front-end and is refused in css's
+# own words -- which is what 37_css_parser.test pins. A record that omits the argument therefore
+# measures the css parser and not this one. The default-language path has its own record below,
+# which MOVES the setting rather than assuming it.
+#
+# THE TREE. This file declared none until now: every record above is macro algebra over text.
+# The shape is 31_match.test's, the smallest one carrying a `type` slot -- without the semantic
+# block a TYPE clause has no column to read.
+# ==============================================================================================
+
+statement ok
+CALL tree_ddl_create('main', 'app', tree_spec(tree_shape(
+  root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
+  semantic := tree_semantic(type := 'type', key := 'name')),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+
+# THE ASSERTION THIS INCREMENT EXISTS FOR: a TREEQL selector handed over as TEXT matches rows.
+# The bar is ROWS and not "no error": an empty answer is also what a mis-dispatched selector
+# returns, and absence of signal is not success.
+query I
+FROM tree_match('main', 'app', '(TYPE ''function_definition'')', language := 'treeql') SELECT count(*) > 0;
+----
+true
+
+# THE SAME SELECTOR AS TEXT AND AS IR RETURN THE SAME ROWS. The second conjunct is what makes
+# this a test: `[] = []` is true, so without it two empty answers would pass for agreement.
+query I
+SELECT (SELECT list(node_id ORDER BY node_id)
+          FROM tree_match('main', 'app', '(TYPE ''function_definition'')', language := 'treeql'))
+     = (SELECT list(node_id ORDER BY node_id)
+          FROM tree_match('main', 'app', tree_steps([{type: 'function_definition'}])))
+   AND (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{type: 'function_definition'}]))) > 0;
+----
+true
+
+# THE TEXT WAS READ BY *THIS* FRONT-END, which a row count alone does not show: the IR the
+# dispatch produced prints back to the text it came from. The css parser cannot produce this IR
+# from this text -- it refuses the text outright (37_css_parser.test) -- so the round trip names
+# the parser that ran.
+query I
+SELECT (tree_explain('main', 'app', '(TYPE ''function_definition'')', language := 'treeql')).treeql;
+----
+(TYPE 'function_definition')
+
+# THE REGISTRY'S parser COLUMN IS NON-NULL FOR THE FIRST TIME, read through the catalog view
+# rather than the table. Both languages are listed, because the value this record pins is the
+# whole seam: core registers treeql in sql/01_catalog.sql with no parser, and each front-end's
+# own file names its own.
+query II
+SELECT language, parser FROM tree_catalog_languages() ORDER BY language;
+----
+css	tree_css_lower
+treeql	tree_parse_treeql
+
+# THE DEFAULT-LANGUAGE PATH, and the provenance stamp with it. Two things are measured here that
+# no record above can measure: the lookup in tree_catalog.settings picks treeql for text that
+# names no language, and `_match_language` then comes from the stamp tree_parse_treeql wrote on
+# the IR's root row. Where a record names `language := 'treeql'`, _match_language is
+# COALESCE(language, stamp) and reads the ARGUMENT -- so that record says nothing about the
+# stamp. The setting is put back immediately: it is session state, and every record after it
+# would otherwise run under a default this one moved.
+statement ok
+UPDATE tree_catalog.settings SET value = 'treeql' WHERE name = 'tree_default_selector_language';
+
+query I
+SELECT DISTINCT _match_language FROM tree_match('main', 'app', '(TYPE ''function_definition'')');
+----
+treeql
+
+statement ok
+UPDATE tree_catalog.settings SET value = 'css' WHERE name = 'tree_default_selector_language';
+
+# ==============================================================================================
+# THE parser IS NULL PATH -- the refusal is the REGISTRY'S, not a branch's
+#
+# WHY IT MATTERS. A core-only build (the C++ extension's MVP) does not embed sql/10_treeql.sql,
+# so its treeql row still reads parser IS NULL and TREEQL text must still be refused there.
+# Setting the column back to NULL simulates that build inside this session. Nothing else is
+# removed: the parser stays loaded and stays working, which the control record measures, so the
+# refusal can only have come from the lookup.
+#
+# THESE RECORDS ARE LAST IN THE FILE DELIBERATELY. The UPDATE persists for the rest of the
+# session, so any record after it would run against a registry this file broke on purpose.
+# ==============================================================================================
+
+statement ok
+UPDATE tree_catalog.selector_languages SET parser = NULL WHERE language = 'treeql';
+
+statement error
+FROM tree_match('main', 'app', '(TYPE ''function_definition'')', language := 'treeql');
+----
+tree_match: selector language 'treeql' has no parser: tree_catalog.selector_languages.parser IS NULL
+
+# THE CONTROL. Without it the refusal above is also what a BROKEN PARSER would produce, and a
+# zero is evidence about the instrument until the instrument has produced a non-zero on a case
+# that should be non-zero. The parser is still here and still reads this text to its three
+# nodes; the registry row is what changed.
+query I
+SELECT len(tree_parse_treeql('(TYPE ''function_definition'')')) = 3;
+----
+true
