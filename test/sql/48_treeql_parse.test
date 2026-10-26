@@ -1365,3 +1365,43 @@ SELECT list(node_id ORDER BY node_id) FROM (SELECT unnest(tree_parse_treeql(
   recursive := true));
 ----
 [0, 1, 2, 3, 4, 5, 6, 7]
+
+# ==============================================================================================
+# REQUIREMENT 4, GATED AT LAST: THE `desc` DEFAULT, ON TEXT THAT OMITS THE COMBINATOR.
+#
+# Every record above drives the parser with the PRINTER's output, and the printer always emits a
+# combinator keyword explicitly -- `tree_steps` and `tree_steps_group` both COALESCE a non-first
+# step's comb to desc before it is printed, so `DESCENDANT` is in the text even when the
+# constructor was never given one. That makes the whole spread blind to the parser's OWN default:
+# measured, the `desc` default can be deleted from stp0, from stp1 or from stp2 and all 140
+# records above still pass. Three ungated lines, in the requirement the brief calls out by number.
+#
+# So these two records are the only ones in this file written as HAND-WRITTEN TEXT rather than as
+# printer output, and that is the point rather than a shortcut. Requirement 4 exists for exactly
+# this input -- "a group whose inner chain OMITS a combinator still lands on desc" -- and only
+# text the printer did not produce can reach it.
+#
+# Proved by mutation, not by inspection, because two records that pass together prove nothing
+# about which line each one covers:
+#   * delete stp0's default -> ONLY the first record fails;
+#   * delete stp1's default -> ONLY the second fails;
+#   * delete stp2's default -> ONLY the second fails.
+# The second record therefore carries both group levels, which is why it nests NOT inside HAS
+# with neither chain carrying a keyword.
+# ==============================================================================================
+
+# a SECOND TOP-LEVEL STEP with no combinator in the text. The constructor stamps desc on it, so
+# the parser has to as well, and the first step must still take NULL.
+query I
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(10) || '(TYPE ''b'')')
+     = tree_steps([{type: 'a'}, {type: 'b'}]);
+----
+true
+
+# a depth-1 and a depth-2 group chain, NEITHER carrying a combinator. `tree_steps_group` coalesces
+# the first step of a group's chain to desc; this is the text form of that rule.
+query I
+SELECT tree_parse_treeql('(CLASS ''f'', HAS ( (TYPE ''b'', NOT ( (TYPE ''c'') )) ))')
+     = tree_steps([{class: 'f', has: [{type: 'b', "not": [{type: 'c'}]}]}]);
+----
+true
