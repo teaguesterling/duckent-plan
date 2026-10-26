@@ -295,6 +295,33 @@ ORDER BY s.id, x.ord;
 3	1	ATTR a = 'p)y'
 3	2	TYPE 'x'
 
+# R22, THE OTHER WAY THE SCAN CAN BE CALLED: its argument is the OUTPUT OF ANOTHER MACRO. The
+# assertion above hands it a column; this one hands it an expression, and the two fail for
+# different reasons in different places.
+#
+# `generate_series` is a TABLE FUNCTION, and a table function's argument may not contain a
+# subquery. Every scalar macro in this codebase IS a subquery once it is inlined, so splitting
+# the PRINTER's own output -- which is the first thing the assembly has to do -- did not bind:
+#
+#     Binder Error: Table function cannot contain subqueries
+#
+# `range(1, n)` is a SCALAR returning BIGINT[], so unnesting it in the select list binds with a
+# subquery bound and the scan has no table function left in it.
+#
+# WHY A MACRO ARGUMENT AND NOT `(SELECT ...)`. Measured: a bare scalar subquery argument binds
+# EITHER WAY -- `tree_treeql_split((SELECT 'TYPE ''a''), ',')` works with generate_series too,
+# because the binder folds it first. Only an INLINED MACRO body reaches the table function
+# unfolded, so a `(SELECT ...)` here would have been a gate that passes before the fix. That is
+# the same shape of non-gate as the eleven literal-only assertions this file had before R22.
+query II
+SELECT ord, part
+FROM tree_treeql_split(tree_selector_to_treeql(
+       tree_steps([{type: 'a'}, {comb: 'child', type: 'b'}])), chr(10))
+ORDER BY ord;
+----
+1	(TYPE 'a')
+2	CHILD (TYPE 'b')
+
 # ==============================================================================================
 # R19: THE ATTR PARSER INVENTED AN OPERATOR, and keyword-case tolerance would have widened it.
 #

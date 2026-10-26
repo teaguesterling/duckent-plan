@@ -85,8 +85,20 @@ CREATE OR REPLACE MACRO tree_treeql_ws() AS ' ' || chr(9) || chr(10) || chr(12) 
 -- The LIST form is the one implementation and the TABLE form is derived from it below, rather
 -- than two copies of the scan that are free to drift. The list is what Task 4's assembly reads,
 -- because `unnest()` of it over a relation needs no LATERAL at all.
+--
+-- `unnest(range(...))` AND NOT `FROM generate_series(...)`, which is the OTHER way this scan can
+-- be called and the other way it did not bind. generate_series is a TABLE FUNCTION, and a table
+-- function's argument may not contain a subquery; every scalar macro here IS a subquery once it
+-- is inlined, so splitting the PRINTER's own output -- the first thing the assembly has to do --
+-- raised `Binder Error: Table function cannot contain subqueries`. `range(1, n)` is a SCALAR
+-- returning BIGINT[], so unnesting it in the select list binds with a subquery bound and leaves
+-- no table function in the scan at all.
+--
+-- Measured, and it is why the gate in the test file uses a MACRO argument: a bare `(SELECT ...)`
+-- argument binds either way, because the binder folds it before the table function sees it. Only
+-- an inlined macro body reaches it unfolded.
 CREATE OR REPLACE MACRO tree_treeql_split_parts(s, sep) AS (
-  WITH chars AS (SELECT i, s[i:i] AS c FROM generate_series(1, length(s)) t(i)),
+  WITH chars AS (SELECT i, s[i:i] AS c FROM (SELECT unnest(range(1, length(s) + 1)) AS i)),
   quoted AS (
     SELECT i, c,
            (COALESCE(sum(CASE WHEN c = '''' THEN 1 ELSE 0 END)
