@@ -481,7 +481,8 @@ WITH
 -- inside a quoted value or a clause list cannot end a step.
 raw0 AS (SELECT (x).ord AS ord, (x).part AS part
          FROM (SELECT unnest(tree_treeql_split_parts(txt, chr(10))) AS x)),
--- R26: A BLANK TOP-LEVEL PART IS DROPPED. A trailing newline otherwise assembled an INVENTED
+-- R26/R31: A BLANK TOP-LEVEL PART IS DROPPED, WITH ONE EXCEPTION KEPT -- see R31 below, the
+-- empty FIRST step. A trailing newline otherwise assembled an INVENTED
 -- step -- op 'desc', no clauses -- and that step is not inert: it compiles to a DESCENDANT with
 -- no predicate and matches different rows. Every file and every editor adds that newline unasked,
 -- and Task 6 reads selector text out of a table where it comes with the data.
@@ -520,7 +521,23 @@ raw0 AS (SELECT (x).ord AS ord, (x).part AS part
 -- rejects. The keyword is resolved by tree_treeql_step_parse, which looks the leading word up in
 -- tree_catalog.combinators (R23), so no keyword is written here and the lexing is not restated.
 --
--- A LONE blank part is deliberately NOT kept: `lead` is NULL for it, so a selector that is
+-- BOTH HALVES OF THIS RULE ARE GATED, shown by mutation rather than argued. The records are
+-- named by their INPUT and not by line, because adding a comment above them moves the line
+-- and the citation goes stale -- which is exactly what happened to the first draft of this
+-- very block.
+--
+-- Replacing the combinator lookup with "any leading word"
+-- (`regexp_matches(nxt, '^[A-Za-z_]')`) fails exactly ONE record in 48_treeql_parse.test:
+-- `chr(10) || 'TYPE ''a'''`, whose next part is a CLAUSE keyword. That record is the only one
+-- separating this rule from the sloppier one, which is why it exists.
+--
+-- Dropping the test entirely, leaving a bare `ord = 1`, fails THREE: that same record, the
+-- `chr(10) || '(TYPE ''a'')'` one, and the `tree_parse_treeql('')` refusal -- the last
+-- because a lone blank part then survives and the no-steps arm stops firing.
+--
+-- Both counts were predicted before the mutants were run.
+--
+-- A LONE blank part is deliberately NOT kept: `nxt` is NULL for it, so a selector that is
 -- nothing but an empty step stays unreadable. It has to -- it prints as the empty string, and no
 -- parser can recover a step from no characters. That it can be BUILT at all is a gap in
 -- tree_steps, which this task may not edit.

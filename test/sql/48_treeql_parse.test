@@ -1429,7 +1429,8 @@ SELECT tree_parse_treeql('(CLASS ''f'', HAS ( (TYPE ''b'', NOT ( (TYPE ''c'') ))
 true
 
 # ==============================================================================================
-# R26: A BLANK TOP-LEVEL PART IS DROPPED, NOT ASSEMBLED.
+# R26: A BLANK TOP-LEVEL PART IS DROPPED, NOT ASSEMBLED -- EXCEPT THE ONE R31 KEEPS, the
+# empty FIRST step, whose records are further down this file.
 #
 # Before this, a trailing newline produced an INVENTED step: `(TYPE 'a')` plus chr(10) parsed to
 # four nodes, the second step carrying op='desc' and no clauses at all. That is not an inert
