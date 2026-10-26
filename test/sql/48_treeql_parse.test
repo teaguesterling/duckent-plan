@@ -1935,8 +1935,17 @@ tree_parse_treeql: cannot read (TYPE 'a') (TYPE 'b')
 # ----------------------------------------------------------------------------------------------
 # THE CONTROLS. Every one of these is PRINTER OUTPUT that round-trips exactly, and every one of
 # them is refused by a naive version of one of the arms above: a quote COUNT refuses the first
-# three, a paren COUNT refuses the second, and a refusal on a first-step combinator refuses the
-# last. They are the measurement behind "no arm rejects printer output", and they must stay green.
+# three and both WHERE records, a paren COUNT refuses the second and the second WHERE record, and
+# a refusal on a first-step combinator refuses the last. They are the measurement behind "no arm
+# rejects printer output", and they must stay green.
+#
+# THE TWO WHERE RECORDS ARE HERE BECAUSE THIS TASK BROKE THEM AND THE BREAK WAS MEASURED. A
+# quote-parity rule assumes every `'` is a TREEQL literal delimiter, and a WHERE body is the one
+# place that is false: the printer emits it UNQUOTED AND UNESCAPED, so it never passes through
+# tree_sql_lit and its quote count can be odd. `(WHERE "o'k" = 1)` -- a double-quoted IDENTIFIER
+# holding an apostrophe -- is printer output from the ORDINARY constructor, is legal DuckDB SQL,
+# and round-tripped at BASE; the first cut of the unterminated arm refused it. A refusal that
+# rejects printer output is a defect and not a gate, which is the whole reason these records exist.
 # ----------------------------------------------------------------------------------------------
 
 # an embedded quote, doubled by the printer. The unterminated-value test reads the SOURCE text,
@@ -1956,6 +1965,29 @@ true
 query I
 SELECT tree_parse_treeql('(TYPE ''two '''' quotes '''' here'')')
      = tree_steps([{type: 'two '' quotes '' here'}]);
+----
+true
+
+# A WHERE BODY WITH AN ODD QUOTE COUNT. The printer emits a WHERE body unquoted and unescaped, so
+# a double-quoted identifier holding an apostrophe reaches the text with ONE quote in it. The
+# premise is pinned first, because the control is only a control if the printer really emits this.
+query I
+SELECT tree_selector_to_treeql(tree_steps([{"where": '"o''k" = 1'}]));
+----
+(WHERE "o'k" = 1)
+
+query I
+SELECT tree_parse_treeql('(WHERE "o''k" = 1)') = tree_steps([{"where": '"o''k" = 1'}]);
+----
+true
+
+# ...and the same with PARENTHESES AFTER the stray quote, which is the case that also defeats a
+# quote-aware paren count: the scan thinks it is inside a string from the apostrophe onward, so it
+# stops counting the parentheses of `length(n)` and of the step itself, and the text looks
+# unbalanced when it is not.
+query I
+SELECT tree_parse_treeql('(WHERE "o''k" = length(n))')
+     = tree_steps([{"where": '"o''k" = length(n)'}]);
 ----
 true
 

@@ -181,17 +181,55 @@ CREATE OR REPLACE MACRO tree_treeql_depths(s) AS (
 -- COALESCE to FALSE, not to NULL: a NULL here would make every CASE that reads it return NULL,
 -- and the caller would get a selector of NULL instead of a refusal. `(TYPE 'a'` never returns to
 -- depth 0, so list_position answers NULL for exactly the input this test exists to reject.
+-- WHEN THE QUOTE COUNT IS ODD, THE DEPTH SCAN IS NOT EVIDENCE, and this is the correction to a
+-- defect this task shipped and then measured. The scan decides "inside a quote" by PARITY, which
+-- assumes every `'` is a TREEQL literal delimiter. A WHERE body breaks that assumption: the
+-- printer emits a WHERE body UNQUOTED AND UNESCAPED -- see this file's own header -- so it never
+-- passes through tree_sql_lit and its quotes are not doubled. Measured, and it is printer output
+-- from the ORDINARY constructor, not from hand-built IR:
+--
+--     tree_selector_to_treeql(tree_steps([{"where": '"o''k" = 1'}]))  ->  (WHERE "o'k" = 1)
+--
+-- A double-quoted IDENTIFIER holding an apostrophe. That is legal DuckDB SQL -- measured, the
+-- binder accepts `WHERE "o'k" = 1` and the row matches -- it round-tripped exactly at BASE, and
+-- with the depth scan trusted unconditionally it was REFUSED as an unterminated quoted value. A
+-- refusal that rejects printer output is a defect and not a gate, so the three rules that count
+-- quotes all stand down when the parity is odd. An E-string, `E'it\'s'`, is the same shape.
+--
+-- Declared once, read at three sites, because three rules standing down on three different
+-- conditions is how the defect would come back in one of them.
+CREATE OR REPLACE MACRO tree_treeql_quotes_even(s) AS
+  COALESCE((length(s) - length(replace(s, '''', ''))) % 2 = 0, true);
+
+-- Does the text consist of ONE parenthesised group? When the quotes are even, the first `(` must
+-- close at the LAST character. When they are ODD the scan cannot locate the strings, so this
+-- falls back to the first-and-last-character test -- which is exactly what the parser used before
+-- this macro existed, so an odd-quote input is no worse off than it was at BASE. The stronger
+-- test applies wherever it can be trusted, and SF-3's three inputs all have EVEN quote counts.
+--
+-- COALESCE to FALSE, not to NULL: a NULL here would make every CASE that reads it return NULL,
+-- and the caller would get a selector of NULL instead of a refusal. `(TYPE 'a'` never returns to
+-- depth 0, so list_position answers NULL for exactly the input this test exists to reject.
 CREATE OR REPLACE MACRO tree_treeql_wrapped(s) AS
-  COALESCE(s LIKE '(%' AND list_position(tree_treeql_depths(s), 0) = length(s), false);
+  COALESCE(s LIKE '(%'
+           AND CASE WHEN tree_treeql_quotes_even(s)
+                    THEN list_position(tree_treeql_depths(s), 0) = length(s)
+                    ELSE s LIKE '%)' END, false);
 
 -- Do the parentheses BALANCE across the whole text? Both signs matter and for different reasons:
 -- the depth must never go NEGATIVE (`TYPE 'a')` closes a group nobody opened) and it must END at
 -- zero (`(TYPE 'a'` leaves one open). A single `= 0` test at the end accepts `)TYPE 'a'(`.
 --
+-- AN ODD QUOTE COUNT ANSWERS TRUE, because then the depth is not evidence (see above) and a
+-- refusal built on it would reject printer output. Nothing is lost: an odd quote count in a part
+-- that is supposed to hold a LITERAL is refused by the unterminated arm, which runs first, and
+-- `(TYPE 'a'` and `TYPE 'a')` -- the two inputs this rule exists for -- both have even counts.
+--
 -- COALESCE to TRUE: empty and NULL text have no parentheses to balance, and the no-steps arm --
 -- which runs first -- is the refusal that owns them.
 CREATE OR REPLACE MACRO tree_treeql_balanced(s) AS (
-  SELECT COALESCE(list_min(d) >= 0 AND d[-1] = 0, true) FROM (SELECT tree_treeql_depths(s) AS d));
+  SELECT COALESCE(NOT tree_treeql_quotes_even(s) OR (list_min(d) >= 0 AND d[-1] = 0), true)
+  FROM (SELECT tree_treeql_depths(s) AS d));
 
 -- R38: IS THIS THE SOURCE TEXT OF A WELL-FORMED QUOTED VALUE? True when it does not begin with a
 -- quote at all -- a bare identifier value is legal input (D-N15) -- and otherwise only when the
@@ -922,10 +960,17 @@ prob AS (
   -- author the wrong thing. Those go to the generic arm below, which names the fragment and
   -- claims nothing about the cause. Refused either way -- that is R38's requirement.
   --
-  -- CANNOT REJECT PRINTER OUTPUT: tree_sql_lit doubles every embedded quote, so printer output
-  -- has an even quote count in every part by construction.
+  -- CANNOT REJECT PRINTER OUTPUT, and the SECOND half of this condition is what makes that true.
+  -- For a kind whose body IS a literal, tree_sql_lit doubles every embedded quote, so printer
+  -- output has an even count by construction. A WHERE or ATTR body is NOT one: the printer emits
+  -- it unquoted and unescaped, so `(WHERE "o'k" = 1)` is printer output with an ODD count --
+  -- measured, from the ordinary constructor, and it round-tripped at BASE. Parity alone refused
+  -- it, which is a defect and not a gate. tree_treeql_clause_parse already answers "is this
+  -- body's quoting well formed, for this kind" in `lit_ok`, so the rule is routed through that
+  -- answer rather than restating which kinds carry a literal.
   UNION ALL SELECT 'unterminated', part FROM cps
-        WHERE (length(part) - length(replace(part, '''', ''))) % 2 = 1
+        WHERE NOT tree_treeql_quotes_even(part)
+          AND (cl IS NULL OR NOT (cl).lit_ok)
   -- UNBALANCED PARENTHESES, counted quote-aware over the WHOLE input. It runs AFTER the
   -- unterminated arm deliberately: an unterminated quote swallows the rest of the text, so the
   -- parentheses after it stop being counted and a quote fault LOOKS like a paren fault.
