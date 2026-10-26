@@ -230,9 +230,25 @@ CREATE OR REPLACE MACRO tree_treeql_quotes_even(s) AS
 -- then the quote-BLIND reading is unbalanced too and both readings agree on the wrong answer. The
 -- rule below answered every probe correctly, including that one.
 --
--- THE KEYWORDS COME FROM THE REGISTRY, so this is not a second copy of the vocabulary: the two
--- kinds are selected by the same `CASE kind`-shaped test tree_treeql_clause_parse already uses to
--- decide which bodies are literals, and the KEYWORD is read from tree_catalog.clause_kinds.
+-- THE KEYWORD COMES FROM THE REGISTRY -- but THE KIND LIST BELOW IS A SECOND SOURCE OF TRUTH, and
+-- this comment claimed the opposite until round 2. `k.kind IN ('where', 'attr')` is a written
+-- record of WHICH kinds carry a raw body. The FIRST record is the printer, whose
+-- `CASE want_kind WHEN 'attr' ... WHEN 'where' ... ELSE tree_sql_lit(value)` decides that same
+-- fact as it writes the text. Two written records of one fact, and nothing checks they agree.
+--
+-- THE LINT DOES NOT COVER IT, and its silence is not evidence. Measured: scan() in
+-- scripts/check_vocabulary_single_source.py returns 0 hits on this file, because its THRESHOLD is
+-- 3 and this line quotes TWO members. The lint is silent BY DESIGN, not because the duplication
+-- is absent. Do not read a passing vocabulary lint as a single-source guarantee here.
+--
+-- THE SINGLE-SOURCE FIX IS A REGISTRY COLUMN: a `body_is_raw` flag on tree_catalog.clause_kinds,
+-- read here in place of a literal list. sql/01_catalog.sql is FROZEN for this task, so that fix
+-- is not available, and the duplication STANDS -- stated rather than fixed, by ruling.
+--
+-- THE FAILURE MODE, plainly: a future clause kind with a raw body, added to the registry and to
+-- the printer but NOT to this list, leaves the paren scan TRUSTING text it cannot read. The scan
+-- then masks REAL parentheses behind an unpaired apostrophe, and this arm refuses printer output
+-- again -- the exact defect R42 fixed.
 CREATE OR REPLACE MACRO tree_treeql_raw_kw_re() AS
   (SELECT '\b(' || string_agg(upper(k.keyword), '|') || ')\b'
    FROM tree_catalog.clause_kinds k WHERE k.kind IN ('where', 'attr'));
@@ -1065,8 +1081,20 @@ prob AS (
   -- Measured, the input that shows it: `(CLASS 'f', HAS ( CHILD (TYPE 'b') ))<LF>CHILD (TYPE 'c`
   -- is unbalanced only because the value never closed.
   --
-  -- CANNOT REJECT PRINTER OUTPUT: the printer emits '(' and ')' only as a matched pair, and a
-  -- value's own parenthesis is inside a literal, where tree_treeql_depths does not count it.
+  -- CANNOT REJECT PRINTER OUTPUT -- but NOT for the reason this comment carried until d4dd0da.
+  -- The old reason was: the printer emits '(' and ')' only as a matched pair, and a value's own
+  -- parenthesis is inside a literal, where tree_treeql_depths does not count it. That second
+  -- half was MEASURED FALSE. tree_treeql_depths decides "inside a literal" by PARITY, and a
+  -- WHERE or ATTR body is raw host SQL, so one unpaired apostrophe in it flips the scanner and
+  -- makes it skip parentheses that are REAL. TWO such bodies sum to an EVEN count, which is why
+  -- the odd-quote stand-down does not catch it. Printer output in that shape was refused here.
+  --
+  -- WHAT MAKES THE ARM SAFE NOW is tree_treeql_balanced standing down on untrusted quoting: it
+  -- answers true unless tree_treeql_quotes_trusted(txt) holds, which needs an even quote count
+  -- AND no clause kind with a raw body anywhere in the text. The guard is the stand-down, not a
+  -- literal hiding a parenthesis from the count.
+  -- The printed text, the quote counts and the four records are in R42 FOR THE PAREN SCAN, near
+  -- the end of test/sql/48_treeql_parse.test. Not repeated here, so it cannot drift.
   UNION ALL SELECT 'unbalanced', COALESCE(txt, '<NULL>') WHERE NOT tree_treeql_balanced(txt)
   -- A GROUP WHOSE CHAIN IS NOT PARENTHESISED (R37's first rule). Two shapes, one message: the
   -- group keyword as a clause-list PART, which is the shape the printer emits, and as a STEP's
@@ -1086,6 +1114,12 @@ prob AS (
   -- omitted it. Measured, `has+not+nested` and two more printer-output shapes were refused here
   -- with their parentheses present. The group keyword is still not trustworthy evidence of a
   -- missing parenthesis unless the text around it could be read at all.
+  --
+  -- BOTH ARMS GUARD ON THE CONTAINER, not on the tail they test: the trust question is asked of
+  -- `part`, while the parenthesis question is asked of `gtail` or `utail`. That is deliberate.
+  -- A tail is a slice of `part`, so a raw body ANYWHERE in the part is what makes the slice
+  -- itself untrustworthy. Guarding on the wider text stands the arm down more often, which is
+  -- the safe direction: a stood-down arm falls to the generic rows below and still refuses.
   UNION ALL SELECT 'groupparen', part FROM cps
         WHERE gkind IS NOT NULL AND NOT tree_treeql_wrapped(gtail)
           AND tree_treeql_no_raw_body(part)

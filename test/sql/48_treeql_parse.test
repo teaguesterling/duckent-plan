@@ -1753,9 +1753,17 @@ tree_parse_treeql: unterminated quoted value
 # UNBALANCED PARENTHESES. The count is QUOTE-AWARE: a parenthesis inside a quoted value is not
 # structure, which is what the `(TYPE 'has ) paren')` control at the end of this section pins.
 #
-# CANNOT REJECT PRINTER OUTPUT: the printer emits `(` and `)` only as a matched pair around a
-# clause list or a group chain, and a value's own parenthesis is inside a literal, where this
-# count does not look.
+# CANNOT REJECT PRINTER OUTPUT -- but NOT for the reason this block carried until d4dd0da. The
+# old reason was: the printer emits `(` and `)` only as a matched pair around a clause list or a
+# group chain, and a value's own parenthesis is inside a literal, where this count does not look.
+# That second half was MEASURED FALSE. The count decides "inside a literal" by PARITY, so two
+# WHERE bodies each holding one unpaired apostrophe sum to an EVEN count, the scan trusts itself,
+# and it skips parentheses that are REAL.
+#
+# WHAT MAKES THE ARM SAFE NOW is tree_treeql_balanced standing down unless the text is quote-
+# TRUSTED: an even quote count AND no clause kind with a raw body present.
+# The printed text, the numbers and the four records are in R42 FOR THE PAREN SCAN near the end
+# of this file. Not repeated here, so the two cannot drift apart.
 # ----------------------------------------------------------------------------------------------
 statement error
 SELECT tree_parse_treeql('(TYPE ''a''');
