@@ -2283,7 +2283,7 @@ tree_parse_treeql: cannot read
 # not have, and a record is the only thing that cannot drift from the code.
 #
 # WHY A RECORD AND NOT A THEOREM IS THE GATE -- a different answer per hole, and not the same
-# question as the cause below. Measured this round on this worktree:
+# question as the cause below. Measured in fix round 5, on this worktree:
 #   F1, both records  THE THEOREMS RAISE. parse(print(ir)) errors `cannot read 2]` and `cannot
 #                     read b: 2}`: the parser refuses its own printer's output, loudly.
 #   F2                NO THEOREM QUANTIFIES OVER IT. The theorems start from an IR, and this
