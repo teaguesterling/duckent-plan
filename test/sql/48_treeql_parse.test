@@ -1493,6 +1493,16 @@ true
 # ...and when dropping the blank parts leaves NONE, there is nothing to assemble. That is Task 5's
 # `selector has no steps` row, so this emits the ONE generic refusal rather than wording Task 5
 # owns -- the assertion pins the prefix only, which is what Task 5 will replace.
+#
+# THIS RECORD ALSO COVERS AN IR SHAPE THAT SHOULD NOT BE REPRESENTABLE, so read it twice before
+# trusting it. `tree_steps([{type: NULL}])` builds a selector whose only step is empty, and the
+# printer renders that to the EMPTY STRING -- the exact input below. Refusing it is the best a
+# parser can do, because there is no text to read, but the real defect is upstream: none of
+# `tree_steps`' ten refusals (sql/06_selector.sql:216-234) covers an all-NULL step, so that IR is
+# constructible at all. That file is embedded byte-identically by the extension and this plan may
+# not edit it, so the gap is reported rather than fixed. If it is ever closed, this record stops
+# being a statement about empty text and becomes a statement about an unrepresentable selector --
+# revisit it then, rather than reading its green as confirmation that nothing is wrong.
 statement error
 SELECT tree_parse_treeql('');
 ----
