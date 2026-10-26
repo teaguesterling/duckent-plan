@@ -201,18 +201,70 @@ CREATE OR REPLACE MACRO tree_treeql_depths(s) AS (
 CREATE OR REPLACE MACRO tree_treeql_quotes_even(s) AS
   COALESCE((length(s) - length(replace(s, '''', ''))) % 2 = 0, true);
 
--- Does the text consist of ONE parenthesised group? When the quotes are even, the first `(` must
--- close at the LAST character. When they are ODD the scan cannot locate the strings, so this
--- falls back to the first-and-last-character test -- which is exactly what the parser used before
--- this macro existed, so an odd-quote input is no worse off than it was at BASE. The stronger
--- test applies wherever it can be trusted, and SF-3's three inputs all have EVEN quote counts.
+-- R42 FOR THE PAREN SCAN, and parity alone was not enough. This is the correction to a second
+-- defect of the same family, and the reasoning that shipped above is measured FALSE where it
+-- claims "a value's own parenthesis is inside a literal, where this count does not look".
+--
+-- WHY PARITY ALONE FAILS. ONE odd-quoted body makes the WHOLE text's count ODD, so the stand-down
+-- engages and the scan is not trusted. TWO odd-quoted bodies sum to an EVEN count, the stand-down
+-- never engages, and the masked quotes hide parentheses that are REAL. Measured, on text the
+-- ORDINARY constructor printed:
+--
+--     (WHERE "o'k" = 1, HAS ( DESCENDANT (TYPE 'b', WHERE "o'k" = 1) ))
+--       4 quotes -> even -> trusted -> tree_treeql_depths reaches -2 -> refused "unbalanced"
+--     (TYPE 'a', HAS ( DESCENDANT (TYPE 'b', WHERE "o'k" = 1) ))
+--       5 quotes -> odd  -> stands down -> accepted
+--
+-- Every shape in the first family is reprint-TRUE at BASE and was refused here, so the NORMALISING
+-- theorem stopped holding on printer output. That is what makes it a regression and not a limit.
+--
+-- THE RULE, and it is about the GRAMMAR rather than about counting: the quote scan is evidence only
+-- on text where no clause kind with a RAW body appears. A WHERE body is raw host SQL and an ATTR
+-- body is `name op arg`; both reach the text unquoted and unescaped, so an apostrophe inside either
+-- is not a delimiter and the scan cannot be told where the literals are. Parity is kept as the
+-- SECOND half, because a single odd body still breaks the scan even when the keyword test passes.
+--
+-- WHY NOT "unbalanced under BOTH a quote-aware AND a quote-blind reading", which is the obvious
+-- candidate. MEASURED, standalone, before this was built: that rule is defeated by a TYPE literal
+-- holding an unmatched close paren -- `(TYPE 'a ) unmatched', WHERE "o'k" = 1, HAS ( ... ))` -- because
+-- then the quote-BLIND reading is unbalanced too and both readings agree on the wrong answer. The
+-- rule below answered every probe correctly, including that one.
+--
+-- THE KEYWORDS COME FROM THE REGISTRY, so this is not a second copy of the vocabulary: the two
+-- kinds are selected by the same `CASE kind`-shaped test tree_treeql_clause_parse already uses to
+-- decide which bodies are literals, and the KEYWORD is read from tree_catalog.clause_kinds.
+CREATE OR REPLACE MACRO tree_treeql_raw_kw_re() AS
+  (SELECT '\b(' || string_agg(upper(k.keyword), '|') || ')\b'
+   FROM tree_catalog.clause_kinds k WHERE k.kind IN ('where', 'attr'));
+
+-- Does this text carry NO clause kind whose body is raw? COALESCE to TRUE so that empty and NULL
+-- text are judged normally; the no-steps arm owns those.
+CREATE OR REPLACE MACRO tree_treeql_no_raw_body(s) AS
+  COALESCE(NOT regexp_matches(upper(s), tree_treeql_raw_kw_re()), true);
+
+-- Can the quote scan be trusted on this text at all? Both halves are needed and each one alone is
+-- insufficient: parity misses the even-sum case, and the keyword test misses nothing structural but
+-- says nothing about a literal that was never closed.
+CREATE OR REPLACE MACRO tree_treeql_quotes_trusted(s) AS
+  COALESCE(tree_treeql_quotes_even(s) AND tree_treeql_no_raw_body(s), false);
+
+-- Does the text consist of ONE parenthesised group? When the quoting can be TRUSTED, the first `(`
+-- must close at the LAST character. When it cannot, this falls back to the first-and-last-character
+-- test -- which is exactly what the parser used before this macro existed, so text the scan cannot
+-- read is no worse off than it was at BASE. The stronger test applies wherever it can be trusted,
+-- and SF-3's three inputs carry no raw body and have EVEN quote counts, so they stay on it.
+--
+-- READS tree_treeql_quotes_trusted AND NOT tree_treeql_quotes_even, which is half of the R42
+-- correction. With parity alone, a group tail holding TWO odd-quoted bodies was judged by a scan
+-- that could not see its parentheses: measured, the `has+not+nested` shape came back NOT wrapped
+-- and the group-parentheses arm then told the author to add parentheses that were already there.
 --
 -- COALESCE to FALSE, not to NULL: a NULL here would make every CASE that reads it return NULL,
 -- and the caller would get a selector of NULL instead of a refusal. `(TYPE 'a'` never returns to
 -- depth 0, so list_position answers NULL for exactly the input this test exists to reject.
 CREATE OR REPLACE MACRO tree_treeql_wrapped(s) AS
   COALESCE(s LIKE '(%'
-           AND CASE WHEN tree_treeql_quotes_even(s)
+           AND CASE WHEN tree_treeql_quotes_trusted(s)
                     THEN list_position(tree_treeql_depths(s), 0) = length(s)
                     ELSE s LIKE '%)' END, false);
 
@@ -220,15 +272,24 @@ CREATE OR REPLACE MACRO tree_treeql_wrapped(s) AS
 -- the depth must never go NEGATIVE (`TYPE 'a')` closes a group nobody opened) and it must END at
 -- zero (`(TYPE 'a'` leaves one open). A single `= 0` test at the end accepts `)TYPE 'a'(`.
 --
--- AN ODD QUOTE COUNT ANSWERS TRUE, because then the depth is not evidence (see above) and a
--- refusal built on it would reject printer output. Nothing is lost: an odd quote count in a part
--- that is supposed to hold a LITERAL is refused by the unterminated arm, which runs first, and
--- `(TYPE 'a'` and `TYPE 'a')` -- the two inputs this rule exists for -- both have even counts.
+-- UNTRUSTED QUOTING ANSWERS TRUE, because then the depth is not evidence (see R42 above) and a
+-- refusal built on it rejects printer output. This read was `tree_treeql_quotes_even` and that was
+-- the defect: two odd-quoted bodies sum to an EVEN count, so the stand-down never engaged and six
+-- printer-output shapes were refused as unbalanced with their parentheses matched.
+--
+-- Nothing is lost on the two inputs this rule exists for: `(TYPE 'a'` and `TYPE 'a')` carry no raw
+-- body and have even counts, so both stay TRUSTED and both stay refused -- verified, not assumed,
+-- and the two records in test/sql/48_treeql_parse.test are the check.
+--
+-- WHAT IS GIVEN UP, stated rather than hidden: a selector that genuinely has unbalanced parentheses
+-- AND carries a WHERE or ATTR body no longer gets this named message. It still refuses, through the
+-- generic arm, which names the fragment and claims nothing. That is the right direction to fail --
+-- a missing refusal beats a false cause -- and it is what BASE did for all such text.
 --
 -- COALESCE to TRUE: empty and NULL text have no parentheses to balance, and the no-steps arm --
 -- which runs first -- is the refusal that owns them.
 CREATE OR REPLACE MACRO tree_treeql_balanced(s) AS (
-  SELECT COALESCE(NOT tree_treeql_quotes_even(s) OR (list_min(d) >= 0 AND d[-1] = 0), true)
+  SELECT COALESCE(NOT tree_treeql_quotes_trusted(s) OR (list_min(d) >= 0 AND d[-1] = 0), true)
   FROM (SELECT tree_treeql_depths(s) AS d));
 
 -- R38: IS THIS THE SOURCE TEXT OF A WELL-FORMED QUOTED VALUE? True when it does not begin with a
@@ -988,8 +1049,14 @@ prob AS (
   -- WHAT IS LEFT, and it is the only shape where the count is evidence: a part that is a
   -- value-carrying clause whose literal is malformed (`TYPE 'a`), or a part the readers could make
   -- nothing of at all (`(TYPE 'c`). Neither can be printer output.
+  --
+  -- AND R42's THIRD TERM: a part carrying a RAW body is not judged by counting its quotes either.
+  -- Measured, `step2+has+nested` and `step2+not+nested` are printer output and were refused here as
+  -- `unterminated quoted value` with every literal terminated -- the part was a fragment of a
+  -- mis-split, and its odd count came from a WHERE body rather than from an unclosed value.
   UNION ALL SELECT 'unterminated', part FROM cps
         WHERE NOT tree_treeql_quotes_even(part)
+          AND tree_treeql_no_raw_body(part)
           AND gkind IS NULL
           AND (cl IS NULL OR NOT (cl).lit_ok)
   -- UNBALANCED PARENTHESES, counted quote-aware over the WHOLE input. It runs AFTER the
@@ -1012,10 +1079,19 @@ prob AS (
   --
   -- CANNOT REJECT PRINTER OUTPUT: tree_selector_to_treeql's group pass emits
   -- `upper(kind) || ' ( ' || chain || ' )'` at every level, so a printed group always wraps.
+  --
+  -- AND R42 HERE TOO, which is the arm's SECOND correction. Fixing tree_treeql_wrapped was not
+  -- enough: on raw-bodied text the splitters hand this arm a FRAGMENT, and a fragment's tail can
+  -- genuinely lack its closing parenthesis because the split cut it off, not because the author
+  -- omitted it. Measured, `has+not+nested` and two more printer-output shapes were refused here
+  -- with their parentheses present. The group keyword is still not trustworthy evidence of a
+  -- missing parenthesis unless the text around it could be read at all.
   UNION ALL SELECT 'groupparen', part FROM cps
         WHERE gkind IS NOT NULL AND NOT tree_treeql_wrapped(gtail)
+          AND tree_treeql_no_raw_body(part)
   UNION ALL SELECT 'groupparen', uw FROM uwk
         WHERE is_group AND NOT tree_treeql_wrapped(utail)
+          AND tree_treeql_no_raw_body(part)
   -- A PARENLESS INNER STEP WITH NO COMBINATOR (R36). Inside a group the steps are separated by a
   -- SPACE, so a step with neither a combinator keyword nor parentheses has nothing marking where
   -- its clause list ends and the next step's begins. At BASE this returned clean IR:
@@ -1032,10 +1108,16 @@ prob AS (
   -- CANNOT REJECT PRINTER OUTPUT: tree_treeql_step wraps a step's clause list in parentheses
   -- whenever the step HAS one, so a printed step with clauses and no combinator word always
   -- carries its own parentheses and this rule requires their absence.
+  --
+  -- AND R42 AGAIN: a step text carrying a RAW body is not judged parenless either. The chain
+  -- reader splits on the same quote parity, so a mis-split fragment of raw-bodied text can arrive
+  -- here looking parenless when the printed step had its parentheses.
   UNION ALL SELECT 'parenless', part FROM stp1
         WHERE op IS NULL AND uw IS NULL AND part NOT LIKE '(%'
+          AND tree_treeql_no_raw_body(part)
   UNION ALL SELECT 'parenless', part FROM stp2
         WHERE op IS NULL AND uw IS NULL AND part NOT LIKE '(%'
+          AND tree_treeql_no_raw_body(part)
   -- AN UNKNOWN COMBINATOR, and AN UNKNOWN CLAUSE KEYWORD: R37's second and third rules. The
   -- message names the OFFENDING WORD. At BASE it named the remainder -- `FROBNICATE 'x'` refused
   -- with `cannot read 'x'`, pointing at the operand.
@@ -1043,8 +1125,15 @@ prob AS (
   -- CANNOT REJECT PRINTER OUTPUT: both registries are read from the catalog, case-insensitively,
   -- so every keyword the printer can emit is known to this test and a front-end that registers a
   -- ninth combinator is accepted the day the row lands.
-  UNION ALL SELECT 'comb', uw FROM uwk WHERE NOT is_group AND body_is_clauses
-  UNION ALL SELECT 'kw',   uw FROM uwk WHERE NOT is_group AND NOT body_is_clauses
+  --
+  -- AND R42 ONCE MORE, on the WHOLE STEP TEXT: a leading word that is in neither registry is only
+  -- evidence of a misspelled keyword when the step was split where the printer put a boundary. On
+  -- raw-bodied text the splitters cannot know that, so the word may be an ordinary SQL token from
+  -- inside a WHERE body. These two arms therefore ask the same question the three above ask.
+  UNION ALL SELECT 'comb', uw FROM uwk
+        WHERE NOT is_group AND body_is_clauses AND tree_treeql_no_raw_body(part)
+  UNION ALL SELECT 'kw',   uw FROM uwk
+        WHERE NOT is_group AND NOT body_is_clauses AND tree_treeql_no_raw_body(part)
   -- EVERYTHING ELSE, which keeps Task 4's generic message as the CATCH-ALL rather than replacing
   -- it. A fault that carries no offending word has nothing for a specialised message to name, and
   -- `cannot read <fragment>` is the honest answer: a part that is neither a clause nor a group
@@ -1059,7 +1148,18 @@ prob AS (
   UNION ALL SELECT 'generic', part FROM cps
         WHERE gkind IS NOT NULL AND tree_treeql_chain_parts(gbody) IS NULL
   UNION ALL SELECT 'generic', part FROM uwk
-        WHERE is_group AND tree_treeql_wrapped(utail)),
+        WHERE is_group AND tree_treeql_wrapped(utail)
+  -- R42's COUNTERWEIGHT, and the reason the stand-downs above do not silently widen what parses.
+  -- Each of those faults is still a fault the assembly cannot build; R42 only says the TEXT is not
+  -- trustworthy evidence of WHICH fault. So every shape whose named arm stood down is caught here
+  -- instead, naming its fragment and claiming nothing about the cause. Without these two rows,
+  -- suppressing the arms above would turn a refusal into a clean WRONG PARSE, which the acceptance
+  -- sweep counts as a break in its own right and which is the worse of the two failures.
+  UNION ALL SELECT 'generic', part FROM uwk
+        WHERE NOT tree_treeql_no_raw_body(part)
+  UNION ALL SELECT 'generic', part FROM cps
+        WHERE gkind IS NOT NULL AND NOT tree_treeql_wrapped(gtail)
+          AND NOT tree_treeql_no_raw_body(part)),
 -- ONE ROW PER CODE, so each arm below is one scalar read. `n` and not `frag IS NOT NULL` decides
 -- whether an arm fires: a rule whose fragment went NULL would otherwise be SILENTLY SKIPPED, and
 -- absence of signal is not success.
