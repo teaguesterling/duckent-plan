@@ -137,6 +137,85 @@ CREATE OR REPLACE MACRO tree_treeql_split(s, sep) AS TABLE (
 CREATE OR REPLACE MACRO tree_treeql_unlit(v) AS
   CASE WHEN v LIKE '''%''' THEN replace(v[2:length(v)-1], '''''', '''') ELSE v END;
 
+-- R38: THE QUOTE-AWARE PARENTHESIS DEPTH of every character, as a list. One scan, declared once
+-- and read by tree_treeql_wrapped and tree_treeql_balanced below.
+--
+-- WHY IT EXISTS AT ALL. The parser tested "does this text wrap in parentheses?" with
+-- `s LIKE '(%' AND s LIKE '%)'` -- the FIRST character and the LAST character, and nothing in
+-- between. `(TYPE 'b') KID (TYPE 'c')` satisfies that with MISMATCHED parentheses, and the strip
+-- then handed the clause reader `TYPE 'b') KID (TYPE 'c'`, which parsed to a type clause whose
+-- value was `b') KID (TYPE 'c` -- a malformed step wearing the shape of a well-formed one.
+-- Measured, at four sites: the body strip in tree_treeql_step_parse and the three `gtail` tests
+-- in the assembly. SF-3 recorded that the predicate was copied verbatim; it is factored here and
+-- fixed once.
+--
+-- THE DEPTH IS QUOTE-AWARE, which is the whole reason this cannot be a character count. The
+-- printer emits a value's own parenthesis inside a literal -- `(TYPE 'has ) paren')` round-trips
+-- exactly today -- so a count that does not know where the quotes are refuses printer output.
+-- "Inside a quote" is the PARITY of quote characters strictly before a position, exactly as in
+-- tree_treeql_split_parts, which is what makes the '' escape free.
+--
+-- The two windows and their reasons are tree_treeql_split_parts', and the comment there carries
+-- them. What is deliberately different here is the RESULT: a LIST, not a relation, because both
+-- readers want one answer about the whole string rather than a row per character. The list form
+-- also keeps the readers free of an inner subquery, which is the R22 binder wall -- measured,
+-- all three macros below bind when called with a correlated COLUMN argument.
+CREATE OR REPLACE MACRO tree_treeql_depths(s) AS (
+  WITH chars AS (SELECT i, s[i:i] AS c FROM (SELECT unnest(range(1, length(s) + 1)) AS i)),
+  quoted AS (
+    SELECT i, c,
+           (COALESCE(sum(CASE WHEN c = '''' THEN 1 ELSE 0 END)
+              OVER (ORDER BY i ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) % 2) = 1 AS inq
+    FROM chars),
+  depthed AS (
+    SELECT i, sum(CASE WHEN inq THEN 0 WHEN c = '(' THEN 1 WHEN c = ')' THEN -1 ELSE 0 END)
+                 OVER (ORDER BY i) AS d
+    FROM quoted)
+  SELECT CAST(list(d ORDER BY i) AS INTEGER[]) FROM depthed);
+
+-- Does the text consist of ONE parenthesised group? True when the first character is '(' and the
+-- '(' it opens CLOSES AT THE LAST CHARACTER -- which is what the old first-and-last-character test
+-- only looked like it asked. `list_position` finds the first position where the depth returns to
+-- 0, and that position must be the end.
+--
+-- COALESCE to FALSE, not to NULL: a NULL here would make every CASE that reads it return NULL,
+-- and the caller would get a selector of NULL instead of a refusal. `(TYPE 'a'` never returns to
+-- depth 0, so list_position answers NULL for exactly the input this test exists to reject.
+CREATE OR REPLACE MACRO tree_treeql_wrapped(s) AS
+  COALESCE(s LIKE '(%' AND list_position(tree_treeql_depths(s), 0) = length(s), false);
+
+-- Do the parentheses BALANCE across the whole text? Both signs matter and for different reasons:
+-- the depth must never go NEGATIVE (`TYPE 'a')` closes a group nobody opened) and it must END at
+-- zero (`(TYPE 'a'` leaves one open). A single `= 0` test at the end accepts `)TYPE 'a'(`.
+--
+-- COALESCE to TRUE: empty and NULL text have no parentheses to balance, and the no-steps arm --
+-- which runs first -- is the refusal that owns them.
+CREATE OR REPLACE MACRO tree_treeql_balanced(s) AS (
+  SELECT COALESCE(list_min(d) >= 0 AND d[-1] = 0, true) FROM (SELECT tree_treeql_depths(s) AS d));
+
+-- R38: IS THIS THE SOURCE TEXT OF A WELL-FORMED QUOTED VALUE? True when it does not begin with a
+-- quote at all -- a bare identifier value is legal input (D-N15) -- and otherwise only when the
+-- WHOLE text is one literal: `'(?:[^']|'')*'`.
+--
+-- THE TEST IS ON THE SOURCE, NEVER ON THE STORED VALUE, and that is the ruling rather than a
+-- detail. `it's` legitimately contains one quote once tree_treeql_unlit has run, so a check on
+-- the stored value refuses `(TYPE 'it''s')` -- printer output that round-trips exactly today.
+--
+-- WHAT IT CATCHES, measured: the quoted-value reader took the FIRST quote to the LAST quote, so
+-- `TYPE 'a` stored the value `'a` quote and all, `TYPE 'it''s` stored `'it''s`, and
+-- `TYPE 'a' SIDEWAYS TYPE 'b'` stored `a' SIDEWAYS TYPE 'b`. One greedy match, three garbage
+-- parses that all returned CLEAN IR. The anchored pattern separates them from every printer
+-- output that carries a quote or a parenthesis -- `(TYPE 'it''s')`, `(TYPE 'has ) paren')` and
+-- `(TYPE 'two '' quotes '' here')` all satisfy it, and the controls in
+-- test/sql/48_treeql_parse.test measure that rather than asserting it.
+--
+-- THIS MACRO IS NOT ASKED ABOUT EVERY BODY. A WHERE body is raw host SQL and may legitimately
+-- BEGIN with a quote -- `WHERE 'a' = n` is printer output and fails this pattern, measured -- and
+-- an ATTR body is `name op arg`. So tree_treeql_clause_parse asks it only for the kinds whose
+-- body IS the literal, in the same CASE that already decides each kind's body shape.
+CREATE OR REPLACE MACRO tree_treeql_lit_ok(v) AS
+  COALESCE(NOT (v LIKE '''%') OR regexp_matches(v, '^''(?:[^'']|'''')*''$'), true);
+
 -- One clause's text to its IR fields, or NULL when no registered keyword matches.
 --
 -- THE KEYWORD AND THE KIND COME FROM tree_catalog.clause_kinds, so this reader gains a clause
@@ -207,7 +286,23 @@ CREATE OR REPLACE MACRO tree_treeql_clause_parse(txt) AS (
                                    ELSE tree_treeql_unlit(body) END,
                   op:    CASE kind WHEN 'attr'
                            THEN upper(regexp_replace(COALESCE(nullif(m.sym, ''), m.word), '\s+', ' ', 'g')) END,
-                  arg:   CASE kind WHEN 'attr' THEN m.arg END}
+                  arg:   CASE kind WHEN 'attr' THEN m.arg END,
+                  -- R38: IS THE BODY'S QUOTING WELL FORMED? The question is per-kind for the same
+                  -- reason `value` is, and it is answered in the same CASE so the two cannot
+                  -- disagree about which kinds carry a literal. A WHERE body is raw host SQL and
+                  -- an ATTR body is `name op arg`; neither is a literal, and a WHERE body may
+                  -- legitimately begin with a quote -- measured, `WHERE 'a' = n` is printer
+                  -- output. For every other kind the body IS the literal, so the source test
+                  -- applies to it whole.
+                  --
+                  -- REPORTED RATHER THAN REFUSED HERE. This reader's contract is "NULL when no
+                  -- registered keyword matches", and a malformed literal DID match a keyword, so
+                  -- answering NULL would lose the distinction Task 5's refusal needs: the
+                  -- assembly can say "unterminated quoted value" only if it can tell a malformed
+                  -- literal from a part that is no clause at all.
+                  lit_ok: CASE kind WHEN 'where' THEN true
+                                    WHEN 'attr'  THEN true
+                                    ELSE tree_treeql_lit_ok(body) END}
           FROM a) END);
 
 -- THE RESERVED WORD SET, derived: both registries plus the three STRUCTURAL words. This is the
@@ -282,26 +377,26 @@ CREATE OR REPLACE MACRO tree_treeql_reserved() AS
 -- ambiguous and is read as body `WHERE n` with alias `m`. That is a limit for Task 5 to refuse,
 -- not something this reader can decide.
 --
--- The outer parentheses are stripped when the remainder both starts with '(' and ends with ')'.
+-- The outer parentheses are stripped when the remainder is ONE parenthesised group, which
+-- tree_treeql_wrapped decides by quote-aware depth.
 --
--- THAT IS NOT A BALANCE CHECK, AND THIS COMMENT USED TO CLAIM MORE THAN THE CODE DOES. "A clause
--- list always starts with a keyword, so a leading '(' is the step's own" establishes the LEADING
--- parenthesis and says nothing about the trailing one being its partner. Measured, the input that
--- shows the gap:
+-- THAT USED TO BE A FIRST-AND-LAST-CHARACTER TEST, and this comment used to record it as a
+-- documented limit owned by Task 5. Task 5 closed it instead, because it was one cause with five
+-- effects rather than a corner. "A clause list always starts with a keyword, so a leading '(' is
+-- the step's own" establishes the LEADING parenthesis and says nothing about the trailing one
+-- being its partner. Measured at BASE, the input that showed the gap:
 --
 --     tree_treeql_step_parse('(TYPE ''a'') (TYPE ''b'')')  -> body "TYPE 'a') (TYPE 'b'"
 --
--- and fed on to the clause reader that yields a `type` clause whose value is `a') (TYPE 'b` --
--- a malformed step wearing the shape of a well-formed one. The printer never emits this, so the
--- round-trip contract is safe, but `(TYPE 'a') (CLASS 'b')` is a plausible hand-written mistake,
+-- fed on to the clause reader, which yielded a `type` clause whose value was `a') (TYPE 'b` -- a
+-- malformed step wearing the shape of a well-formed one. The printer never emits it, so the
+-- round-trip contract was safe, but `(TYPE 'a') (CLASS 'b')` is a plausible hand-written mistake,
 -- which is the input class requirement 6 exists to serve.
 --
--- NO BALANCE CHECK IS ADDED, and that is adjudicated rather than overlooked: a real check needs
--- the depth scan, which lives in a TABLE macro and cannot be called from this scalar one, and the
--- two refusals already exist downstream. R6 makes unbalanced parentheses Task 5's, and R13 makes
--- "a value still carrying its delimiters" a named refusal -- which is what that garbage value is.
--- So this is a DOCUMENTED LIMIT owned by Task 5, not a defect this macro hides. No test pins the
--- garbage value: pinning it would enshrine a wrong answer as the intended one.
+-- The depth scan it needed is now tree_treeql_depths, a SCALAR macro returning a list, so this
+-- scalar macro can call it; that is why the fix is possible here and was not before. Both shapes
+-- keep their text now and are refused by name downstream, and
+-- test/sql/48_treeql_parse.test pins the refusals rather than the garbage values.
 -- The alias pattern, declared ONCE. It is read at two sites below -- the capture and the strip --
 -- and they must not drift apart, because a capture that finds an alias the strip then leaves in
 -- the text would report both at once.
@@ -343,8 +438,14 @@ CREATE OR REPLACE MACRO tree_treeql_step_parse(txt) AS (
                     tree_treeql_ws()) AS tail
         FROM u)
   SELECT {op: op,
+          -- R38/SF-3: the strip now asks tree_treeql_wrapped, which counts quote-aware depth,
+          -- instead of testing the FIRST and LAST character. `(TYPE 'b') KID (TYPE 'c')`
+          -- satisfied the old test with mismatched parentheses and was stripped into
+          -- `TYPE 'b') KID (TYPE 'c'`; it now keeps its text and is refused downstream. The
+          -- documented limit two blocks above this macro -- `(TYPE 'a') (CLASS 'b')` read as one
+          -- step -- is the same defect and closes with it.
           body: CASE WHEN tail = '' THEN NULL
-                     WHEN tail LIKE '(%' AND tail LIKE '%)'
+                     WHEN tree_treeql_wrapped(tail)
                        THEN trim(tail[2 : length(tail) - 1], tree_treeql_ws())
                      ELSE tail END,
           alias: alias,
@@ -427,11 +528,39 @@ CREATE OR REPLACE MACRO tree_treeql_chain_parts(s) AS (
     SELECT lo FROM words
     WHERE EXISTS (SELECT 1 FROM tree_catalog.combinators cb
                   WHERE upper(cb.keyword) = upper(words.word))),
+  -- R36: A PARENTHESISED STEP ALSO STARTS A STEP, and the keyword is not the only boundary there
+  -- is. The printer emits NO combinator word for an inner step whose op is NULL, so
+  -- `HAS ( (TYPE 'b') (TYPE 'c') )` is printer output -- measured -- and with the keyword as the
+  -- only boundary the whole chain arrived as ONE step, whose paren strip then produced the type
+  -- value `b'') (TYPE ''c`. Clean IR for text that means two steps.
+  --
+  -- THE RULE: a depth-0 '(' whose previous NON-BLANK character is a depth-0 ')'. That is a
+  -- boundary the printer can emit only BETWEEN steps, which is what makes it safe -- inside a
+  -- step's clause list every parenthesis is at depth 1 or deeper, so the only ')' that can
+  -- precede a depth-0 '(' is the one closing the previous step's own clause list. Measured, the
+  -- two ways this could have gone wrong: `CHILD (TYPE 'b')` is NOT split (the previous non-blank
+  -- character is `D`), and a ')' inside a quoted value is not one either, because `inq` excludes
+  -- it -- `(TYPE 'a ) b') (TYPE 'c')` splits at the real boundary and not at the quoted one.
+  --
+  -- The previous non-blank character is found by a running max of its POSITION and then one
+  -- join, rather than by `lag(... ) IGNORE NULLS`, so the scan stays in the window vocabulary the
+  -- rest of this file already uses.
+  prevnz AS (SELECT i, ch, inq, depth,
+               max(CASE WHEN NOT regexp_matches(ch, '\s') THEN i END)
+                 OVER (ORDER BY i ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS pj
+             FROM depthed),
+  opens AS (
+    SELECT p.i AS lo
+    FROM prevnz p JOIN depthed q ON q.i = p.pj
+    WHERE NOT p.inq AND p.ch = '(' AND p.depth = 1
+      AND NOT q.inq AND q.ch = ')' AND q.depth = 0),
   -- 1 and length(s) + 1 are sentinels, so one lead() window serves both ends, exactly as in the
   -- clause-list splitter. Here the boundary character is KEPT -- the keyword belongs to the step
   -- it starts -- so the span runs from the boundary itself, not from one past it. UNION, not
-  -- UNION ALL: a keyword at position 1 makes the sentinel and the boundary the same position.
-  bounds AS (SELECT 1 AS p UNION SELECT lo FROM starts UNION SELECT length(s) + 1),
+  -- UNION ALL: a keyword at position 1 makes the sentinel and the boundary the same position, and
+  -- a keyword and a parenthesis boundary can never coincide.
+  bounds AS (SELECT 1 AS p UNION SELECT lo FROM starts UNION SELECT lo FROM opens
+             UNION SELECT length(s) + 1),
   spans AS (SELECT p AS lo, lead(p) OVER (ORDER BY p) - 1 AS hi FROM bounds),
   spanned AS (SELECT lo, trim(s[lo:hi], tree_treeql_ws()) AS part FROM spans WHERE hi IS NOT NULL),
   kept AS (SELECT CAST(row_number() OVER (ORDER BY lo) AS INTEGER) AS ord, part
@@ -471,10 +600,17 @@ CREATE OR REPLACE MACRO tree_treeql_chain_parts(s) AS (
 -- over a relation, with the readers applied per row.
 --
 -- THE FIRST STEP OF THE OUTER CHAIN keeps whatever combinator the text gives it, which for
--- printer output is none. Every other step -- a later top-level step, and every step of a group's
--- chain -- defaults to desc (requirement 4), which is what tree_steps and tree_steps_group both
--- do. A combinator WRITTEN on the first step is assembled as written and refused by tree_steps'
--- own `the first step takes no combinator`; inventing a refusal for it here would duplicate that.
+-- printer output is none. A LATER TOP-LEVEL step defaults to desc (requirement 4), which is what
+-- tree_steps does. A step of a GROUP's chain does NOT -- see R35 at stp1 below: the printer emits
+-- no combinator word for a NULL op, so the no-word form inside a group means NULL and not desc.
+--
+-- R34: A COMBINATOR WRITTEN ON THE FIRST STEP IS ASSEMBLED AS WRITTEN, and that is adjudicated
+-- rather than overlooked. `tree_steps` refuses to BUILD that IR -- measured,
+-- `tree_steps([{type: 'a', comb: 'child'}])` raises "the first step takes no combinator" -- but
+-- the PRINTER emits `CHILD (TYPE 'a')` for it from hand-built IR, and `parse(print(ir)) = ir` is
+-- exactly TRUE for it. A refusal here would therefore reject printer output and break the exact
+-- theorem, which is what the Global Constraint forbids. The printer/constructor disagreement is
+-- reported to the repo owner instead; this parser stays exactly as tolerant as the host door.
 CREATE OR REPLACE MACRO tree_parse_treeql(txt) AS (
 WITH
 -- LEVEL 0: the top-level chain. Requirement 1 -- the split is on a DEPTH-0 newline, so a newline
@@ -585,7 +721,21 @@ gr0 AS (SELECT i0, a0, gkind, gbody FROM sl0 WHERE gkind IS NOT NULL),
 lvl1 AS (SELECT i0, a0, (x).ord AS i1, (x).part AS part
          FROM (SELECT i0, a0, unnest(tree_treeql_chain_parts(gbody)) AS x FROM gr0)),
 rd1 AS (SELECT i0, a0, i1, part, tree_treeql_step_parse(part) AS p FROM lvl1),
-stp1 AS (SELECT i0, a0, i1, part, COALESCE((p).op, 'desc') AS op,
+-- R35: AN INNER STEP WITH NO COMBINATOR WORD KEEPS op NULL. There is no `desc` default here any
+-- more, and its absence is the ruling rather than an omission. The printer writes no combinator
+-- word for an inner step whose op is NULL -- measured, it emits `(TYPE 'a', HAS ( (TYPE 'b') ))`
+-- for that IR -- so coalescing to desc made `print(parse(print(ir)))` differ from `print(ir)` and
+-- the normalising theorem FALSE for it. The printer is the specification.
+--
+-- WHAT COVERS THE INPUT THE DEFAULT USED TO: a PARENLESS inner step with no combinator is now
+-- refused by name (R36), because nothing separates its clause list from the next step's, and a
+-- PARENTHESISED one is unambiguous and lands here with op NULL. So every text the default could
+-- still have applied to is either refused or has a combinator of its own, and
+-- test/sql/48_treeql_parse.test gates that by re-adding the COALESCE as a mutant.
+--
+-- The TOP-LEVEL default in stp0 is untouched: there the separator is a newline, the first step is
+-- the only one that may carry no combinator, and R35 is scoped to inner steps.
+stp1 AS (SELECT i0, a0, i1, part, (p).op AS op,
            (p).body AS body, (p).alias AS alias, (p).unknown_word AS uw
          FROM rd1),
 pt1 AS (SELECT i0, a0, i1, (x).ord AS n, (x).part AS part
@@ -613,7 +763,9 @@ gr1 AS (SELECT i0, a0, i1, a1, gkind, gbody FROM sl1 WHERE gkind IS NOT NULL),
 lvl2 AS (SELECT i0, a0, i1, a1, (x).ord AS i2, (x).part AS part
          FROM (SELECT i0, a0, i1, a1, unnest(tree_treeql_chain_parts(gbody)) AS x FROM gr1)),
 rd2 AS (SELECT i0, a0, i1, a1, i2, part, tree_treeql_step_parse(part) AS p FROM lvl2),
-stp2 AS (SELECT i0, a0, i1, a1, i2, part, COALESCE((p).op, 'desc') AS op,
+-- R35 again, at the second group level. The rule is the chain reader's and not the level's, so it
+-- is the same rule here; the block above stp1 carries it.
+stp2 AS (SELECT i0, a0, i1, a1, i2, part, (p).op AS op,
            (p).body AS body, (p).alias AS alias, (p).unknown_word AS uw
          FROM rd2),
 pt2 AS (SELECT i0, a0, i1, a1, i2, (x).ord AS n, (x).part AS part
@@ -684,51 +836,197 @@ prt AS (SELECT n.node_id, p.node_id AS parent_id, n.kind, n.value, n.op, n.arg, 
 asm AS (SELECT list({node_id: node_id, parent_id: parent_id, kind: kind, value: value,
                      op: op, arg: arg, alias: alias} ORDER BY node_id)::TREE_SELECTOR AS v
         FROM prt),
--- R25: ONE PROVISIONAL REFUSAL, and the fragment that caused it. Task 5 adds the refusal arms to
--- this macro and owns all eight messages, so inventing wording it will rewrite would only have to
--- be undone. What belongs to Task 4 is the INVARIANT: nothing the assembly cannot build returns
--- clean IR, and the message names the offending text so Task 5 can specialise without
--- re-deriving it. `min` so the message names one fragment and not a set.
+-- THE REFUSALS. R25 left Task 4's one provisional message here -- `cannot read <fragment>` --
+-- holding an INVARIANT rather than a vocabulary: nothing the assembly cannot build returns clean
+-- IR, and the message names the offending text so that this task could specialise without
+-- re-deriving it. It did; the invariant is unchanged and the generic message survives as the
+-- catch-all for a fault that carries no word worth naming.
 --
--- The five shapes, each at every level it can occur at:
---   * a step whose leading word is in NEITHER registry -- `KID (TYPE 'b')`. Without this the step
---     would arrive as op NULL with a body, indistinguishable from a step with no combinator.
---   * a part that is neither a clause nor a group.
---   * a group keyword with no parentheses (read off the raw text -- see `gtail` above).
---   * an EMPTY group, which tests nothing and which tree_steps also refuses to build. The chain
---     reader answers NULL for it, so there is nothing to put under the group node.
---   * a group at the LAST level, whose keyword is read but whose inside is not.
---   * NO STEPS AT ALL, which is what R26's dropping of blank parts leaves for an empty or
---     whitespace-only text. The fragment is the input itself, so the message still names what
---     was handed over; `<NULL>` follows tree_err's own convention for a NULL rather than being
---     new wording, and the COALESCE is there because a NULL anywhere in a refusal message makes
---     the whole message NULL -- a defect this repo has shipped twice.
-bad AS (SELECT min(f) AS f FROM (
-      SELECT COALESCE(txt, '<NULL>') AS f WHERE NOT EXISTS (SELECT 1 FROM lvl0)
-      UNION ALL SELECT part FROM stp0 WHERE uw IS NOT NULL
-      UNION ALL SELECT part FROM stp1 WHERE uw IS NOT NULL
-      UNION ALL SELECT part FROM stp2 WHERE uw IS NOT NULL
-      UNION ALL SELECT part FROM sl0 WHERE cl IS NULL AND gkind IS NULL
-      UNION ALL SELECT part FROM sl1 WHERE cl IS NULL AND gkind IS NULL
-      UNION ALL SELECT part FROM sl2 WHERE cl IS NULL AND gkind IS NULL
-      UNION ALL SELECT part FROM sl0
-        WHERE gkind IS NOT NULL AND NOT (gtail LIKE '(%' AND gtail LIKE '%)')
-      UNION ALL SELECT part FROM sl1
-        WHERE gkind IS NOT NULL AND NOT (gtail LIKE '(%' AND gtail LIKE '%)')
-      UNION ALL SELECT part FROM sl2
-        WHERE gkind IS NOT NULL AND NOT (gtail LIKE '(%' AND gtail LIKE '%)')
-      UNION ALL SELECT part FROM sl0
+-- WHAT IS NEW HERE, beside the wording: two faults that were not refused at all, because the
+-- reader returned clean IR for them. An unterminated quoted value and a parenless inner step
+-- both parsed, silently and wrongly, so the arms for them required fixing tree_treeql_depths'
+-- two callers first. R38 has the measurements.
+--
+-- EVERY RULE IS ROUTED THROUGH ITS EXISTING HOLDER rather than restated: tree_sql_is_ident for
+-- an alias (inside tree_treeql_step_parse), tree_selector_group_depth against
+-- tree_group_depth_limit() for nesting, tree_treeql_group_kinds() for HAS and NOT, and the two
+-- catalog registries for the two open vocabularies. No clause kind and no combinator keyword
+-- appears in this file.
+--
+-- THE STEPS WHOSE LEADING WORD IS IN NEITHER REGISTRY, at all three levels, with the raw tail
+-- the word was taken off. The tail is re-derived from `part` and NOT read from `body`, for the
+-- same reason `gtail` is below: tree_treeql_step_parse STRIPS the parentheses, so after it
+-- `HAS ( X )` and `HAS X` carry the same body and the one difference that matters is gone.
+uws AS (SELECT part, uw, body, trim(part[length(uw) + 1 : ], tree_treeql_ws()) AS utail
+        FROM stp0 WHERE uw IS NOT NULL
+        UNION ALL SELECT part, uw, body, trim(part[length(uw) + 1 : ], tree_treeql_ws())
+        FROM stp1 WHERE uw IS NOT NULL
+        UNION ALL SELECT part, uw, body, trim(part[length(uw) + 1 : ], tree_treeql_ws())
+        FROM stp2 WHERE uw IS NOT NULL),
+-- R37: DOES WHAT FOLLOWS THE UNKNOWN WORD READ AS A LEGAL CLAUSE LIST? That one question
+-- separates an unknown COMBINATOR from an unknown CLAUSE KEYWORD, and it is asked of the clause
+-- reader rather than guessed from the word's shape. Measured: `SIDEWAYS (TYPE 'b')` leaves the
+-- body `TYPE 'b'`, which reads as a clause, so SIDEWAYS was meant to be a combinator;
+-- `FROBNICATE 'x'` leaves `'x'`, which does not, so FROBNICATE was meant to be a clause keyword.
+--
+-- EVERY part must read as a clause, which is why this is a count and not an EXISTS: a body of
+-- `TYPE 'a', 42` is not a legal clause list, and naming SIDEWAYS an unknown combinator there
+-- would point at the wrong token.
+uwp AS (SELECT part, uw, (x).part AS cpart
+        FROM (SELECT part, uw, unnest(tree_treeql_split_parts(body, ',')) AS x
+              FROM uws WHERE body IS NOT NULL)),
+uwc AS (SELECT part, uw,
+               count(*) FILTER (WHERE tree_treeql_clause_parse(cpart) IS NOT NULL) = count(*)
+                 AS body_is_clauses
+        FROM uwp GROUP BY part, uw),
+-- A LEFT JOIN and not a correlated EXISTS: R22's binder wall is an inner correlated subquery, and
+-- every caller of this macro from Task 6 on passes a COLUMN. A step with no body at all (`KID`
+-- printed bare) has no uwp rows, so COALESCE decides it, and `false` sends it to the clause-keyword
+-- arm -- R37's third rule, which is what "else" means there.
+uwk AS (SELECT u.part, u.uw, u.utail,
+               list_contains(tree_treeql_group_kinds(), lower(u.uw)) AS is_group,
+               COALESCE(c.body_is_clauses, false) AS body_is_clauses
+        FROM uws u LEFT JOIN uwc c ON c.part = u.part AND c.uw = u.uw),
+-- EVERY CLAUSE-LIST PART AT EVERY LEVEL as one relation, so each rule below is written once
+-- instead of three times. The three sl CTEs were the three copies the old refusal set carried.
+cps AS (SELECT part, cl, gkind, gtail, gbody FROM sl0
+        UNION ALL SELECT part, cl, gkind, gtail, gbody FROM sl1
+        UNION ALL SELECT part, cl, gkind, gtail, gbody FROM sl2),
+-- EVERY FAULT, CLASSIFIED. Task 4 left one generic message here and R25 said Task 5 owns the
+-- wording; this is that wording. Each row carries its CODE and the offending FRAGMENT, and the
+-- CASE below reads them in priority order.
+--
+-- WHY A PRIORITY ORDER AND NOT min() ALONE. One input can carry more than one fault, and the old
+-- `min(f)` picked the alphabetically smallest FRAGMENT -- arbitrary once the messages differ.
+-- Two orderings are load-bearing, and both were measured by mutation rather than argued:
+--   * UNTERMINATED BEFORE UNBALANCED, because an unterminated quote stops the parentheses after
+--     it from being counted at all, so a quote fault presents as a paren fault.
+--   * PARENLESS BEFORE GENERIC, because `HAS ( TYPE 'b' TYPE 'c' )` is ALSO a clause whose
+--     literal cannot be read, and `cannot read TYPE 'b' TYPE 'c'` names the symptom instead of
+--     the mistake.
+-- The order lives in the CASE below, where it is visible, and not in a sort key here.
+prob AS (
+  -- NO STEPS AT ALL. R26 drops a blank top-level part, so empty, whitespace-only and NULL text
+  -- all arrive here. The fragment is unused by this message and is kept non-NULL anyway, because
+  -- a NULL fragment in a GROUP BY row would make the arm's test miss.
+      SELECT 'nosteps' AS code, COALESCE(txt, '<NULL>') AS frag
+        WHERE NOT EXISTS (SELECT 1 FROM lvl0)
+  -- AN UNTERMINATED QUOTED VALUE, detected as an ODD number of quote characters in one part.
+  --
+  -- WHY PARITY AND NOT tree_treeql_lit_ok, WHICH IS A NARROWING OF R38. R38's anchored pattern
+  -- says whether a body is a well-formed literal; it does not say WHY it is not one. Both of
+  -- R38's own named inputs -- `TYPE 'a` and `TYPE 'it''s` -- have an odd quote count, because a
+  -- quote was opened and never closed, and that is what "unterminated" states. An EVEN count
+  -- that still fails the pattern is a different fault: `TYPE 'a' SIDEWAYS TYPE 'b'` closed every
+  -- quote it opened and then carried trailing text, so calling it unterminated would tell the
+  -- author the wrong thing. Those go to the generic arm below, which names the fragment and
+  -- claims nothing about the cause. Refused either way -- that is R38's requirement.
+  --
+  -- CANNOT REJECT PRINTER OUTPUT: tree_sql_lit doubles every embedded quote, so printer output
+  -- has an even quote count in every part by construction.
+  UNION ALL SELECT 'unterminated', part FROM cps
+        WHERE (length(part) - length(replace(part, '''', ''))) % 2 = 1
+  -- UNBALANCED PARENTHESES, counted quote-aware over the WHOLE input. It runs AFTER the
+  -- unterminated arm deliberately: an unterminated quote swallows the rest of the text, so the
+  -- parentheses after it stop being counted and a quote fault LOOKS like a paren fault.
+  -- Measured, the input that shows it: `(CLASS 'f', HAS ( CHILD (TYPE 'b') ))<LF>CHILD (TYPE 'c`
+  -- is unbalanced only because the value never closed.
+  --
+  -- CANNOT REJECT PRINTER OUTPUT: the printer emits '(' and ')' only as a matched pair, and a
+  -- value's own parenthesis is inside a literal, where tree_treeql_depths does not count it.
+  UNION ALL SELECT 'unbalanced', COALESCE(txt, '<NULL>') WHERE NOT tree_treeql_balanced(txt)
+  -- A GROUP WHOSE CHAIN IS NOT PARENTHESISED (R37's first rule). Two shapes, one message: the
+  -- group keyword as a clause-list PART, which is the shape the printer emits, and as a STEP's
+  -- leading word.
+  --
+  -- NARROWED TO THE UNWRAPPED TAIL, which R37's wording does not say and which measurement
+  -- requires. `HAS ( )` HAS its parentheses, and so does a top-level bare `HAS ( (TYPE 'b') )`;
+  -- telling their author to add parentheses that are already there is worse than saying nothing.
+  -- Both fall to the generic arm instead.
+  --
+  -- CANNOT REJECT PRINTER OUTPUT: tree_selector_to_treeql's group pass emits
+  -- `upper(kind) || ' ( ' || chain || ' )'` at every level, so a printed group always wraps.
+  UNION ALL SELECT 'groupparen', part FROM cps
+        WHERE gkind IS NOT NULL AND NOT tree_treeql_wrapped(gtail)
+  UNION ALL SELECT 'groupparen', uw FROM uwk
+        WHERE is_group AND NOT tree_treeql_wrapped(utail)
+  -- A PARENLESS INNER STEP WITH NO COMBINATOR (R36). Inside a group the steps are separated by a
+  -- SPACE, so a step with neither a combinator keyword nor parentheses has nothing marking where
+  -- its clause list ends and the next step's begins. At BASE this returned clean IR:
+  -- `HAS ( TYPE 'b' TYPE 'c' )` became one type clause whose value was `b' TYPE 'c`.
+  --
+  -- LEVELS 1 AND 2 ONLY, never level 0: a parenless clause list at top level is requirement 6 --
+  -- `CLASS fn` is legal -- and there the separator is a newline, which marks the boundary this
+  -- rule is about.
+  --
+  -- `part NOT LIKE '(%'` IS THE TEST, so this says "parenless" and nothing more. A step whose
+  -- text starts with '(' but does not WRAP is a different fault and goes to the generic arm, where
+  -- the message names the fragment instead of asking for parentheses it has.
+  --
+  -- CANNOT REJECT PRINTER OUTPUT: tree_treeql_step wraps a step's clause list in parentheses
+  -- whenever the step HAS one, so a printed step with clauses and no combinator word always
+  -- carries its own parentheses and this rule requires their absence.
+  UNION ALL SELECT 'parenless', part FROM stp1
+        WHERE op IS NULL AND uw IS NULL AND part NOT LIKE '(%'
+  UNION ALL SELECT 'parenless', part FROM stp2
+        WHERE op IS NULL AND uw IS NULL AND part NOT LIKE '(%'
+  -- AN UNKNOWN COMBINATOR, and AN UNKNOWN CLAUSE KEYWORD: R37's second and third rules. The
+  -- message names the OFFENDING WORD. At BASE it named the remainder -- `FROBNICATE 'x'` refused
+  -- with `cannot read 'x'`, pointing at the operand.
+  --
+  -- CANNOT REJECT PRINTER OUTPUT: both registries are read from the catalog, case-insensitively,
+  -- so every keyword the printer can emit is known to this test and a front-end that registers a
+  -- ninth combinator is accepted the day the row lands.
+  UNION ALL SELECT 'comb', uw FROM uwk WHERE NOT is_group AND body_is_clauses
+  UNION ALL SELECT 'kw',   uw FROM uwk WHERE NOT is_group AND NOT body_is_clauses
+  -- EVERYTHING ELSE, which keeps Task 4's generic message as the CATCH-ALL rather than replacing
+  -- it. A fault that carries no offending word has nothing for a specialised message to name, and
+  -- `cannot read <fragment>` is the honest answer: a part that is neither a clause nor a group
+  -- (`42`), a clause keyword with no operand (`TYPE`), an EMPTY group, a group whose tail wraps
+  -- but whose chain is unreadable, and a clause whose literal is malformed with its quotes
+  -- balanced.
+  --
+  -- CANNOT REJECT PRINTER OUTPUT: this is the arm Task 4 shipped and the 18 corpus selectors
+  -- round-trip through it untouched; every row here is a shape the assembly cannot build.
+  UNION ALL SELECT 'generic', part FROM cps WHERE cl IS NULL AND gkind IS NULL
+  UNION ALL SELECT 'generic', part FROM cps WHERE cl IS NOT NULL AND NOT (cl).lit_ok
+  UNION ALL SELECT 'generic', part FROM cps
         WHERE gkind IS NOT NULL AND tree_treeql_chain_parts(gbody) IS NULL
-      UNION ALL SELECT part FROM sl1
-        WHERE gkind IS NOT NULL AND tree_treeql_chain_parts(gbody) IS NULL))
+  UNION ALL SELECT 'generic', part FROM uwk
+        WHERE is_group AND tree_treeql_wrapped(utail)),
+-- ONE ROW PER CODE, so each arm below is one scalar read. `n` and not `frag IS NOT NULL` decides
+-- whether an arm fires: a rule whose fragment went NULL would otherwise be SILENTLY SKIPPED, and
+-- absence of signal is not success.
+pb AS (SELECT code, count(*) AS n, min(frag) AS frag FROM prob GROUP BY code)
 SELECT CASE
   -- requirement 5, and FIRST: the depth is measured on the ASSEMBLED selector with
   -- tree_selector_group_depth against tree_group_depth_limit(), which is what the printer and
-  -- tree_steps_group both do, and the wording is the printer's own. It comes before the generic
+  -- tree_steps_group both do, and the wording is the printer's own. It comes before every other
   -- arm so that a selector nested too deep is always refused in those words.
   WHEN tree_selector_group_depth((SELECT v FROM asm)) > tree_group_depth_limit()
     THEN tree_err('tree_parse_treeql: groups nested deeper than ' || tree_group_depth_limit()
                   || ' levels are not supported')
-  WHEN (SELECT f FROM bad) IS NOT NULL
-    THEN tree_err('tree_parse_treeql: cannot read ' || (SELECT f FROM bad))
+  -- THE ARM ORDER IS THE PRIORITY ORDER. Every concatenated piece is COALESCEd: a NULL anywhere
+  -- in a refusal message makes the whole message NULL, which tree_err reports as "refusal with a
+  -- NULL message" -- losing the one sentence the caller needed. This repo has shipped that twice.
+  WHEN (SELECT n FROM pb WHERE code = 'nosteps') > 0
+    THEN tree_err('tree_parse_treeql: selector has no steps')
+  WHEN (SELECT n FROM pb WHERE code = 'unterminated') > 0
+    THEN tree_err('tree_parse_treeql: unterminated quoted value')
+  WHEN (SELECT n FROM pb WHERE code = 'unbalanced') > 0
+    THEN tree_err('tree_parse_treeql: unbalanced parentheses')
+  WHEN (SELECT n FROM pb WHERE code = 'groupparen') > 0
+    THEN tree_err('tree_parse_treeql: HAS/NOT needs parentheses around its chain')
+  WHEN (SELECT n FROM pb WHERE code = 'parenless') > 0
+    THEN tree_err('tree_parse_treeql: a step inside HAS/NOT needs a combinator or parentheses, '
+                  || 'so its clauses can be told from the next step''s')
+  WHEN (SELECT n FROM pb WHERE code = 'comb') > 0
+    THEN tree_err('tree_parse_treeql: unknown combinator '
+                  || COALESCE((SELECT frag FROM pb WHERE code = 'comb'), '<NULL>'))
+  WHEN (SELECT n FROM pb WHERE code = 'kw') > 0
+    THEN tree_err('tree_parse_treeql: unknown clause keyword '
+                  || COALESCE((SELECT frag FROM pb WHERE code = 'kw'), '<NULL>'))
+  WHEN (SELECT n FROM pb WHERE code = 'generic') > 0
+    THEN tree_err('tree_parse_treeql: cannot read '
+                  || COALESCE((SELECT frag FROM pb WHERE code = 'generic'), '<NULL>'))
   ELSE (SELECT v FROM asm) END);

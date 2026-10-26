@@ -1428,10 +1428,16 @@ SELECT list(node_id ORDER BY node_id) FROM (SELECT unnest(tree_parse_treeql(
 # a group the no-word form now reads as op NULL and stp1/stp2 carry NO default at all. At TOP
 # LEVEL the default stays: the first record below is the one that holds it.
 #
-# WHAT EACH RECORD NOW GATES, proved by mutation rather than by inspection:
-#   * delete stp0's default              -> ONLY the first record fails;
-#   * re-add `COALESCE(op, 'desc')` at stp1 -> ONLY the second fails;
-#   * re-add `COALESCE(op, 'desc')` at stp2 -> ONLY the second fails.
+# WHAT EACH RECORD NOW GATES, proved by mutation, and with the MEASURED counts rather than the
+# predicted ones. The first draft of this block said "ONLY the second fails" for both group
+# levels; that was wrong, and wrong in the direction that matters -- the NULL op reaches further
+# than the one record, because the refusals depend on it too:
+#   * delete stp0's default                 -> ONLY the first record below fails;
+#   * re-add `COALESCE(op, 'desc')` at stp1 -> SIX records fail: the second one below, R35's two
+#     theorem records, R36's two-step record, and BOTH depth-1 parenless refusals -- with the
+#     default back, a parenless inner step parses again instead of being refused;
+#   * re-add `COALESCE(op, 'desc')` at stp2 -> TWO: the second record below, and the depth-2
+#     parenless refusal.
 # The second record therefore still carries both group levels, which is why it nests NOT inside
 # HAS with neither chain carrying a keyword.
 # ==============================================================================================
@@ -1628,12 +1634,19 @@ true
 # the other half of the same claim, measured rather than argued: every one of them is printer
 # output that a naive quote count or a naive paren count would refuse.
 #
-# THE ARM ORDER IS THE PRIORITY ORDER, because an input can carry more than one fault.
-# `HAS ( TYPE 'b' TYPE 'c' )` is both a parenless inner step and a clause whose quoted value does
-# not close where the reader would need it to; the parenless arm is the one that names the real
-# mistake, so it runs first. The order is: depth, no-steps, unbalanced parentheses, group
-# parentheses, parenless inner step, unterminated value, unknown combinator, unknown clause
-# keyword, generic.
+# THE ARM ORDER IS THE PRIORITY ORDER, because an input can carry more than one fault. The order
+# is: depth, no-steps, unterminated value, unbalanced parentheses, group parentheses, parenless
+# inner step, unknown combinator, unknown clause keyword, generic.
+#
+# TWO PLACES WHERE THE ORDER IS LOAD-BEARING, each measured by mutation rather than reasoned:
+#   * UNTERMINATED BEFORE UNBALANCED. An unterminated quote swallows the rest of the text, so the
+#     parentheses after it stop being counted and a quote fault LOOKS like a paren fault. Swap the
+#     two arms and exactly ONE record fails -- the `CHILD (TYPE 'c` one, which then reports
+#     `unbalanced parentheses` about text whose parentheses are fine.
+#   * PARENLESS BEFORE GENERIC. `HAS ( TYPE 'b' TYPE 'c' )` is BOTH a parenless inner step and a
+#     clause whose literal cannot be read, and the generic arm would answer
+#     `cannot read TYPE 'b' TYPE 'c'` -- true, but it names the symptom instead of the mistake.
+#     Silence the parenless arm and three records fail, two of them on exactly that substitution.
 # ==============================================================================================
 
 # ----------------------------------------------------------------------------------------------
