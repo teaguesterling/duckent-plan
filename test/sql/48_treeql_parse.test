@@ -1475,3 +1475,66 @@ statement error
 SELECT tree_parse_treeql('');
 ----
 tree_parse_treeql: cannot read
+
+# ==============================================================================================
+# R30: THE EMPTY FIRST STEP, which R26 dropped and should not have.
+#
+# R26 drops every blank top-level part, and that is right for all of them but one. A step with no
+# clauses and no combinator prints as NOTHING, and only the FIRST step can be in that position --
+# every later step carries a combinator, which the printer emits as a keyword. Measured, the whole
+# empty-step space:
+#
+#   empty step LAST    -> "(TYPE 'a')\nDESCENDANT"                     round trip TRUE
+#   empty step MIDDLE  -> "(TYPE 'a')\nDESCENDANT\nCHILD (TYPE 'b')"   round trip TRUE
+#   empty step FIRST   -> "\nCHILD (TYPE 'b')"                         round trip FALSE  <- the break
+#
+# So the printer IS injective here and the theorem was achievable; only the leading blank was
+# unrecoverable, because R26 threw it away.
+#
+# THE RULE IS COMPLETE, NOT A PATCH FOR ONE CASE: a leading blank part is an empty first step IFF
+# the NEXT part begins with a combinator keyword. Any other blank part stays dropped, so R26's
+# tolerance survives for the trailing newline, the CRLF pair and the blank line between steps --
+# the four records above still pass.
+#
+# WHY THAT TEST IS SOUND rather than a guess: a legitimate first step can NEVER lead with a
+# combinator. tree_steps refuses it by name -- measured,
+# `tree_steps([{comb: 'child', type: 'b'}])` raises "the first step takes no combinator" -- so the
+# only reading this rule takes away is input the constructor already rejects.
+#
+# THE KEYWORD COMES FROM tree_treeql_step_parse, which resolves the leading word against
+# tree_catalog.combinators (R23). No keyword is written here, and the lexing is not restated: the
+# one macro that already decides "is this leading word a combinator" decides it here too.
+# ==============================================================================================
+
+# the premise, pinned: an empty FIRST step prints as nothing, so the text opens with the separator
+query I
+SELECT tree_selector_to_treeql(tree_steps([{type: NULL}, {comb: 'child', type: 'b'}]))
+     = chr(10) || 'CHILD (TYPE ''b'')';
+----
+true
+
+# ...and the round trip that R26 broke
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: NULL}, {comb: 'child', type: 'b'}])))
+     = tree_steps([{type: NULL}, {comb: 'child', type: 'b'}]);
+----
+true
+
+# BOTH steps empty, the most degenerate form the printer can still emit: it prints as a bare
+# separator plus a keyword, and the keyword is what makes the leading blank recoverable.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: NULL}, {comb: 'child'}])))
+     = tree_steps([{type: NULL}, {comb: 'child'}]);
+----
+true
+
+# A LEADING BLANK WHOSE NEXT PART IS NOT A COMBINATOR IS STILL DROPPED, and this is the case that
+# keeps the rule narrow. The next part's leading word here is a CLAUSE keyword, so the test is
+# exercised on a real word rather than on a '(' -- a rule that merely looked for "any leading
+# word" would keep this blank and invent a first step.
+query I
+SELECT tree_parse_treeql(chr(10) || 'TYPE ''a''') = tree_steps([{type: 'a'}]);
+----
+true

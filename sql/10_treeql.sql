@@ -501,8 +501,37 @@ raw0 AS (SELECT (x).ord AS ord, (x).part AS part
 --
 -- If this leaves NO parts the selector has no steps, which the refusal set below reports; Task 5
 -- owns the wording for it.
+--
+-- R30: ONE BLANK PART IS NOT NOISE -- THE EMPTY FIRST STEP. A step with no clauses and no
+-- combinator prints as NOTHING, and only the FIRST step can be in that position, because every
+-- later step carries a combinator the printer emits as a keyword. Measured over the whole empty
+-- step space: an empty step LAST prints "(TYPE 'a')\nDESCENDANT" and an empty step in the MIDDLE
+-- prints "(TYPE 'a')\nDESCENDANT\nCHILD (TYPE 'b')", both of which already round-tripped; an
+-- empty FIRST step prints "\nCHILD (TYPE 'b')", and R26 threw that leading blank away. The
+-- printer is injective here, so the theorem was achievable and R26 was simply too wide.
+--
+-- THE RULE IS COMPLETE AND NOT A PATCH FOR ONE CASE: a leading blank part is an empty first step
+-- IFF the next part begins with a combinator keyword. Every other blank part stays dropped, so
+-- the trailing newline, the CRLF pair and the blank line between two steps are unaffected.
+--
+-- WHY THAT TEST IS SOUND. A legitimate first step can never lead with a combinator -- measured,
+-- `tree_steps([{comb: 'child', type: 'b'}])` is refused by name with "the first step takes no
+-- combinator" -- so the only reading this rule takes away is input the constructor already
+-- rejects. The keyword is resolved by tree_treeql_step_parse, which looks the leading word up in
+-- tree_catalog.combinators (R23), so no keyword is written here and the lexing is not restated.
+--
+-- A LONE blank part is deliberately NOT kept: `lead` is NULL for it, so a selector that is
+-- nothing but an empty step stays unreadable. It has to -- it prints as the empty string, and no
+-- parser can recover a step from no characters. That it can be BUILT at all is a gap in
+-- tree_steps, which this task may not edit.
+mark0 AS (SELECT ord, part,
+            trim(part, tree_treeql_ws()) = '' AS blank,
+            lead(part) OVER (ORDER BY ord) AS nxt
+          FROM raw0),
 lvl0 AS (SELECT CAST(row_number() OVER (ORDER BY ord) AS INTEGER) AS i0, part
-         FROM raw0 WHERE trim(part, tree_treeql_ws()) <> ''),
+         FROM mark0
+         WHERE NOT blank
+            OR (ord = 1 AND (tree_treeql_step_parse(nxt)).op IS NOT NULL)),
 rd0 AS (SELECT i0, part, tree_treeql_step_parse(part) AS p FROM lvl0),
 stp0 AS (SELECT i0, part,
            CASE WHEN i0 = 1 THEN (p).op ELSE COALESCE((p).op, 'desc') END AS op,
