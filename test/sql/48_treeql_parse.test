@@ -889,3 +889,479 @@ query III
 SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name !=') AS c);
 ----
 name	!=	(empty)
+
+# ==============================================================================================
+# TASK 4: IR ASSEMBLY, GROUPS AND CANONICAL NUMBERING -- the exact theorem.
+#
+# tree_parse_treeql(tree_selector_to_treeql(sel)) = sel, as a WHOLE VALUE, so the NODE IDS are
+# compared and not merely the shape. The whole design rests on one property: canonical IR is
+# dense, 0-based and depth-first -- a step, then its clauses, then its groups, then each group's
+# inner chain -- and the printer orders both steps and parts by node_id. So TEXTUAL ORDER IS
+# node_id ORDER, and a counter incremented as parts are encountered reproduces the ids.
+#
+# WHY WHOLE-VALUE `=` AND NOT PRINTED TEXT. Comparing print(parse(print(ir))) to print(ir) is the
+# NORMALISING half, and it is at the end of this section where it belongs -- it is the right test
+# for IR that is not canonical. Using it for the EXACT half would delete the theorem this task
+# exists to prove: every node id could be wrong and the text would still match. Measured: plain
+# `=` is TRUE for an identical selector despite its NULL fields and FALSE for a differing one, so
+# `=` is correct here and IS NOT DISTINCT FROM is not needed. row_number() returns BIGINT, so the
+# assembly casts to INTEGER -- without that cast the whole value differs on type alone.
+#
+# WHERE THESE CASES COME FROM. The spread is EVERY row of test/corpus/selectors.tsv, written
+# inline as literals exactly as test/sql/40_corpus.test carries them -- not a hand-picked set. A
+# hand-picked spread of eleven cases is what let the alias-only step ` AS x` through in Task 3:
+# cases drawn from the printer's own reachable space are the correction.
+# ==============================================================================================
+
+# c01  function_definition  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'function_definition'}])))
+     = tree_steps([{type: 'function_definition'}]);
+----
+true
+
+# c02  .fn  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn'}])))
+     = tree_steps([{class: 'fn'}]);
+----
+true
+
+# c03  .fn#greet  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{id: 'greet', class: 'fn'}])))
+     = tree_steps([{id: 'greet', class: 'fn'}]);
+----
+true
+
+# c04  function_definition > block  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'function_definition'}, {comb: 'child', type: 'block'}])))
+     = tree_steps([{type: 'function_definition'}, {comb: 'child', type: 'block'}]);
+----
+true
+
+# c05  function_definition string  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'function_definition'}, {comb: 'desc', type: 'string'}])))
+     = tree_steps([{type: 'function_definition'}, {comb: 'desc', type: 'string'}]);
+----
+true
+
+# c06  .fn:not(:has(string))  [app]  portable sitting_duck_supported nested
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', "not": [{type: 'string'}]}])))
+     = tree_steps([{class: 'fn', "not": [{type: 'string'}]}]);
+----
+true
+
+# c07  .fn:has(string)  [app]  portable sitting_duck_supported nested
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', has: [{type: 'string'}]}])))
+     = tree_steps([{class: 'fn', has: [{type: 'string'}]}]);
+----
+true
+
+# c08  function_definition + function_definition  [app]  portable sitting_duck_supported sibling
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'function_definition'}, {comb: 'next', type: 'function_definition'}])))
+     = tree_steps([{type: 'function_definition'}, {comb: 'next', type: 'function_definition'}]);
+----
+true
+
+# c09  module > function_definition  [scripts]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'module'}, {comb: 'child', type: 'function_definition'}])))
+     = tree_steps([{type: 'module'}, {comb: 'child', type: 'function_definition'}]);
+----
+true
+
+# c10  class_definition > block > function_definition  [scripts]  portable sitting_duck_supported chain3
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'class_definition'}, {comb: 'child', type: 'block'}, {comb: 'child', type: 'function_definition'}])))
+     = tree_steps([{type: 'class_definition'}, {comb: 'child', type: 'block'}, {comb: 'child', type: 'function_definition'}]);
+----
+true
+
+# c11  .fn[name^="generate_"]  [scripts]  portable sitting_duck_supported attr
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', attr: 'name LIKE ''generate\_%'' ESCAPE ''\'''}])))
+     = tree_steps([{class: 'fn', attr: 'name LIKE ''generate\_%'' ESCAPE ''\'''}]);
+----
+true
+
+# c12  identifier + identifier  [py_variety]  portable sibling element
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'identifier'}, {comb: 'next', type: 'identifier'}])))
+     = tree_steps([{type: 'identifier'}, {comb: 'next', type: 'identifier'}]);
+----
+true
+
+# c13  .fn:not(:has(block:has(string)))  [app]  portable nested
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', "not": [{type: 'block', has: [{type: 'string'}]}]}])))
+     = tree_steps([{class: 'fn', "not": [{type: 'block', has: [{type: 'string'}]}]}]);
+----
+true
+
+# c14  block > expression_statement:first-child  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'block'}, {comb: 'child', type: 'expression_statement', pseudo: 'first-child'}])))
+     = tree_steps([{type: 'block'}, {comb: 'child', type: 'expression_statement', pseudo: 'first-child'}]);
+----
+true
+
+# c15  .def:not(.fn)  [app]  portable nested self
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'def', "not": [{comb: 'self', class: 'fn'}]}])))
+     = tree_steps([{class: 'def', "not": [{comb: 'self', class: 'fn'}]}]);
+----
+true
+
+# c16  .fn[params=2]  [scripts]  portable sitting_duck_supported attr params
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', attr: 'params = 2'}])))
+     = tree_steps([{class: 'fn', attr: 'params = 2'}]);
+----
+true
+
+# c17  .fn:not(:nope)  [app]  portable nested self pseudo unknown_pseudo
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', "not": [{comb: 'self', pseudo: 'nope'}]}])))
+     = tree_steps([{class: 'fn', "not": [{comb: 'self', pseudo: 'nope'}]}]);
+----
+true
+
+# c18  .fn:has(> block[params=0])  [app]  portable nested attr has_attr
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', has: [{comb: 'child', type: 'block', attr: 'params = 0'}]}])))
+     = tree_steps([{class: 'fn', has: [{comb: 'child', type: 'block', attr: 'params = 0'}]}]);
+----
+true
+
+# ----------------------------------------------------------------------------------------------
+# Beyond the corpus: shapes the PRINTER can emit that the corpus does not reach. Each one is
+# reachable through the ordinary constructor, not only by calling the printer by hand.
+# ----------------------------------------------------------------------------------------------
+
+# a step that is NOTHING BUT an alias. tree_treeql_step right-trims only, so with no combinator
+# and no clauses this prints as ' AS x' with the AS first -- the shape R18's original `\s+`
+# anchor could not match, and the one a hand-picked spread missed.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"as": 'x'}])))
+     = tree_steps([{"as": 'x'}]);
+----
+true
+
+# a combinator with NO clause list at all: `CHILD` prints bare.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'a'}, {comb: 'child'}])))
+     = tree_steps([{type: 'a'}, {comb: 'child'}]);
+----
+true
+
+# ...and bare WITH a capture, which prints with TWO spaces (`CHILD  AS m`), because the empty
+# clause-list slot collapses to '' between them. The alias pattern's `\s+` spans both.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'a'}, {comb: 'child', "as": 'm'}])))
+     = tree_steps([{type: 'a'}, {comb: 'child', "as": 'm'}]);
+----
+true
+
+# a second top-level step with NO combinator written: the constructor stamps desc and the
+# printer emits DESCENDANT, so what the reader sees is explicit. The parser defaults every
+# step but the first of the outer chain to desc, which is what makes the two agree.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'a'}, {type: 'b'}])))
+     = tree_steps([{type: 'a'}, {type: 'b'}]);
+----
+true
+
+# depth 1.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b'}]}])))
+     = tree_steps([{class: 'f', has: [{type: 'b'}]}]);
+----
+true
+
+# depth 2 -- tree_group_depth_limit(), where the printer's unrolling stops.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b', has: [{type: 'c'}]}]}])))
+     = tree_steps([{class: 'f', has: [{type: 'b', has: [{type: 'c'}]}]}]);
+----
+true
+
+# HAS and NOT on ONE step. This is the numbering case written out below.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b'}], "not": [{type: 'c'}]}])))
+     = tree_steps([{class: 'f', has: [{type: 'b'}], "not": [{type: 'c'}]}]);
+----
+true
+
+# a multi-step inner chain: every inner step carries an EXPLICIT combinator, space separated.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b'}, {comb: 'child', type: 'c'}]}])))
+     = tree_steps([{class: 'f', has: [{type: 'b'}, {comb: 'child', type: 'c'}]}]);
+----
+true
+
+# a BARE inner step followed by another: `HAS ( CHILD CHILD (TYPE 'b') )`. The chain split is
+# driven by the combinator keywords themselves, so two adjacent ones are two steps.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{comb: 'child'}, {comb: 'child', type: 'b'}]}])))
+     = tree_steps([{class: 'f', has: [{comb: 'child'}, {comb: 'child', type: 'b'}]}]);
+----
+true
+
+# all six clause kinds on one step, which is also the SLOT ORDER gate: the printer emits parts
+# by node_id, and the constructor numbers them by slot.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 't', id: 'i', class: 'c', attr: 'n = 1', pseudo: 'p', "where": 'x = 1'}])))
+     = tree_steps([{type: 't', id: 'i', class: 'c', attr: 'n = 1', pseudo: 'p', "where": 'x = 1'}]);
+----
+true
+
+# the slot order is NOT the constructor's argument order: {type, class, id} prints TYPE, ID,
+# CLASS. Textual order equals node_id order only because both follow slot order, and this is
+# the case that would fail if the parser numbered parts by the order they were WRITTEN in the
+# struct rather than the order they appear in the TEXT.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'f', class: 'c', id: 'i'}])))
+     = tree_steps([{type: 'f', class: 'c', id: 'i'}]);
+----
+true
+
+# a WHERE body emitted unquoted, carrying a depth-0-looking comma inside parentheses.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'name IN (''a'', ''b'')'}])))
+     = tree_steps([{"where": 'name IN (''a'', ''b'')'}]);
+----
+true
+
+# ATTR with a word operator and an argument that keeps its own quotes and ESCAPE clause.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', attr: 'name NOT LIKE ''a\_%'' ESCAPE ''\'''}])))
+     = tree_steps([{class: 'f', attr: 'name NOT LIKE ''a\_%'' ESCAPE ''\'''}]);
+----
+true
+
+# a TYPE value that IS a group keyword. The group test reads the LEADING word of a part, and a
+# quoted value is never that word.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'has'}])))
+     = tree_steps([{type: 'has'}]);
+----
+true
+
+# a value carrying each of the three characters the tokenizer treats as structure: the comma,
+# the quote (doubled by the printer) and the newline. Quote parity is what makes all three free.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'a, b'}, {comb: 'child', type: 'it''s'}, {comb: 'child', type: 'x' || chr(10) || 'y'}])))
+     = tree_steps([{type: 'a, b'}, {comb: 'child', type: 'it''s'}, {comb: 'child', type: 'x' || chr(10) || 'y'}]);
+----
+true
+
+# SELF, legal only as the first step of a group -- so the eight-combinator scan below has to use
+# this shape for all eight rather than a top-level chain.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{comb: 'self', class: 'g'}]}])))
+     = tree_steps([{class: 'f', has: [{comb: 'self', class: 'g'}]}]);
+----
+true
+
+# a capture on a step that also carries a group, so the alias comes off AFTER a ')'.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b'}], "as": 'cap'}])))
+     = tree_steps([{class: 'f', has: [{type: 'b'}], "as": 'cap'}]);
+----
+true
+
+# ----------------------------------------------------------------------------------------------
+# THE NUMBERING, WRITTEN OUT. Every assertion above compares two values neither of which spells a
+# node id, so all of them would still pass if the assembly and the constructor were wrong in the
+# SAME way. This one writes the ids down. It is also the perturbation target: change one id here
+# and this record must fail, or the exact theorem above is worthless.
+#
+# Depth-first, each group's whole subtree before the next sibling: type 2, has 3, step 4, type 5,
+# not 6, step 7, type 8. A breadth-first numbering would put both group nodes before either
+# inner step.
+# ----------------------------------------------------------------------------------------------
+query IIIII
+SELECT node_id, parent_id, kind, value, op
+FROM (SELECT unnest(tree_parse_treeql(
+       '(TYPE ''f'', HAS ( DESCENDANT (TYPE ''b'') ), NOT ( DESCENDANT (TYPE ''c'') ))'),
+       recursive := true))
+ORDER BY node_id;
+----
+0	NULL	selector	treeql	NULL
+1	0	step	NULL	NULL
+2	1	type	f	NULL
+3	1	has	NULL	NULL
+4	3	step	NULL	desc
+5	4	type	b	NULL
+6	1	not	NULL	NULL
+7	6	step	NULL	desc
+8	7	type	c	NULL
+
+# PROVENANCE (requirement 3): the selector root's value is this front-end's name, which is what
+# tree_selector_language reads back. Canonical IR already carries it, so stamping it is what
+# leaves the exact theorem above undisturbed rather than what disturbs it.
+query I
+SELECT tree_selector_language(tree_parse_treeql('(TYPE ''f'')'));
+----
+treeql
+
+# ----------------------------------------------------------------------------------------------
+# EVERY COMBINATOR, DRIVEN FROM THE REGISTRY. Not a list of eight: a scan, so a ninth row is
+# covered the day it is registered. The scan is aliased `cb` and not `c`, because
+# tree_treeql_comb looks up `FROM tree_catalog.combinators c WHERE c.op = want_op` and inlining
+# puts that `c` in scope -- measured, alias `c` plus a column named `op` makes the predicate
+# self-compare and the scalar subquery return all eight rows.
+#
+# WHY THE TEXT COMES FROM tree_treeql_step AND NOT FROM tree_selector_to_treeql. Measured, the
+# whole printer CANNOT be called with a correlated argument at all -- not even over one row:
+#
+#   SELECT tree_selector_to_treeql(s) FROM (SELECT tree_steps([{type: 'a'}]) AS s) v
+#   INTERNAL Error: Failed to bind column reference "" : inequal types (INTEGER != BIGINT)
+#
+# a PRE-EXISTING limit of sql/06_selector.sql, which this task may not edit. tree_treeql_step is
+# the printer's own per-step renderer and IS correlation-safe, and the row above proves the
+# keyword it emits is cb.keyword, so the text asserted here is the printer's and not a
+# transcription of it.
+#
+# TWO COLUMNS, because a count of mismatches alone is a gate incomplete information satisfies: an
+# empty registry would report zero mismatches and pass. The second column says the scan saw at
+# least the eight known rows, and neither column pins the count, so a ninth row is covered
+# instead of breaking this record.
+query II
+SELECT count(*) FILTER (WHERE NOT same) AS mismatches, count(*) >= 8 AS covers_all_known
+FROM (SELECT tree_parse_treeql(
+               tree_treeql_step(NULL, 'TYPE ''a'', HAS ( '
+                 || tree_treeql_step(cb.op, 'TYPE ''b''', NULL) || ' )', NULL))
+             = tree_steps([{type: 'a', has: [{comb: cb.op, type: 'b'}]}]) AS same
+      FROM tree_catalog.combinators cb);
+----
+0	true
+
+# ...and the text that scan asserts on is the text the printer emits, keyword for keyword.
+query I
+SELECT count(*) FROM tree_catalog.combinators cb
+WHERE tree_treeql_step(cb.op, 'TYPE ''b''', NULL) <> cb.keyword || ' (TYPE ''b'')';
+----
+0
+
+# ----------------------------------------------------------------------------------------------
+# ONE PROVISIONAL REFUSAL (R25). Task 5 adds the refusal arms to tree_parse_treeql and owns all
+# eight messages, so the wording here is deliberately generic and is NOT what Task 5 will say.
+# What these records pin is the INVARIANT, which is Task 4's: no path returns clean IR for a
+# fragment the assembly cannot build, and the message names the fragment so Task 5 can specialise
+# without re-deriving it.
+# ----------------------------------------------------------------------------------------------
+
+# an unknown combinator, in each of the three positions it can occupy. One position passing is
+# not three: the top-level reader, the later-line reader and the group's chain reader are three
+# different call sites in the assembly.
+statement error
+SELECT tree_parse_treeql('KID (TYPE ''b'')');
+----
+tree_parse_treeql: cannot read KID (TYPE 'b')
+
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(10) || 'KID (TYPE ''b'')');
+----
+tree_parse_treeql: cannot read KID (TYPE 'b')
+
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', HAS ( KID (TYPE ''b'') ))');
+----
+tree_parse_treeql: cannot read KID (TYPE 'b')
+
+# R23's OWN CORNER, pinned as what the ruling does and not as what one might prefer. The chain
+# splits BEFORE each depth-0 combinator keyword, read from the registry case-insensitively, and
+# `child` here is a bare identifier VALUE that D-N15 makes legal input. The rule cannot tell it
+# from a keyword, so the chain splits into `CHILD TYPE` and `child`, and `TYPE` with no operand
+# is refused BY NAME.
+#
+# The alternative -- splitting only before a keyword preceded by ')' or by another keyword -- was
+# measured and REJECTED: it keeps this corner, and it silently returns CLEAN IR for
+# `HAS ( DESCENDANT TYPE x CHILD (TYPE ''b'') )` with the type value `x CHILD (TYPE 'b')`. A loud
+# refusal on a legal-but-ambiguous input beats a wrong answer on it.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', HAS ( CHILD TYPE child ))');
+----
+tree_parse_treeql: cannot read TYPE
+
+# a group keyword with NO parentheses. The parentheses have to be read off the RAW part text:
+# tree_treeql_step_parse strips them, so after it `HAS ( X )` and `HAS X` carry the same body and
+# the group would be built from a chain nobody wrote.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', HAS TYPE ''b'')');
+----
+tree_parse_treeql: cannot read HAS TYPE 'b'
+
+# an EMPTY group tests nothing, which is why tree_steps refuses to build one. The chain split
+# answers no steps for it, so there is nothing to put under the group node.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', HAS ( ))');
+----
+tree_parse_treeql: cannot read HAS ( )
+
+# a part that is neither a clause nor a group.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', 42)');
+----
+tree_parse_treeql: cannot read 42
+
+# ----------------------------------------------------------------------------------------------
+# NESTING PAST THE LIMIT, refused in the printer's own words (requirement 5). The printer cannot
+# emit this -- it unrolls to tree_group_depth_limit() levels for the same reason the assembly
+# does, because DuckDB macros cannot self-recurse -- so this is hand-written text.
+#
+# WHY THE DEEPEST GROUP STILL GETS A NODE. The assembly emits the too-deep group's own has/not
+# node and does NOT parse inside it. That is what lets tree_selector_group_depth MEASURE 3 and
+# the arm fire. Dropping the node instead would leave a selector measuring 2, the arm would never
+# fire, and the innermost group would be SILENTLY LOST -- which is the failure this refusal
+# exists to prevent.
+# ----------------------------------------------------------------------------------------------
+statement error
+SELECT tree_parse_treeql(
+  '(CLASS ''f'', HAS ( DESCENDANT (TYPE ''b'', HAS ( DESCENDANT (TYPE ''c'', HAS ( DESCENDANT (TYPE ''d'') )) )) ))');
+----
+groups nested deeper than 2 levels are not supported
+
+# ----------------------------------------------------------------------------------------------
+# THE NORMALISING HALF, and the one place printed text is the right comparison. This IR is
+# hand-built with SPARSE node ids -- 0, 10, 25, 40, 55, 70, 99, 120 -- so it is not canonical and
+# `=` against it must NOT hold. What must hold is that the parse renumbers it densely and the two
+# print the same: the parser is the normaliser, and re-reading its own output is a fixed point.
+# ----------------------------------------------------------------------------------------------
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+         [{node_id: 0,   parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 10,  parent_id: 0,    kind: 'step',     value: NULL,     op: NULL,    arg: NULL, alias: 'cap'},
+          {node_id: 25,  parent_id: 10,   kind: 'class',    value: 'f',      op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 40,  parent_id: 10,   kind: 'has',      value: NULL,     op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 55,  parent_id: 40,   kind: 'step',     value: NULL,     op: 'child', arg: NULL, alias: NULL},
+          {node_id: 70,  parent_id: 55,   kind: 'type',     value: 'b',      op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 99,  parent_id: 0,    kind: 'step',     value: NULL,     op: 'next',  arg: NULL, alias: NULL},
+          {node_id: 120, parent_id: 99,   kind: 'pseudo',   value: 'p',      op: NULL,    arg: NULL, alias: NULL}]::TREE_SELECTOR)))
+     = tree_selector_to_treeql(
+         [{node_id: 0,   parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 10,  parent_id: 0,    kind: 'step',     value: NULL,     op: NULL,    arg: NULL, alias: 'cap'},
+          {node_id: 25,  parent_id: 10,   kind: 'class',    value: 'f',      op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 40,  parent_id: 10,   kind: 'has',      value: NULL,     op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 55,  parent_id: 40,   kind: 'step',     value: NULL,     op: 'child', arg: NULL, alias: NULL},
+          {node_id: 70,  parent_id: 55,   kind: 'type',     value: 'b',      op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 99,  parent_id: 0,    kind: 'step',     value: NULL,     op: 'next',  arg: NULL, alias: NULL},
+          {node_id: 120, parent_id: 99,   kind: 'pseudo',   value: 'p',      op: NULL,    arg: NULL, alias: NULL}]::TREE_SELECTOR);
+----
+true
+
+# ...and the renumbering really is dense and 0-based, which the printed comparison above cannot
+# see. This is the half of the normalising claim that needs the ids.
+query I
+SELECT list(node_id ORDER BY node_id) FROM (SELECT unnest(tree_parse_treeql(
+  '(CLASS ''f'', HAS ( CHILD (TYPE ''b'') )) AS cap' || chr(10) || 'SIBLING (PSEUDO ''p'')'),
+  recursive := true));
+----
+[0, 1, 2, 3, 4, 5, 6, 7]

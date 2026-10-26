@@ -350,3 +350,311 @@ CREATE OR REPLACE MACRO tree_treeql_step_parse(txt) AS (
           alias: alias,
           unknown_word: unknown_word}
   FROM t);
+
+-- THE GROUP KINDS, derived. A group's printed keyword is `upper(kind)` -- that is literally what
+-- tree_selector_to_treeql's grpA pass emits -- so reading a group means recognising a leading word
+-- whose lower case is a group kind. There is no registry of them: tree_ir_kinds() writes the four
+-- STRUCTURAL kinds out once, and this subtracts the two that are not groups rather than restating
+-- HAS and NOT as a second list that could drift from it. Today the answer is ['has', 'not'].
+--
+-- The two names written here are IR SHAPE, not vocabulary: 'selector' is the root and 'step' is a
+-- step, and neither is a set anything extends. The clause kinds and the combinators -- the two
+-- sets that ARE open -- are read from their registries and appear nowhere in this file.
+CREATE OR REPLACE MACRO tree_treeql_group_kinds() AS
+  (SELECT list(k ORDER BY k) FROM (SELECT unnest(tree_ir_kinds()) AS k)
+   WHERE k NOT IN ('selector', 'step') AND NOT list_contains(tree_clause_kinds(), k));
+
+-- R23: A GROUP'S INNER CHAIN, split BEFORE each depth-0 combinator keyword, read from
+-- tree_catalog.combinators case-insensitively. No keyword is written here, so the chain reader
+-- gains a ninth combinator the day a front-end registers one, exactly as the step reader does.
+--
+-- WHY THE KEYWORDS ARE THE SEPARATOR AND NOT A CHARACTER. The printer joins a group's inner steps
+-- with a SINGLE SPACE -- `HAS ( DESCENDANT (TYPE 'b') CHILD (TYPE 'c') )` -- and a space is not a
+-- separator anywhere else in TREEQL, so there is no character to split on. What marks a step
+-- boundary is the keyword itself, and every inner step has one: tree_steps and tree_steps_group
+-- both COALESCE a group chain's combinator to desc, so the printer emits it explicitly even for
+-- the first step. The leading span before the first keyword is kept, because hand-written input
+-- may omit it; requirement 4 then defaults that step to desc.
+--
+-- THE CORNER THIS RULE CREATES, recorded here because it is the ruling's consequence and not an
+-- oversight: a BARE IDENTIFIER VALUE spelled like a combinator keyword is legal input (D-N15),
+-- and this rule cannot tell it from a keyword. `HAS ( CHILD TYPE child )` splits into
+-- `CHILD TYPE` and `child`, and `TYPE` with no operand is then refused by name. The alternative
+-- considered was to split only before a keyword preceded by ')' or by another keyword; it was
+-- measured and REJECTED, because it keeps that corner AND silently returns clean IR for
+-- `HAS ( DESCENDANT TYPE x CHILD (TYPE 'b') )` with the type value `x CHILD (TYPE 'b')`. A loud
+-- refusal on a legal-but-ambiguous input is worth more than a wrong answer on it. Both forms are
+-- parenless, which the printer never emits, so the round-trip contract is untouched either way.
+--
+-- A WORD, not a prefix: the scan marks maximal runs of identifier characters at paren depth 0 and
+-- outside quotes, and compares the WHOLE run to the registry. Comparing a prefix would split
+-- `CHILDREN` and `SELFISH`. Depth and quote state come from the same two windows the clause-list
+-- splitter uses, for the same reasons -- a keyword inside a nested clause list or inside a quoted
+-- value is not a boundary.
+--
+-- EMPTY SPANS ARE DROPPED here, unlike in the clause-list splitter, where an empty trailing part
+-- is a real part. A keyword at position 1 would otherwise answer an empty first step, and an
+-- empty inner chain must answer NO steps so that the assembly can refuse the empty group rather
+-- than build a group node with nothing under it.
+CREATE OR REPLACE MACRO tree_treeql_chain_parts(s) AS (
+  WITH chars AS (SELECT i, s[i:i] AS ch FROM (SELECT unnest(range(1, length(s) + 1)) AS i)),
+  quoted AS (
+    SELECT i, ch,
+           (COALESCE(sum(CASE WHEN ch = '''' THEN 1 ELSE 0 END)
+              OVER (ORDER BY i ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) % 2) = 1 AS inq
+    FROM chars),
+  depthed AS (
+    SELECT i, ch, inq,
+           sum(CASE WHEN inq THEN 0 WHEN ch = '(' THEN 1 WHEN ch = ')' THEN -1 ELSE 0 END)
+             OVER (ORDER BY i) AS depth
+    FROM quoted),
+  wordy AS (SELECT i, ch, depth = 0 AND NOT inq AND regexp_matches(ch, '[A-Za-z0-9_]') AS isw
+            FROM depthed),
+  -- a word STARTS at an identifier character whose predecessor is not one; `sum` over that marker
+  -- then gives every character the id of the word it belongs to
+  marked AS (
+    SELECT i, ch, isw,
+           CASE WHEN isw AND NOT COALESCE(lag(isw) OVER (ORDER BY i), false) THEN 1 ELSE 0 END AS wstart
+    FROM wordy),
+  ided AS (SELECT i, ch, isw, sum(wstart) OVER (ORDER BY i) AS wid FROM marked),
+  words AS (SELECT min(i) AS lo, string_agg(ch, '' ORDER BY i) AS word
+            FROM ided WHERE isw GROUP BY wid),
+  -- R20: the registry scan is aliased `cb` and NOT `c`. tree_treeql_comb reads
+  -- `FROM tree_catalog.combinators c WHERE c.op = want_op`, and inlining puts that `c` in scope;
+  -- measured, alias `c` with a column named `op` present makes the predicate self-compare and the
+  -- scalar subquery return all eight rows.
+  starts AS (
+    SELECT lo FROM words
+    WHERE EXISTS (SELECT 1 FROM tree_catalog.combinators cb
+                  WHERE upper(cb.keyword) = upper(words.word))),
+  -- 1 and length(s) + 1 are sentinels, so one lead() window serves both ends, exactly as in the
+  -- clause-list splitter. Here the boundary character is KEPT -- the keyword belongs to the step
+  -- it starts -- so the span runs from the boundary itself, not from one past it. UNION, not
+  -- UNION ALL: a keyword at position 1 makes the sentinel and the boundary the same position.
+  bounds AS (SELECT 1 AS p UNION SELECT lo FROM starts UNION SELECT length(s) + 1),
+  spans AS (SELECT p AS lo, lead(p) OVER (ORDER BY p) - 1 AS hi FROM bounds),
+  spanned AS (SELECT lo, trim(s[lo:hi], tree_treeql_ws()) AS part FROM spans WHERE hi IS NOT NULL),
+  kept AS (SELECT CAST(row_number() OVER (ORDER BY lo) AS INTEGER) AS ord, part
+           FROM spanned WHERE part <> '')
+  SELECT list({ord: ord, part: part} ORDER BY ord) FROM kept);
+
+-- TREEQL TEXT to a TREE_SELECTOR, node ids included. This is the macro that makes the exact
+-- theorem true: tree_parse_treeql(tree_selector_to_treeql(sel)) = sel as a WHOLE VALUE.
+--
+-- HOW THE NUMBERING IS REPRODUCED, and why it is not a counter. tree_steps numbers by sorting a
+-- PATH struct {i0, a0, i1, a1, i2, a2} -- `i` the 1-based position in a chain, `a` which of a
+-- step's parts comes next -- and taking row_number() over that order. This macro rebuilds the
+-- same struct from the TEXT and numbers it the same way, so the two agree by construction rather
+-- than by two counters that happen to count alike. Ancestry precedes depth in the key, which is
+-- what makes the order depth-first; a row's parent link is its parent's path, so the parent join
+-- is one struct comparison and no arithmetic on ids is done anywhere.
+--
+-- `a` IS THE PART'S TEXTUAL POSITION, NOT tree_steps' SLOT NUMBER, and that is a deliberate
+-- difference. Only the RELATIVE order of paths survives row_number(), and the printer emits a
+-- step's parts `ORDER BY node_id`, so on canonical IR the textual order of the parts IS their
+-- slot order and the two numberings produce identical ids. Reading the slot number instead would
+-- need a clause ORDINAL, and the registry has none: measured, tree_clause_kinds() returns the
+-- kinds in SCAN order and not in slot order -- the registry has no order column, which
+-- test/css_parser.py's CLAUSE_SLOT exemption also records -- so list_position() over it would be
+-- wrong, quietly and for most selectors. Clauses are still
+-- ordered BEFORE groups (requirement 2) rather than purely by position, which costs nothing and
+-- matches the constructor for a hand-written `(HAS ( ... ), TYPE 'a')` as well.
+--
+-- GROUPS UNROLL, three step levels and two group levels, and do not recurse: DuckDB macros cannot
+-- self-recurse, which is the same reason the printer unrolls to the same depth and the same reason
+-- TREE_STEP_L0/L1/L2 spell the ceiling out as types. Raising tree_group_depth_limit() means adding
+-- one level here, in the printer and in the type list together.
+--
+-- WHY NOT list_transform. tree_treeql_step_parse and tree_treeql_clause_parse both query the
+-- catalog, so both are subqueries, and a subquery is illegal anywhere inside an expression
+-- carrying a lambda. Every level is therefore set-based: `unnest()` of the splitters' list forms
+-- over a relation, with the readers applied per row.
+--
+-- THE FIRST STEP OF THE OUTER CHAIN keeps whatever combinator the text gives it, which for
+-- printer output is none. Every other step -- a later top-level step, and every step of a group's
+-- chain -- defaults to desc (requirement 4), which is what tree_steps and tree_steps_group both
+-- do. A combinator WRITTEN on the first step is assembled as written and refused by tree_steps'
+-- own `the first step takes no combinator`; inventing a refusal for it here would duplicate that.
+CREATE OR REPLACE MACRO tree_parse_treeql(txt) AS (
+WITH
+-- LEVEL 0: the top-level chain. Requirement 1 -- the split is on a DEPTH-0 newline, so a newline
+-- inside a quoted value or a clause list cannot end a step.
+lvl0 AS (SELECT (x).ord AS i0, (x).part AS part
+         FROM (SELECT unnest(tree_treeql_split_parts(txt, chr(10))) AS x)),
+rd0 AS (SELECT i0, part, tree_treeql_step_parse(part) AS p FROM lvl0),
+stp0 AS (SELECT i0, part,
+           CASE WHEN i0 = 1 THEN (p).op ELSE COALESCE((p).op, 'desc') END AS op,
+           (p).body AS body, (p).alias AS alias, (p).unknown_word AS uw
+         FROM rd0),
+pt0 AS (SELECT i0, (x).ord AS n, (x).part AS part
+        FROM (SELECT i0, unnest(tree_treeql_split_parts(body, ',')) AS x
+              FROM stp0 WHERE body IS NOT NULL)),
+-- A PART IS A CLAUSE OR A GROUP, and the two readers are asked in that order: a clause keyword is
+-- never a group keyword (the registries are disjoint and 48_treeql_parse.test asserts it), so a
+-- part the clause reader claims cannot also be a group. A part the clause reader returns NULL for
+-- is a group when its LEADING WORD is a group kind -- which is exactly what Task 3 leaves in
+-- unknown_word.
+cg0 AS (SELECT i0, n, part, tree_treeql_clause_parse(part) AS cl,
+               tree_treeql_step_parse(part) AS gp
+        FROM pt0),
+-- `gtail` reads the parentheses off the RAW part text on purpose. tree_treeql_step_parse STRIPS
+-- them, so after it `HAS ( X )` and `HAS X` carry the same body, and a parenless group would be
+-- built from a chain nobody wrote instead of refused.
+kd0 AS (SELECT i0, n, part, cl,
+          CASE WHEN cl IS NULL AND (gp).unknown_word IS NOT NULL
+                    AND list_contains(tree_treeql_group_kinds(), lower((gp).unknown_word))
+               THEN lower((gp).unknown_word) END AS gkind,
+          (gp).unknown_word AS guw, (gp).body AS gbody,
+          CASE WHEN (gp).unknown_word IS NOT NULL
+               THEN trim(part[length((gp).unknown_word) + 1 : ], tree_treeql_ws()) END AS gtail
+        FROM cg0),
+sl0 AS (SELECT *, CAST(row_number() OVER (PARTITION BY i0
+            ORDER BY CASE WHEN gkind IS NULL THEN 0 ELSE 1 END, n) AS INTEGER) AS a0
+        FROM kd0),
+gr0 AS (SELECT i0, a0, gkind, gbody FROM sl0 WHERE gkind IS NOT NULL),
+
+-- LEVEL 1: each depth-1 group's inner chain, and the same four passes over it.
+lvl1 AS (SELECT i0, a0, (x).ord AS i1, (x).part AS part
+         FROM (SELECT i0, a0, unnest(tree_treeql_chain_parts(gbody)) AS x FROM gr0)),
+rd1 AS (SELECT i0, a0, i1, part, tree_treeql_step_parse(part) AS p FROM lvl1),
+stp1 AS (SELECT i0, a0, i1, part, COALESCE((p).op, 'desc') AS op,
+           (p).body AS body, (p).alias AS alias, (p).unknown_word AS uw
+         FROM rd1),
+pt1 AS (SELECT i0, a0, i1, (x).ord AS n, (x).part AS part
+        FROM (SELECT i0, a0, i1, unnest(tree_treeql_split_parts(body, ',')) AS x
+              FROM stp1 WHERE body IS NOT NULL)),
+cg1 AS (SELECT i0, a0, i1, n, part, tree_treeql_clause_parse(part) AS cl,
+               tree_treeql_step_parse(part) AS gp
+        FROM pt1),
+kd1 AS (SELECT i0, a0, i1, n, part, cl,
+          CASE WHEN cl IS NULL AND (gp).unknown_word IS NOT NULL
+                    AND list_contains(tree_treeql_group_kinds(), lower((gp).unknown_word))
+               THEN lower((gp).unknown_word) END AS gkind,
+          (gp).unknown_word AS guw, (gp).body AS gbody,
+          CASE WHEN (gp).unknown_word IS NOT NULL
+               THEN trim(part[length((gp).unknown_word) + 1 : ], tree_treeql_ws()) END AS gtail
+        FROM cg1),
+sl1 AS (SELECT *, CAST(row_number() OVER (PARTITION BY i0, a0, i1
+            ORDER BY CASE WHEN gkind IS NULL THEN 0 ELSE 1 END, n) AS INTEGER) AS a1
+        FROM kd1),
+gr1 AS (SELECT i0, a0, i1, a1, gkind, gbody FROM sl1 WHERE gkind IS NOT NULL),
+
+-- LEVEL 2: the last level tree_group_depth_limit() allows. Its steps may carry clauses and they
+-- may carry a group KEYWORD, but a group here has nowhere to go -- so the group's own node is
+-- still emitted below and its inside is never read. That is what lets the depth measure see 3.
+lvl2 AS (SELECT i0, a0, i1, a1, (x).ord AS i2, (x).part AS part
+         FROM (SELECT i0, a0, i1, a1, unnest(tree_treeql_chain_parts(gbody)) AS x FROM gr1)),
+rd2 AS (SELECT i0, a0, i1, a1, i2, part, tree_treeql_step_parse(part) AS p FROM lvl2),
+stp2 AS (SELECT i0, a0, i1, a1, i2, part, COALESCE((p).op, 'desc') AS op,
+           (p).body AS body, (p).alias AS alias, (p).unknown_word AS uw
+         FROM rd2),
+pt2 AS (SELECT i0, a0, i1, a1, i2, (x).ord AS n, (x).part AS part
+        FROM (SELECT i0, a0, i1, a1, i2, unnest(tree_treeql_split_parts(body, ',')) AS x
+              FROM stp2 WHERE body IS NOT NULL)),
+cg2 AS (SELECT i0, a0, i1, a1, i2, n, part, tree_treeql_clause_parse(part) AS cl,
+               tree_treeql_step_parse(part) AS gp
+        FROM pt2),
+kd2 AS (SELECT i0, a0, i1, a1, i2, n, part, cl,
+          CASE WHEN cl IS NULL AND (gp).unknown_word IS NOT NULL
+                    AND list_contains(tree_treeql_group_kinds(), lower((gp).unknown_word))
+               THEN lower((gp).unknown_word) END AS gkind,
+          (gp).unknown_word AS guw, (gp).body AS gbody,
+          CASE WHEN (gp).unknown_word IS NOT NULL
+               THEN trim(part[length((gp).unknown_word) + 1 : ], tree_treeql_ws()) END AS gtail
+        FROM cg2),
+sl2 AS (SELECT *, CAST(row_number() OVER (PARTITION BY i0, a0, i1, a1, i2
+            ORDER BY CASE WHEN gkind IS NULL THEN 0 ELSE 1 END, n) AS INTEGER) AS a2
+        FROM kd2),
+
+-- EVERY NODE AT EVERY LEVEL as one relation, each carrying its own path and its parent's path.
+-- Requirement 2's pre-order falls out of the struct order and is not re-stated as a traversal.
+nodes AS (
+  -- the root: a ppath no row carries, so the parent join leaves its parent_id NULL. Its value is
+  -- this front-end's name -- the provenance tree_selector_language reads back (requirement 3).
+  -- Canonical IR already carries it, which is what leaves the exact theorem undisturbed.
+  SELECT {i0: 0, a0: 0, i1: 0, a1: 0, i2: 0, a2: 0} AS path,
+         {i0: -1, a0: 0, i1: 0, a1: 0, i2: 0, a2: 0} AS ppath,
+         'selector' AS kind, 'treeql'::VARCHAR AS value, NULL::VARCHAR AS op,
+         NULL::VARCHAR AS arg, NULL::VARCHAR AS alias
+  UNION ALL SELECT {i0: i0, a0: 0, i1: 0, a1: 0, i2: 0, a2: 0},
+                   {i0: 0, a0: 0, i1: 0, a1: 0, i2: 0, a2: 0},
+                   'step', NULL, op, NULL, alias FROM stp0
+  UNION ALL SELECT {i0: i0, a0: a0, i1: 0, a1: 0, i2: 0, a2: 0},
+                   {i0: i0, a0: 0, i1: 0, a1: 0, i2: 0, a2: 0},
+                   (cl).kind, (cl).value, (cl).op, (cl).arg, NULL FROM sl0 WHERE cl IS NOT NULL
+  UNION ALL SELECT {i0: i0, a0: a0, i1: 0, a1: 0, i2: 0, a2: 0},
+                   {i0: i0, a0: 0, i1: 0, a1: 0, i2: 0, a2: 0},
+                   gkind, NULL, NULL, NULL, NULL FROM sl0 WHERE gkind IS NOT NULL
+  UNION ALL SELECT {i0: i0, a0: a0, i1: i1, a1: 0, i2: 0, a2: 0},
+                   {i0: i0, a0: a0, i1: 0, a1: 0, i2: 0, a2: 0},
+                   'step', NULL, op, NULL, alias FROM stp1
+  UNION ALL SELECT {i0: i0, a0: a0, i1: i1, a1: a1, i2: 0, a2: 0},
+                   {i0: i0, a0: a0, i1: i1, a1: 0, i2: 0, a2: 0},
+                   (cl).kind, (cl).value, (cl).op, (cl).arg, NULL FROM sl1 WHERE cl IS NOT NULL
+  UNION ALL SELECT {i0: i0, a0: a0, i1: i1, a1: a1, i2: 0, a2: 0},
+                   {i0: i0, a0: a0, i1: i1, a1: 0, i2: 0, a2: 0},
+                   gkind, NULL, NULL, NULL, NULL FROM sl1 WHERE gkind IS NOT NULL
+  UNION ALL SELECT {i0: i0, a0: a0, i1: i1, a1: a1, i2: i2, a2: 0},
+                   {i0: i0, a0: a0, i1: i1, a1: a1, i2: 0, a2: 0},
+                   'step', NULL, op, NULL, alias FROM stp2
+  UNION ALL SELECT {i0: i0, a0: a0, i1: i1, a1: a1, i2: i2, a2: a2},
+                   {i0: i0, a0: a0, i1: i1, a1: a1, i2: i2, a2: 0},
+                   (cl).kind, (cl).value, (cl).op, (cl).arg, NULL FROM sl2 WHERE cl IS NOT NULL
+  -- the TOO-DEEP group: its node and nothing under it, so tree_selector_group_depth below
+  -- measures tree_group_depth_limit() + 1 and the refusal fires. Dropping it instead would leave
+  -- a selector measuring exactly the limit, the arm would never fire, and the innermost group
+  -- would be silently lost -- which is the failure that refusal exists to prevent.
+  UNION ALL SELECT {i0: i0, a0: a0, i1: i1, a1: a1, i2: i2, a2: a2},
+                   {i0: i0, a0: a0, i1: i1, a1: a1, i2: i2, a2: 0},
+                   gkind, NULL, NULL, NULL, NULL FROM sl2 WHERE gkind IS NOT NULL),
+-- every path is unique, so the parent link is one struct comparison. The cast to INTEGER is
+-- load-bearing: row_number() is BIGINT, and TREE_SELECTOR's node_id is INTEGER, so without it
+-- whole-value equality against canonical IR fails on TYPE alone.
+nmb AS (SELECT CAST(row_number() OVER (ORDER BY path) - 1 AS INTEGER) AS node_id, * FROM nodes),
+prt AS (SELECT n.node_id, p.node_id AS parent_id, n.kind, n.value, n.op, n.arg, n.alias
+        FROM nmb n LEFT JOIN nmb p ON p.path = n.ppath),
+asm AS (SELECT list({node_id: node_id, parent_id: parent_id, kind: kind, value: value,
+                     op: op, arg: arg, alias: alias} ORDER BY node_id)::TREE_SELECTOR AS v
+        FROM prt),
+-- R25: ONE PROVISIONAL REFUSAL, and the fragment that caused it. Task 5 adds the refusal arms to
+-- this macro and owns all eight messages, so inventing wording it will rewrite would only have to
+-- be undone. What belongs to Task 4 is the INVARIANT: nothing the assembly cannot build returns
+-- clean IR, and the message names the offending text so Task 5 can specialise without
+-- re-deriving it. `min` so the message names one fragment and not a set.
+--
+-- The five shapes, each at every level it can occur at:
+--   * a step whose leading word is in NEITHER registry -- `KID (TYPE 'b')`. Without this the step
+--     would arrive as op NULL with a body, indistinguishable from a step with no combinator.
+--   * a part that is neither a clause nor a group.
+--   * a group keyword with no parentheses (read off the raw text -- see `gtail` above).
+--   * an EMPTY group, which tests nothing and which tree_steps also refuses to build. The chain
+--     reader answers NULL for it, so there is nothing to put under the group node.
+--   * a group at the LAST level, whose keyword is read but whose inside is not.
+bad AS (SELECT min(f) AS f FROM (
+      SELECT part AS f FROM stp0 WHERE uw IS NOT NULL
+      UNION ALL SELECT part FROM stp1 WHERE uw IS NOT NULL
+      UNION ALL SELECT part FROM stp2 WHERE uw IS NOT NULL
+      UNION ALL SELECT part FROM sl0 WHERE cl IS NULL AND gkind IS NULL
+      UNION ALL SELECT part FROM sl1 WHERE cl IS NULL AND gkind IS NULL
+      UNION ALL SELECT part FROM sl2 WHERE cl IS NULL AND gkind IS NULL
+      UNION ALL SELECT part FROM sl0
+        WHERE gkind IS NOT NULL AND NOT (gtail LIKE '(%' AND gtail LIKE '%)')
+      UNION ALL SELECT part FROM sl1
+        WHERE gkind IS NOT NULL AND NOT (gtail LIKE '(%' AND gtail LIKE '%)')
+      UNION ALL SELECT part FROM sl2
+        WHERE gkind IS NOT NULL AND NOT (gtail LIKE '(%' AND gtail LIKE '%)')
+      UNION ALL SELECT part FROM sl0
+        WHERE gkind IS NOT NULL AND tree_treeql_chain_parts(gbody) IS NULL
+      UNION ALL SELECT part FROM sl1
+        WHERE gkind IS NOT NULL AND tree_treeql_chain_parts(gbody) IS NULL))
+SELECT CASE
+  -- requirement 5, and FIRST: the depth is measured on the ASSEMBLED selector with
+  -- tree_selector_group_depth against tree_group_depth_limit(), which is what the printer and
+  -- tree_steps_group both do, and the wording is the printer's own. It comes before the generic
+  -- arm so that a selector nested too deep is always refused in those words.
+  WHEN tree_selector_group_depth((SELECT v FROM asm)) > tree_group_depth_limit()
+    THEN tree_err('tree_parse_treeql: groups nested deeper than ' || tree_group_depth_limit()
+                  || ' levels are not supported')
+  WHEN (SELECT f FROM bad) IS NOT NULL
+    THEN tree_err('tree_parse_treeql: cannot read ' || (SELECT f FROM bad))
+  ELSE (SELECT v FROM asm) END);
