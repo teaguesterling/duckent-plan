@@ -2104,10 +2104,25 @@ true
 # reads as THREE clauses and not as a WHERE body of `a = 1, PSEUDO 'p'`. The parser takes the
 # three-clause reading, and it reprints byte-identically.
 #
-# "UNREACHABLE" IS TESTED HERE RATHER THAN ARGUED. The second record is the claim: no valid DuckDB
-# boolean predicate carries a bare top-level comma, so no WHERE body the host door can accept is
-# affected by the first. If that ever stops being true, the second record goes red and this limit
-# needs a real answer.
+# "UNREACHABLE" WAS MEASURED FALSE IN FIX ROUND 3, and the claim is withdrawn here rather than
+# a thousand lines away. The old claim was: no valid DuckDB boolean predicate carries a bare
+# top-level comma, so no WHERE body the host door can accept is affected. The hole is that the
+# splitter counts ONLY parentheses -- it is blind to `[` `]` and to `{` `}` -- so a comma at paren
+# depth zero INSIDE A BRACKET OR BRACE PAIR is read as a clause separator. Measured, and it is
+# printer output from the ordinary constructor:
+#
+#     tree_steps([{"where": '[1, 2] = [1, 2]'}])  prints  (WHERE [1, 2] = [1, 2])
+#       -> REFUSED `cannot read 2]`
+#     tree_steps([{"where": '{a: 1, b: 2} = {a: 1, b: 2}'}])  -> REFUSED `cannot read b: 2}`
+#
+# So the limit IS REACHABLE, from an ordinary legal predicate. The record below that drives
+# `CASE WHEN a = 1, PSEUDO 'p'` is still true about a BARE comma and is NOT the gate for this --
+# it stays green through the whole of F1, because its comma is not inside a bracket or a brace.
+# The gate is the FIX ROUND 3 block at the end of this file.
+#
+# NOT FIXED HERE, BY RULING: teaching the splitter brackets is a behaviour change and reopens
+# Task 1 from inside Task 5. It is identical on BASE 3384ede, so it is not a regression this task
+# introduced. Task 7's differential generator owns it.
 # ----------------------------------------------------------------------------------------------
 query I
 SELECT tree_selector_to_treeql(tree_parse_treeql('(TYPE ''x'', WHERE a = 1, PSEUDO ''p'')'))
@@ -2124,7 +2139,9 @@ SELECT list(kind ORDER BY node_id) FROM (SELECT unnest(
 ----
 [selector, step, type, where, pseudo]
 
-# THE FACT THAT MAKES THE LIMIT UNREACHABLE: a top-level comma is not a legal predicate.
+# A BARE top-level comma is not a legal predicate. This is TRUE and it is NOT the gate for the
+# reachability of the limit: it says nothing about a comma inside a bracket or a brace pair, which
+# F1 above shows IS reachable. Read it as the narrow fact it is.
 statement error
 SELECT CASE WHEN a = 1, PSEUDO 'p' THEN 1 END;
 ----
@@ -2253,3 +2270,93 @@ SELECT tree_parse_treeql(tree_selector_to_treeql(
               {type: 'e', comb: 'child', "where": '"o''k" = 1'}])));
 ----
 tree_parse_treeql: cannot read
+
+# ==============================================================================================
+# FIX ROUND 3 -- FOUR HOLES THE THEOREMS CANNOT SEE, PINNED SO THEY STOP BEING ARGUABLE
+#
+# EVERY RECORD IN THIS BLOCK PINS BEHAVIOUR THAT IS KNOWN WRONG. None of them is intent. They are
+# here because this task kept writing comments that claimed a completeness the code does not have,
+# and a record is the only thing that cannot drift from the code.
+#
+# ONE CAUSE BEHIND ALL OF THEM: the clause-list splitter is not a tokeniser. It counts `(` and
+# `)`, it reads every `'` as a delimiter, and it is blind to `[` `]` and `{` `}`.
+#
+# ALL OF IT IS IDENTICAL ON BASE 3384ede -- measured, not assumed -- so none of it is a regression
+# this task introduced, and by ruling none of it is fixed here. Task 7's differential generator
+# owns the splitter.
+# ==============================================================================================
+
+# F1. A REFUSAL OF PRINTER OUTPUT THAT THIS TASK DOES NOT FIX. The constructor is ordinary, the
+# text is what the printer wrote, and the parser refuses it: the body's comma sits at paren depth
+# zero inside a bracket pair, so the splitter reads it as a clause separator. This record exists to
+# make that visible, NOT to say it is correct. Task 7 owns the fix.
+statement error
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": '[1, 2] = [1, 2]'}])));
+----
+tree_parse_treeql: cannot read 2]
+
+# BEYOND THE ROUND-3 BRIEF, and the reason it is here: the brief's cause was "a comma at paren
+# depth zero inside a BRACKET pair". Measured, a BRACE pair does the same, so the brief's class was
+# too narrow and a record is how that stops being a matter of memory. Same ruling, same owner.
+statement error
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{"where": '{a: 1, b: 2} = {a: 1, b: 2}'}])));
+----
+tree_parse_treeql: cannot read b: 2}
+
+# THE REAL BOUNDARY OF THE LIMIT, recorded instead of guessed. A bracket or a brace is NOT by
+# itself a problem -- only a COMMA inside one is. Both of these are printer output and both
+# round-trip EXACTLY. If someone "fixes" F1 by refusing brackets outright, these two go red.
+query I
+SELECT ok FROM (
+  SELECT 1 AS i, tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'x[1] = 1'}])))
+                 = tree_steps([{"where": 'x[1] = 1'}]) AS ok
+  UNION ALL
+  SELECT 2, tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": '{a: 1} = {a: 1}'}])))
+            = tree_steps([{"where": '{a: 1} = {a: 1}'}])
+) ORDER BY i;
+----
+true
+true
+
+# F2. A CLEAN WRONG PARSE, PINNED. The WHERE body swallows the step that follows it: `TYPE 'b'`
+# ends up INSIDE the where value. The parenless arm (R36) does not fire, because the arm asks
+# tree_treeql_no_raw_body first and this text carries a raw body.
+#
+# WHAT I DID NOT MEASURE, said plainly: I did NOT establish that the stand-down CAUSES this. The
+# coordinator measured f836e29 -- which has the arm but not the guard -- accepting the same input,
+# because the splitter had already mis-split the text so no part ever looked parenless. Same end
+# state by a different route. BASE accepts it too, measured by me.
+#
+# THE PARSE RESULT IS PINNED, not merely "no error": a record that only asserted acceptance would
+# stay green if the wrong value changed shape.
+query I
+SELECT string_agg(kind || ':' || COALESCE(value, '~'), ' | ' ORDER BY node_id)
+FROM (SELECT unnest(tree_parse_treeql('(TYPE ''a'', HAS ( WHERE a = 1 TYPE ''b'' ))'),
+                    recursive := true));
+----
+selector:treeql | step:~ | type:a | has:~ | step:~ | where:a = 1 TYPE 'b'
+
+# F3. THE ONE NO THEOREM AND NO SWEEP CAN EVER SEE, which is why a record is the only gate it will
+# ever have. Two parenthesised steps side by side collapse into ONE step whose attr `arg` holds the
+# rest of the text. tree_treeql_wrapped's closure is CONDITIONAL: on raw-bodied text it falls back
+# to the SF-3 first-and-last-character test, which `(ATTR a = 1) (ATTR b = 2)` satisfies with
+# MISMATCHED parentheses.
+#
+# The `arg` below is `1) (ATTR b = 2`, which tree_steps will not build -- so the IR is not
+# constructible, yet it REPRINTS BYTE-IDENTICALLY. Both theorems are therefore blind to it: EXACT
+# compares to an IR nobody can construct, and REPRINT compares equal. Identical on BASE.
+query I
+SELECT string_agg(kind || ':' || COALESCE(value, '~') || '/' || COALESCE(arg, '~'), ' | '
+                  ORDER BY node_id)
+FROM (SELECT unnest(tree_parse_treeql('(ATTR a = 1) (ATTR b = 2)'), recursive := true));
+----
+selector:treeql/~ | step:~/~ | attr:a/1) (ATTR b = 2
+
+# ...and this is the row that proves the theorems cannot see it. BEYOND THE BRIEF's four records,
+# and load-bearing: without it, "no theorem can see this" is an argument rather than a measurement.
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql('(ATTR a = 1) (ATTR b = 2)'))
+     = '(ATTR a = 1) (ATTR b = 2)';
+----
+true
