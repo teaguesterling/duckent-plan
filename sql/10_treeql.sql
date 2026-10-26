@@ -936,12 +936,17 @@ cps AS (SELECT part, cl, gkind, gtail, gbody FROM sl0
 --
 -- WHY A PRIORITY ORDER AND NOT min() ALONE. One input can carry more than one fault, and the old
 -- `min(f)` picked the alphabetically smallest FRAGMENT -- arbitrary once the messages differ.
--- Two orderings are load-bearing, and both were measured by mutation rather than argued:
---   * UNTERMINATED BEFORE UNBALANCED, because an unterminated quote stops the parentheses after
---     it from being counted at all, so a quote fault presents as a paren fault.
---   * PARENLESS BEFORE GENERIC, because `HAS ( TYPE 'b' TYPE 'c' )` is ALSO a clause whose
---     literal cannot be read, and `cannot read TYPE 'b' TYPE 'c'` names the symptom instead of
---     the mistake.
+-- ONE ordering is load-bearing and one is not, both measured by mutation:
+--   * PARENLESS BEFORE GENERIC is GATED, because `HAS ( TYPE 'b' TYPE 'c' )` is ALSO a clause
+--     whose literal cannot be read, and `cannot read TYPE 'b' TYPE 'c'` names the symptom instead
+--     of the mistake. Silencing the parenless arm fails three records.
+--   * UNTERMINATED BEFORE UNBALANCED is NOT gated since the odd-quote stand-down. The reasoning
+--     holds -- an unterminated quote stops the parentheses after it from being counted, so a
+--     quote fault presents as a paren fault -- but tree_treeql_balanced now stands down on an odd
+--     count, so the input that needed the order never reaches the unbalanced arm. Measured:
+--     swapping the two arms now fails ZERO records, where before the stand-down it failed one.
+--     Kept as the correct order if that stand-down is ever narrowed, and named UNGATED here so
+--     the harmless swap is not mistaken for the arms being interchangeable.
 -- The order lives in the CASE below, where it is visible, and not in a sort key here.
 prob AS (
   -- NO STEPS AT ALL. R26 drops a blank top-level part, so empty, whitespace-only and NULL text
@@ -960,16 +965,32 @@ prob AS (
   -- author the wrong thing. Those go to the generic arm below, which names the fragment and
   -- claims nothing about the cause. Refused either way -- that is R38's requirement.
   --
-  -- CANNOT REJECT PRINTER OUTPUT, and the SECOND half of this condition is what makes that true.
-  -- For a kind whose body IS a literal, tree_sql_lit doubles every embedded quote, so printer
-  -- output has an even count by construction. A WHERE or ATTR body is NOT one: the printer emits
-  -- it unquoted and unescaped, so `(WHERE "o'k" = 1)` is printer output with an ODD count --
-  -- measured, from the ordinary constructor, and it round-tripped at BASE. Parity alone refused
-  -- it, which is a defect and not a gate. tree_treeql_clause_parse already answers "is this
-  -- body's quoting well formed, for this kind" in `lit_ok`, so the rule is routed through that
-  -- answer rather than restating which kinds carry a literal.
+  -- CANNOT REJECT PRINTER OUTPUT, and the OTHER TWO THIRDS of this condition are what make that
+  -- true. A part's quote count is evidence about a VALUE only when the part IS a value; this rule
+  -- shipped twice believing otherwise, so the reasoning is written out rather than summarised.
+  --
+  -- A WHERE OR ATTR BODY IS NOT A LITERAL. The printer emits it unquoted and unescaped -- see this
+  -- file's header -- so it never passes through tree_sql_lit and its quote count can be ODD.
+  -- Measured, from the ordinary constructor: `(WHERE "o'k" = 1)`, a double-quoted IDENTIFIER
+  -- holding an apostrophe, legal DuckDB SQL, and it round-tripped at BASE. So `lit_ok` decides a
+  -- clause part, because tree_treeql_clause_parse already answers "is this body's quoting well
+  -- formed, FOR THIS KIND" and that is the holder of the per-kind rule.
+  --
+  -- AND A GROUP PART IS NOT A VALUE EITHER, which is the second defect of the same shape and the
+  -- one `lit_ok` alone did not stop. A group part carries a whole nested CHAIN, so any WHERE body
+  -- anywhere inside it contributes to the part's count -- measured, the printer emits
+  -- `(TYPE 'a', HAS ( DESCENDANT (TYPE 'b', WHERE "o'k" = 1) ))` with FIVE quotes, `cl` is NULL
+  -- because a group is not a clause, and the rule fired on a part whose own quoting is perfect.
+  -- `gkind IS NULL` excludes it: a part the assembly reads as a group is judged by the group
+  -- rules, never by counting characters across its contents. An unterminated value INSIDE the
+  -- group is still caught, by this same rule applied to the inner part at the inner level.
+  --
+  -- WHAT IS LEFT, and it is the only shape where the count is evidence: a part that is a
+  -- value-carrying clause whose literal is malformed (`TYPE 'a`), or a part the readers could make
+  -- nothing of at all (`(TYPE 'c`). Neither can be printer output.
   UNION ALL SELECT 'unterminated', part FROM cps
         WHERE NOT tree_treeql_quotes_even(part)
+          AND gkind IS NULL
           AND (cl IS NULL OR NOT (cl).lit_ok)
   -- UNBALANCED PARENTHESES, counted quote-aware over the WHOLE input. It runs AFTER the
   -- unterminated arm deliberately: an unterminated quote swallows the rest of the text, so the

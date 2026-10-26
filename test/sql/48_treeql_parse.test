@@ -1463,6 +1463,13 @@ true
 # the PRINTER emits exactly this text for it, and the printer is the specification. Both inner
 # steps therefore carry op NULL, which is why the right-hand side is hand-built IR rather than a
 # constructor call.
+#
+# THE PRINTER IS NOT AMBIGUOUS HERE, and an earlier reading of mine said it was. It writes
+# `DESCENDANT` whenever the op IS desc and writes nothing only when the op is NULL, so the
+# constructor's IR and this hand-built IR have DIFFERENT text and each round-trips to itself. The
+# record below this one asserts the other half, which this one stopped covering when its
+# right-hand side moved: a record that pins only the NULL-op reading says nothing about the desc
+# one.
 query I
 SELECT tree_parse_treeql('(CLASS ''f'', HAS ( (TYPE ''b'', NOT ( (TYPE ''c'') )) ))')
      = [{node_id: 0, parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL, arg: NULL, alias: NULL},
@@ -1474,6 +1481,22 @@ SELECT tree_parse_treeql('(CLASS ''f'', HAS ( (TYPE ''b'', NOT ( (TYPE ''c'') ))
         {node_id: 6, parent_id: 4,    kind: 'not',      value: NULL,     op: NULL, arg: NULL, alias: NULL},
         {node_id: 7, parent_id: 6,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
         {node_id: 8, parent_id: 7,    kind: 'type',     value: 'c',      op: NULL, arg: NULL, alias: NULL}]::TREE_SELECTOR;
+----
+true
+
+# THE OTHER HALF: the SAME constructor IR, against the keyword-carrying text the printer actually
+# emits for it. The two records are one claim in two directions -- no-keyword text means NULL, and
+# `DESCENDANT` means desc -- and together they say the parser distinguishes the two readings
+# rather than merely preferring one.
+query I
+SELECT tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b', "not": [{type: 'c'}]}]}]));
+----
+(CLASS 'f', HAS ( DESCENDANT (TYPE 'b', NOT ( DESCENDANT (TYPE 'c') )) ))
+
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{class: 'f', has: [{type: 'b', "not": [{type: 'c'}]}]}])))
+     = tree_steps([{class: 'f', has: [{type: 'b', "not": [{type: 'c'}]}]}]);
 ----
 true
 
@@ -1638,15 +1661,20 @@ true
 # is: depth, no-steps, unterminated value, unbalanced parentheses, group parentheses, parenless
 # inner step, unknown combinator, unknown clause keyword, generic.
 #
-# TWO PLACES WHERE THE ORDER IS LOAD-BEARING, each measured by mutation rather than reasoned:
-#   * UNTERMINATED BEFORE UNBALANCED. An unterminated quote swallows the rest of the text, so the
-#     parentheses after it stop being counted and a quote fault LOOKS like a paren fault. Swap the
-#     two arms and exactly ONE record fails -- the `CHILD (TYPE 'c` one, which then reports
-#     `unbalanced parentheses` about text whose parentheses are fine.
-#   * PARENLESS BEFORE GENERIC. `HAS ( TYPE 'b' TYPE 'c' )` is BOTH a parenless inner step and a
-#     clause whose literal cannot be read, and the generic arm would answer
+# ONE PLACE WHERE THE ORDER IS LOAD-BEARING, and one where it is NOT -- both measured by mutation,
+# and the second is recorded as ungated rather than claimed as gated:
+#   * PARENLESS BEFORE GENERIC is GATED. `HAS ( TYPE 'b' TYPE 'c' )` is BOTH a parenless inner step
+#     and a clause whose literal cannot be read, and the generic arm would answer
 #     `cannot read TYPE 'b' TYPE 'c'` -- true, but it names the symptom instead of the mistake.
 #     Silence the parenless arm and three records fail, two of them on exactly that substitution.
+#   * UNTERMINATED BEFORE UNBALANCED is NOT gated, as of the odd-quote stand-down. The reasoning
+#     for the order still holds -- an unterminated quote stops the parentheses after it from being
+#     counted, so a quote fault presents as a paren fault -- but `tree_treeql_balanced` now stands
+#     down whenever the quote count is odd, so the input that needed the order never reaches the
+#     unbalanced arm at all. Measured: swapping the two arms fails ZERO records, where before the
+#     stand-down it failed one. The order is kept because it is the correct order if that
+#     stand-down is ever narrowed, and it is named here as UNGATED so that nobody reads the
+#     swap-is-harmless result as evidence that the arms are interchangeable.
 # ==============================================================================================
 
 # ----------------------------------------------------------------------------------------------
@@ -1990,6 +2018,52 @@ SELECT tree_parse_treeql('(WHERE "o''k" = length(n))')
      = tree_steps([{"where": '"o''k" = length(n)'}]);
 ----
 true
+
+# EVERY STRUCTURAL POSITION, because the top-level records above pass while a GROUP part fails for
+# a different reason and one position passing is not three. The first cut of the odd-quote
+# stand-down routed the rule through `lit_ok`, which is the PER-CLAUSE answer, and a group part is
+# not a clause: `cl` is NULL for it, the nested WHERE body contributes to the whole part's count,
+# and the rule fired on a part whose own quoting is perfect. Measured, all three round-tripped at
+# BASE 3384ede and all three were refused with `unterminated quoted value` at 5cb9618.
+#
+# The fix is `gkind IS NULL`: a part the assembly reads as a GROUP is judged by the group rules and
+# never by counting characters across its contents.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: 'a', has: [{"where": '"o''k" = 1', type: 'b'}]}])))
+     = tree_steps([{type: 'a', has: [{"where": '"o''k" = 1', type: 'b'}]}]);
+----
+true
+
+# the premise for that one, so its input is pinned as genuine printer output
+query I
+SELECT tree_selector_to_treeql(tree_steps([{type: 'a', has: [{"where": '"o''k" = 1', type: 'b'}]}]));
+----
+(TYPE 'a', HAS ( DESCENDANT (TYPE 'b', WHERE "o'k" = 1) ))
+
+# ...with PARENTHESES after the stray quote, inside the group
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: 'a', has: [{"where": '"o''k" = length(n)', type: 'b'}]}])))
+     = tree_steps([{type: 'a', has: [{"where": '"o''k" = length(n)', type: 'b'}]}]);
+----
+true
+
+# ...and inside a NESTED group, which is the second group level and a third call site
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: 'a', has: [{type: 'b', "not": [{"where": '"o''k" = 1', type: 'c'}]}]}])))
+     = tree_steps([{type: 'a', has: [{type: 'b', "not": [{"where": '"o''k" = 1', type: 'c'}]}]}]);
+----
+true
+
+# AN UNTERMINATED VALUE INSIDE A GROUP IS STILL REFUSED, which is what keeps `gkind IS NULL` from
+# being a hole rather than a fix. The group part is not judged by its own character count; the
+# inner part is, at the inner level, by this same rule.
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( DESCENDANT (TYPE ''b) ))');
+----
+tree_parse_treeql: unterminated quoted value
 
 # two top-level steps, which the depth-0 newline split must still find
 query I
