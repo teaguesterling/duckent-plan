@@ -2344,8 +2344,10 @@ selector:treeql | step:~ | type:a | has:~ | step:~ | where:a = 1 TYPE 'b'
 # parentheses.
 #
 # THE ROUND-3 MECHANISM WAS MEASURED FALSE IN FIX ROUND 4, and the claim is withdrawn here rather
-# than a thousand lines away. It said this header's own "NO THEOREM AND NO SWEEP CAN EVER SEE",
-# and that the `arg` below "is IR tree_steps will not build -- so the IR is not constructible".
+# than a thousand lines away. This block's header used to read "THE ONE NO THEOREM AND NO SWEEP
+# CAN EVER SEE", and the lines here used to say the `arg` below "is IR tree_steps will not build
+# -- so the IR is not constructible"; both are withdrawn, which is why the header reads as it now
+# does.
 # It came from the coordinator's fix-round-3 brief (task-5-fix-round-3.md:60 and :111) and was
 # transcribed in good faith. MEASURED in fix round 4, on this worktree's sql and on a BASE 3384ede
 # tree, identical on both: tree_steps([{attr: 'a = 1) (ATTR b = 2'}]) BUILDS (three nodes), prints
