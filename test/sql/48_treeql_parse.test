@@ -2121,3 +2121,127 @@ statement error
 SELECT CASE WHEN a = 1, PSEUDO 'p' THEN 1 END;
 ----
 syntax error at or near ","
+
+# ==============================================================================================
+# R42 FOR THE PAREN SCAN (fix round 2). The quote-aware depth scan decides "inside a literal" by
+# PARITY, and parity is evidence only where every quote is a DELIMITER. A WHERE or ATTR body is
+# raw host SQL, so one unpaired apostrophe in it flips the scanner's state and makes it skip
+# parentheses that are REAL.
+#
+# ONE odd body gives an ODD total, the odd-quote stand-down engages, and the scan is not trusted.
+# TWO odd bodies sum to an EVEN total, the stand-down never engages, and the masked quotes hide
+# the parentheses. Measured on 5cb9618's successor f836e29, on text the ORDINARY constructor
+# printed:
+#
+#   (WHERE "o'k" = 1, HAS ( DESCENDANT (TYPE 'b', WHERE "o'k" = 1) ))
+#     quote count 4 -> even -> no stand-down -> depths reach -2 -> REFUSED unbalanced parentheses
+#   one-body control, 5 quotes -> odd -> stand-down -> accepted
+#
+# So the comment this task shipped -- "the printer emits ( and ) only as a matched pair, and a
+# value's own parenthesis is inside a literal, where this count does not look" -- was measured
+# FALSE. It was the THIRD comment in this task that read as measurement and was reasoning, and the
+# SECOND on this arm.
+#
+# WHY A REGRESSION AND NOT A LIMIT: the NORMALISING theorem decides it. Every shape below is
+# reprint-TRUE at BASE 3384ede and was REFUSED on f836e29, so a governing theorem that held on
+# printer output stopped holding. It is not documentable either, because the class is not refused
+# consistently -- step1+step2 and has+not still mis-parse silently.
+#
+# THE RULE: the paren scan is evidence only on text where NO clause kind with a RAW body appears.
+# That set is read from tree_catalog.clause_kinds, so it is not a second copy of the vocabulary.
+#
+# WHY NOT "unbalanced under BOTH a quote-aware AND a quote-blind reading", which is the obvious
+# candidate: measured, it is defeated by a TYPE literal holding an unmatched close paren, because
+# then the quote-BLIND reading is unbalanced too. The fourth record below is that exact shape and
+# is the one that discriminates the two rules.
+#
+# EXACT is NOT asserted here: it is FALSE at BASE for these shapes, because the clause-list
+# splitter mis-splits on the same unpaired apostrophe. That is R41, it predates this task, and
+# Task 7's differential generator carries it. These records pin the REPRINT half only.
+# ==============================================================================================
+
+# step1+has -- the smallest two-odd-body shape
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', "where": '"o''k" = 1', has: [{type: 'b', "where": '"o''k" = 1'}]}]))))
+     = tree_selector_to_treeql(
+  tree_steps([{type: 'a', "where": '"o''k" = 1', has: [{type: 'b', "where": '"o''k" = 1'}]}]));
+----
+true
+
+# has+nested -- both odd bodies inside groups, at two different depths
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}]}]))))
+     = tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}]}]));
+----
+true
+
+# step1+step2+has+not -- FOUR odd bodies and two top-level steps, so the newline split sees it too
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', "where": '"o''k" = 1', has: [{type: 'b', "where": '"o''k" = 1'}],
+               "not": [{type: 'd', "where": '"o''k" = 1'}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}]))))
+     = tree_selector_to_treeql(
+  tree_steps([{type: 'a', "where": '"o''k" = 1', has: [{type: 'b', "where": '"o''k" = 1'}],
+               "not": [{type: 'd', "where": '"o''k" = 1'}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}]));
+----
+true
+
+# THE DISCRIMINATOR: two odd bodies AND a TYPE literal holding an unmatched close paren. The
+# quote-aware reading is wrong here because of the apostrophes, and the quote-BLIND reading is
+# wrong because of the literal's own ')', so a rule that asks both to agree still refuses this.
+# Only a rule that declines to judge raw-bodied text at all accepts it.
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a ) unmatched', "where": '"o''k" = 1',
+               has: [{type: 'b', "where": '"o''k" = 1'}]}]))))
+     = tree_selector_to_treeql(
+  tree_steps([{type: 'a ) unmatched', "where": '"o''k" = 1',
+               has: [{type: 'b', "where": '"o''k" = 1'}]}]));
+----
+true
+
+# ----------------------------------------------------------------------------------------------
+# TWO REFUSALS THAT NAMED A CAUSE THE TEXT DOES NOT HAVE. Both shapes are refused at BASE too,
+# with the generic `cannot read`, so refusing them is not the defect -- the WORDING was. A refusal
+# must not claim a cause the text lacks; that is the requirement that narrowed R37 and R38, and it
+# applies to this task's own messages.
+#
+# They keep the GENERIC arm rather than gaining a new wording, because the real cause is R41's
+# mis-split, which this task may not fix and must not describe: `cannot read <fragment>` names the
+# text and claims nothing about why.
+# ----------------------------------------------------------------------------------------------
+
+# step2+has+nested -- was `unterminated quoted value`, when every literal IS terminated
+statement error
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}])));
+----
+tree_parse_treeql: cannot read
+
+# has+not+nested -- was `HAS/NOT needs parentheses around its chain`, when the parentheses ARE there
+statement error
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}],
+               "not": [{type: 'd', "where": '"o''k" = 1'}]}])));
+----
+tree_parse_treeql: cannot read
+
+# step2+has -- the THIRD wording group: refused with `unbalanced parentheses` when the parentheses
+# ARE matched. Same ruling as the two above: the generic arm, because the true cause is R41's
+# mis-split and this task may neither fix it nor describe it.
+statement error
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1'}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}])));
+----
+tree_parse_treeql: cannot read
