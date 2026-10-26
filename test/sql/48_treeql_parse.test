@@ -2274,13 +2274,18 @@ tree_parse_treeql: cannot read
 # ==============================================================================================
 # FIX ROUND 3 -- THE RECORDS FOR F1, F2 AND F3, AND THE BOUNDARY RECORD BESIDE F1
 #
-# SIX RECORDS SIT HERE, and four of them pin behaviour that is KNOWN WRONG and is not intent: F1's
-# two refusals of printer output, F2's wrong parse value, and F3's misread. The other two are not
-# that. The boundary record below F1 pins behaviour that is CORRECT and guards it -- a bracket or
-# a brace on its own round-trips EXACTLY, so a "fix" that refuses brackets outright turns it red.
-# The second F3 record pins that the normalising round trip on F3's text passes byte for byte. All
-# six are here because this task kept writing comments that claimed a completeness the code does
-# not have, and a record is the only thing that cannot drift from the code.
+# SIX RECORDS SIT HERE, in THREE classes, and fix round 5's own report forced the split.
+#
+# THREE PIN BEHAVIOUR THAT IS KNOWN WRONG and is not intent: F1's two refusals of printer output,
+# and F2's wrong parse value.
+#
+# TWO PIN BEHAVIOUR THAT IS CORRECT and guard it. The boundary record below F1 -- a bracket or a
+# brace on its own round-trips EXACTLY, so a "fix" that refuses brackets outright turns it red.
+# And the second F3 record -- the normalising round trip on F3's text passes byte for byte.
+#
+# ONE, F3 ITSELF, IS NEITHER, and calling it "known wrong" was this block's last false sentence.
+# See THE F3 RULING below. All six are here because this task kept writing comments that claimed a
+# completeness the code does not have, and a record is the only thing that cannot drift from code.
 #
 # WHY A RECORD AND NOT A THEOREM IS THE GATE -- a different answer per hole, and not the same
 # question as the cause below. Measured in fix round 5, on this worktree:
@@ -2288,16 +2293,40 @@ tree_parse_treeql: cannot read
 #                     read b: 2}`: the parser refuses its own printer's output, loudly.
 #   F2                NO THEOREM QUANTIFIES OVER IT. The theorems start from an IR, and this
 #                     text is not a fixed point of the printer: print(parse(text)) != text.
-#   F3                THE THEOREMS PASS. The text IS printer output and its round trip is
-#                     correct, so neither theorem goes red. What they do not cover is the INTENT
-#                     of a person who writes that text.
+#   F3                THE THEOREMS PASS, AND EXACT REQUIRES THIS READING. The text IS printer
+#                     output of a constructible IR and EXACT holds on it, so parse MUST return
+#                     the one-step IR -- a two-step reading would turn EXACT red. What no theorem
+#                     covers is the INTENT of a person who writes that text.
 #
 # THE HEADER ABOVE USED TO READ "FOUR HOLES THE THEOREMS CANNOT SEE", and that is withdrawn here
 # rather than a thousand lines away. It is false for F1, which they see by RAISING, and for F3,
 # which they see and PASS. It fits only F2, and the block holds six records, not four.
 #
-# ONE CAUSE BEHIND ALL OF THEM: the clause-list splitter is not a tokeniser. It counts `(` and
-# `)`, it reads every `'` as a delimiter, and it is blind to `[` `]` and `{` `}`.
+# THE F3 RULING, by the coordinator, after fix round 5 declined to make it and was right to --
+# relabelling is a ruling, not a measurement. Requirement 6 and the EXACT theorem disagree about
+# F3, both measured, and the ruling is that EXACT WINS AND F3 IS NOT A PARSER DEFECT.
+#
+# WHAT F3 ACTUALLY IS: a COLLISION IN THE TREEQL SURFACE SYNTAX. The printed form of a ONE-step IR
+# whose attr body happens to contain `) (ATTR` is BYTE-IDENTICAL to the form a person would write
+# by hand for TWO steps. The text carries nothing that separates the two, so no parser can serve
+# both readings. EXACT takes it because the printer is the specification: this text is printer
+# output, and a parser that refused or re-read its own printer's output would break the Global
+# Constraint. Requirement 6 loses on this one input and keeps every other.
+#
+# WHAT FOLLOWS, and it corrects a standing assumption: F3 CANNOT BE "FIXED". Teaching a two-step
+# reading would turn EXACT red on a constructible IR and turn the FIX ROUND 4 record red with it.
+# There is nothing here for a later task to repair -- only a limit to document.
+#
+# ONE CAUSE BEHIND F1 AND F2: the clause-list splitter is not a tokeniser. It counts `(` and `)`,
+# it reads every `'` as a delimiter, and it is blind to `[` `]` and `{` `}`.
+#
+# F3'S CAUSE IS NOT THE SPLITTER, and saying it was is a claim fix round 5 measured false and left
+# for this ruling. MEASURED, with a control: on F3's text, tree_treeql_step_parse returns the
+# damaged body `ATTR a = 1) (ATTR b = 2` and tree_treeql_split_parts returns ONE part for it,
+# while a genuinely two-clause body `TYPE 'a', ATTR b = 2` returns TWO. The damage is already done
+# before the splitter sees anything: tree_treeql_wrapped answers TRUE on mismatched parentheses
+# because tree_treeql_no_raw_body is FALSE and the first-and-last-character fallback takes over.
+# So the splitter does not own F3, and the task that owns the splitter does not inherit F3.
 #
 # ALL OF IT IS IDENTICAL ON BASE 3384ede -- measured, not assumed -- so none of it is a regression
 # this task introduced, and by ruling none of it is fixed here. Task 7's differential generator
@@ -2372,7 +2401,7 @@ selector:treeql | step:~ | type:a | has:~ | step:~ | where:a = 1 TYPE 'b'
 # it, not blind.
 #
 # WHICH RECORD PINS WHICH OF THOSE, so that this sentence cannot outlive them: the FIX ROUND 4
-# block at the end of this file pins BUILDS, PRINTS and EXACT, one row each. NORMALISING is pinned
+# block's record pins BUILDS, PRINTS and EXACT, one row each. NORMALISING is pinned
 # by that block's print row together with the record immediately below this one -- print of the
 # parse equals the text -- which compose to print(parse(print(ir))) == print(ir). No single record
 # asserts NORMALISING on its own.
@@ -2381,7 +2410,8 @@ selector:treeql | step:~ | type:a | has:~ | step:~ | where:a = 1 TYPE 'b'
 # text means two steps, and the printer never writes it for a two-step IR -- measured over
 # tree_catalog.combinators, the seven combinators legal at depth 0 and the `desc` default all print
 # `(ATTR a = 1)` and `<KEYWORD> (ATTR b = 2)` on TWO lines, and `self` refuses. So the parser is
-# free to read the text as the one-step IR, and does. No theorem over printer output can cover
+# not merely free to read the text as the one-step IR -- EXACT REQUIRES it to, since the text is
+# printer output of a constructible IR on which EXACT holds. No theorem over printer output covers
 # that, because the theorems quantify over printer output and this text IS printer output with a
 # correct round trip. Hence a record and not a theorem. Identical on BASE.
 query I

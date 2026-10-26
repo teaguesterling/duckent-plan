@@ -305,8 +305,9 @@ CREATE OR REPLACE MACRO tree_treeql_quotes_trusted(s) AS
 -- MEASURED, over the registry: of the eight combinators in tree_catalog.combinators, the
 -- seven that are legal at depth 0 and the `desc` default all print the two-step IR on
 -- TWO LINES as `(ATTR a = 1)` then `<KEYWORD> (ATTR b = 2)`, and `self` refuses outright
--- -- none of them prints the one-line text. So the parser is free to read that text as
--- the ONE-step IR, and does. NO THEOREM OVER PRINTER OUTPUT CAN COVER THAT, because the theorems
+-- -- none of them prints the one-line text. So the parser is not merely FREE to read that text
+-- as the ONE-step IR -- EXACT REQUIRES it to, because the text is printer output of a
+-- constructible IR on which EXACT holds, and a two-step reading would turn EXACT red. It does. NO THEOREM OVER PRINTER OUTPUT CAN COVER THAT, because the theorems
 -- quantify over printer output and this text IS printer output whose round trip is correct. That
 -- is why its gate is a record and not a theorem: F3 in the FIX ROUND 3 block of
 -- test/sql/48_treeql_parse.test pins the misread itself, and the FIX ROUND 4 block beside it pins
