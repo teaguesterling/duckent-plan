@@ -2344,15 +2344,20 @@ selector:treeql | step:~ | type:a | has:~ | step:~ | where:a = 1 TYPE 'b'
 # parentheses.
 #
 # THE ROUND-3 MECHANISM WAS MEASURED FALSE IN FIX ROUND 4, and the claim is withdrawn here rather
-# than a thousand lines away. This block's header used to read "THE ONE NO THEOREM AND NO SWEEP
-# CAN EVER SEE", and the lines here used to say the `arg` below "is IR tree_steps will not build
-# -- so the IR is not constructible"; both are withdrawn, which is why the header reads as it now
-# does.
-# It came from the coordinator's fix-round-3 brief (task-5-fix-round-3.md:60 and :111) and was
-# transcribed in good faith. MEASURED in fix round 4, on this worktree's sql and on a BASE 3384ede
-# tree, identical on both: tree_steps([{attr: 'a = 1) (ATTR b = 2'}]) BUILDS (three nodes), prints
-# exactly the text below, and satisfies EXACT and NORMALISING. The IR IS constructible and BOTH
-# theorems are SATISFIED on it, not blind. The FIX ROUND 4 block at the end of this file pins that.
+# than a thousand lines away. The withdrawn mechanism came from the coordinator's fix-round-3 brief
+# (task-5-fix-round-3.md:60 and :111) and was transcribed in good faith; this block's header used
+# to read "THE ONE NO THEOREM AND NO SWEEP CAN EVER SEE", and the lines here used to say the `arg`
+# below "is IR tree_steps will not build -- so the IR is not constructible". MEASURED in fix round
+# 4, on this worktree's sql and on a BASE 3384ede tree, identical on both:
+# tree_steps([{attr: 'a = 1) (ATTR b = 2'}]) BUILDS (three nodes), prints exactly the text below,
+# and satisfies EXACT and NORMALISING. The IR IS constructible and BOTH theorems are SATISFIED on
+# it, not blind.
+#
+# WHICH RECORD PINS WHICH OF THOSE, so that this sentence cannot outlive them: the FIX ROUND 4
+# block at the end of this file pins BUILDS, PRINTS and EXACT, one row each. NORMALISING is pinned
+# by that block's print row together with the record immediately below this one -- print of the
+# parse equals the text -- which compose to print(parse(print(ir))) == print(ir). No single record
+# asserts NORMALISING on its own.
 #
 # WHAT IT ACTUALLY IS: a HAND-WRITTEN-INPUT defect, requirement 6's class. A person who writes this
 # text means two steps, and the printer never writes it for a two-step IR -- measured over
@@ -2396,6 +2401,10 @@ true
 # Row 1: the constructor BUILDS it -- three nodes, so `tree_steps will not build` is false.
 # Row 2: it prints the F3 text byte for byte, so the F3 text is legitimate printer output.
 # Row 3: EXACT holds, so the exact theorem is SATISFIED on it rather than blind to it.
+#
+# NORMALISING IS NOT A ROW HERE, said plainly rather than left to be assumed from "both theorems".
+# Row 2 and the second F3 record above -- print of the parse equals the text -- compose to
+# print(parse(print(ir))) == print(ir), so the pair pins it and neither one does alone.
 # ==============================================================================================
 query I
 SELECT ok FROM (

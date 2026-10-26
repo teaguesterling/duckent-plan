@@ -308,7 +308,9 @@ CREATE OR REPLACE MACRO tree_treeql_quotes_trusted(s) AS
 -- outright -- none of them prints the one-line text. So the parser is free to read that text as
 -- the ONE-step IR, and does. NO THEOREM OVER PRINTER OUTPUT CAN COVER THAT, because the theorems
 -- quantify over printer output and this text IS printer output whose round trip is correct. That
--- is why its only gate is a record: the FIX ROUND 4 block in test/sql/48_treeql_parse.test.
+-- is why its gate is a record and not a theorem: F3 in the FIX ROUND 3 block of
+-- test/sql/48_treeql_parse.test pins the misread itself, and the FIX ROUND 4 block beside it pins
+-- why -- that the IR builds, prints that text, and satisfies EXACT.
 --
 -- The re-review's replacement mechanism -- "the printer is ambiguous for that IR" -- was measured
 -- false too, by the same sweep: no two-step IR prints this text, so the preimage is not ambiguous.
