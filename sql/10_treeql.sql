@@ -58,7 +58,34 @@ CREATE OR REPLACE MACRO tree_treeql_ws() AS ' ' || chr(9) || chr(10) || chr(12) 
 -- characters between steps. Whoever needs a longer one changes `c = sep` to a slice comparison.
 -- There is deliberately NO test pinning the current multi-character behaviour: a test would
 -- enshrine the wrong answer as the intended one.
-CREATE OR REPLACE MACRO tree_treeql_split(s, sep) AS TABLE (
+-- R22: WHY THE BOUNDARIES COME FROM A WINDOW AND NOT FROM A LOOKUP. This scan worked on a
+-- literal and died on a correlated reference:
+--
+--     FROM (VALUES (1, 'TYPE ''a'', CLASS ''b''')) s(id, t), LATERAL tree_treeql_split(s.t, ',')
+--     INTERNAL Error: Failed to bind column reference "" : inequal types (BIGINT != VARCHAR)
+--
+-- raised by the binder before the query ran, in the table shape and in a scalar list-returning
+-- variant of the same body alike. The CAUSE was isolated to one expression, not to correlation as
+-- such -- a correlated `generate_series`, `range(1, length(s) + 1)` and `string_split` all bind:
+--
+--     COALESCE((SELECT min(i) FROM seps WHERE i > b.lo), length(s) + 1)
+--
+-- an inner CORRELATED SUBQUERY, looking each part's end up per row, which the decorrelator could
+-- not rewrite once `s` was itself correlated. So the ends now come from `lead()` over the
+-- boundary positions and there is no inner subquery left. That is not a tidying: every caller of
+-- this family from Task 4 on reads a COLUMN -- Task 6's registry dispatch parses selector text
+-- out of a table -- and until this bound, the whole parser was literal-only.
+--
+-- The 0 and the length(s) + 1 are SENTINEL boundaries, which is what lets one window serve both
+-- ends: each part runs from one boundary + 1 to the next boundary - 1, and the sentinel row's own
+-- `lead()` is NULL and is dropped. Part count is therefore separators + 1 always, so an empty
+-- trailing part survives ('TYPE ''x'',' plus whitespace still answers two parts, the second
+-- empty) and the empty input answers one empty part rather than none. Measured, both.
+--
+-- The LIST form is the one implementation and the TABLE form is derived from it below, rather
+-- than two copies of the scan that are free to drift. The list is what Task 4's assembly reads,
+-- because `unnest()` of it over a relation needs no LATERAL at all.
+CREATE OR REPLACE MACRO tree_treeql_split_parts(s, sep) AS (
   WITH chars AS (SELECT i, s[i:i] AS c FROM generate_series(1, length(s)) t(i)),
   quoted AS (
     SELECT i, c,
@@ -70,20 +97,27 @@ CREATE OR REPLACE MACRO tree_treeql_split(s, sep) AS TABLE (
            sum(CASE WHEN inq THEN 0 WHEN c = '(' THEN 1 WHEN c = ')' THEN -1 ELSE 0 END)
              OVER (ORDER BY i) AS depth
     FROM quoted),
-  seps AS (SELECT i FROM depthed WHERE c = sep AND NOT inq AND depth = 0),
-  bounds AS (SELECT 0 AS lo UNION ALL SELECT i FROM seps),
-  spans AS (
-    SELECT lo + 1 AS lo,
-           COALESCE((SELECT min(i) FROM seps WHERE i > b.lo), length(s) + 1) - 1 AS hi
-    FROM bounds b)
+  bounds AS (SELECT 0 AS p
+             UNION ALL SELECT i FROM depthed WHERE c = sep AND NOT inq AND depth = 0
+             UNION ALL SELECT length(s) + 1),
+  spans AS (SELECT p + 1 AS lo, lead(p) OVER (ORDER BY p) - 1 AS hi FROM bounds),
   -- The part TEXT and the part BOUNDARIES are the two whitespace-sensitive things here, and only
   -- one of them turned out to be sensitive: the boundaries come from separator position alone,
   -- and whitespace moves neither the quote parity nor the paren depth. Measured over whitespace
   -- after a separator, before a separator, at both ends of the input, and alone in a trailing
   -- part: the full character set on this one trim answers all four.
-  SELECT row_number() OVER (ORDER BY lo) AS ord,
-         trim(s[lo:hi], tree_treeql_ws()) AS part
-  FROM spans ORDER BY lo);
+  parts AS (
+    SELECT CAST(row_number() OVER (ORDER BY lo) AS INTEGER) AS ord,
+           trim(s[lo:hi], tree_treeql_ws()) AS part
+    FROM spans WHERE hi IS NOT NULL)
+  SELECT list({ord: ord, part: part} ORDER BY ord) FROM parts);
+
+-- The TABLE form, derived from the list above. This is the tested interface and the shape
+-- `tree_treeql_split(s, sep)` has always had; it is one `unnest` over the one scan, so there is
+-- nothing here that can disagree with the list form.
+CREATE OR REPLACE MACRO tree_treeql_split(s, sep) AS TABLE (
+  SELECT (x).ord AS ord, (x).part AS part
+  FROM (SELECT unnest(tree_treeql_split_parts(s, sep)) AS x) ORDER BY ord);
 
 -- The printer's literal form, undone: '...' with '' for an embedded quote. A bare identifier
 -- (D-N15, decided 2026-10-15: accepted on input, never emitted) has no quotes to strip and

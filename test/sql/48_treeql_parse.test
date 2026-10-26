@@ -265,6 +265,36 @@ SELECT ord, '[' || part || ']' FROM tree_treeql_split('TYPE ''x'',' || chr(9) ||
 1	[TYPE 'x']
 2	[]
 
+# R22: THE SPLITTER ON A COLUMN, over three rows. Every case above hands it a LITERAL, and the
+# splitter worked on a literal and died on a correlated reference -- INTERNAL Error: Failed to
+# bind column reference "" : inequal types (BIGINT != VARCHAR), raised by the binder before the
+# query ran. Nothing here called it that way, so nothing caught it, and Task 6's registry
+# dispatch has to call the parser family on a column.
+#
+# THE CAUSE WAS THE SPLITTER'S OWN INNER CORRELATED SUBQUERY, not the correlation as such:
+# `COALESCE((SELECT min(i) FROM seps WHERE i > b.lo), length(s) + 1)` derived each part's end by
+# looking the next separator up per row. Measured, generate_series, string_split and a correlated
+# `range(1, length(s) + 1)` all work, so the part boundaries now come from a `lead()` window over
+# the separator positions and there is no inner subquery left to decorrelate.
+#
+# THREE ROWS, not two, and each a different shape: a two-part row, a one-part row, and a row whose
+# own quoted paren must not move the depth. A one-row LATERAL would still bind by accident if the
+# planner read the argument as a constant, and per-row state leaking across rows -- quote parity,
+# paren depth, or `ord` failing to restart -- only shows with a second and a third row.
+query III
+SELECT s.id, x.ord, x.part
+FROM (VALUES (1, 'TYPE ''a'', CLASS ''b'''),
+             (2, 'TYPE ''c'''),
+             (3, 'ATTR a = ''p)y'', TYPE ''x''')) s(id, t),
+     LATERAL tree_treeql_split(s.t, ',') x
+ORDER BY s.id, x.ord;
+----
+1	1	TYPE 'a'
+1	2	CLASS 'b'
+2	1	TYPE 'c'
+3	1	ATTR a = 'p)y'
+3	2	TYPE 'x'
+
 # ==============================================================================================
 # R19: THE ATTR PARSER INVENTED AN OPERATOR, and keyword-case tolerance would have widened it.
 #
