@@ -1229,26 +1229,48 @@ treeql
 # keyword it emits is cb.keyword, so the text asserted here is the printer's and not a
 # transcription of it.
 #
-# TWO COLUMNS, because a count of mismatches alone is a gate incomplete information satisfies: an
-# empty registry would report zero mismatches and pass. The second column says the scan saw at
-# least the eight known rows, and neither column pins the count, so a ninth row is covered
-# instead of breaking this record.
+# SF-1: BOTH OF THESE WERE WRITTEN IN THE NEGATIVE, which is the shape N3 (earlier in this file)
+# banned after it let two of three assertions pass vacuously. They are restated POSITIVELY here --
+# "the scan saw every known row" beside "every row it examined agreed" -- so an empty scan fails
+# the first column and a NULL comparison fails the second. Neither column pins the count, so a
+# ninth combinator is still covered the day it is registered rather than breaking these records.
+#
+# WHY THIS MATTERED EVEN THOUGH NEITHER WAS VACUOUS TODAY, measured on all four combinations:
+#
+#   old `count(*) FILTER (WHERE NOT same), count(*) >= 8`  -> real (0, true)   PASS
+#                                                             empty (0, false) caught
+#                                                             NULL  (0, true)  PASSED VACUOUSLY
+#   old `count(*) ... WHERE <> ...`                        -> real 0           PASS
+#                                                             empty 0          PASSED VACUOUSLY
+#                                                             NULL  0          PASSED VACUOUSLY
+#
+# So the second record was vacuous in BOTH directions and caught nothing on its own; it was
+# load-bearing only because the FIRST record's `count(*) >= 8` happened to prove the registry was
+# not empty. That cross-record dependency is exactly the fragility N3 exists to remove -- delete
+# or reshape the first record and the second silently stops testing anything.
+#
+#   new form                                               -> real (true, true)  PASS
+#                                                             empty (false, true) caught
+#                                                             NULL  (true, false) caught
 query II
-SELECT count(*) FILTER (WHERE NOT same) AS mismatches, count(*) >= 8 AS covers_all_known
+SELECT count(*) >= 8 AS saw_every_known_row,
+       count(*) FILTER (WHERE same) = count(*) AS every_examined_row_agreed
 FROM (SELECT tree_parse_treeql(
                tree_treeql_step(NULL, 'TYPE ''a'', HAS ( '
                  || tree_treeql_step(cb.op, 'TYPE ''b''', NULL) || ' )', NULL))
              = tree_steps([{type: 'a', has: [{comb: cb.op, type: 'b'}]}]) AS same
       FROM tree_catalog.combinators cb);
 ----
-0	true
+true	true
 
 # ...and the text that scan asserts on is the text the printer emits, keyword for keyword.
-query I
-SELECT count(*) FROM tree_catalog.combinators cb
-WHERE tree_treeql_step(cb.op, 'TYPE ''b''', NULL) <> cb.keyword || ' (TYPE ''b'')';
+query II
+SELECT count(*) >= 8 AS saw_every_known_row,
+       count(*) FILTER (WHERE agrees) = count(*) AS every_examined_row_agreed
+FROM (SELECT tree_treeql_step(cb.op, 'TYPE ''b''', NULL) = cb.keyword || ' (TYPE ''b'')' AS agrees
+      FROM tree_catalog.combinators cb);
 ----
-0
+true	true
 
 # ----------------------------------------------------------------------------------------------
 # ONE PROVISIONAL REFUSAL (R25). Task 5 adds the refusal arms to tree_parse_treeql and owns all
