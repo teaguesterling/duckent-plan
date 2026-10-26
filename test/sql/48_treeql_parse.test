@@ -2118,7 +2118,7 @@ true
 # So the limit IS REACHABLE, from an ordinary legal predicate. The record below that drives
 # `CASE WHEN a = 1, PSEUDO 'p'` is still true about a BARE comma and is NOT the gate for this --
 # it stays green through the whole of F1, because its comma is not inside a bracket or a brace.
-# The gate is the FIX ROUND 3 block at the end of this file.
+# The gate is the FIX ROUND 3 block's F1 records.
 #
 # NOT FIXED HERE, BY RULING: teaching the splitter brackets is a behaviour change and reopens
 # Task 1 from inside Task 5. It is identical on BASE 3384ede, so it is not a regression this task
@@ -2272,11 +2272,29 @@ SELECT tree_parse_treeql(tree_selector_to_treeql(
 tree_parse_treeql: cannot read
 
 # ==============================================================================================
-# FIX ROUND 3 -- FOUR HOLES THE THEOREMS CANNOT SEE, PINNED SO THEY STOP BEING ARGUABLE
+# FIX ROUND 3 -- THE RECORDS FOR F1, F2 AND F3, AND THE BOUNDARY RECORD BESIDE F1
 #
-# EVERY RECORD IN THIS BLOCK PINS BEHAVIOUR THAT IS KNOWN WRONG. None of them is intent. They are
-# here because this task kept writing comments that claimed a completeness the code does not have,
-# and a record is the only thing that cannot drift from the code.
+# SIX RECORDS SIT HERE, and four of them pin behaviour that is KNOWN WRONG and is not intent: F1's
+# two refusals of printer output, F2's wrong parse value, and F3's misread. The other two are not
+# that. The boundary record below F1 pins behaviour that is CORRECT and guards it -- a bracket or
+# a brace on its own round-trips EXACTLY, so a "fix" that refuses brackets outright turns it red.
+# The second F3 record pins that the normalising round trip on F3's text passes byte for byte. All
+# six are here because this task kept writing comments that claimed a completeness the code does
+# not have, and a record is the only thing that cannot drift from the code.
+#
+# WHY A RECORD AND NOT A THEOREM IS THE GATE -- a different answer per hole, and not the same
+# question as the cause below. Measured this round on this worktree:
+#   F1, both records  THE THEOREMS RAISE. parse(print(ir)) errors `cannot read 2]` and `cannot
+#                     read b: 2}`: the parser refuses its own printer's output, loudly.
+#   F2                NO THEOREM QUANTIFIES OVER IT. The theorems start from an IR, and this
+#                     text is not a fixed point of the printer: print(parse(text)) != text.
+#   F3                THE THEOREMS PASS. The text IS printer output and its round trip is
+#                     correct, so neither theorem goes red. What they do not cover is the INTENT
+#                     of a person who writes that text.
+#
+# THE HEADER ABOVE USED TO READ "FOUR HOLES THE THEOREMS CANNOT SEE", and that is withdrawn here
+# rather than a thousand lines away. It is false for F1, which they see by RAISING, and for F3,
+# which they see and PASS. It fits only F2, and the block holds six records, not four.
 #
 # ONE CAUSE BEHIND ALL OF THEM: the clause-list splitter is not a tokeniser. It counts `(` and
 # `)`, it reads every `'` as a delimiter, and it is blind to `[` `]` and `{` `}`.
@@ -2345,10 +2363,10 @@ selector:treeql | step:~ | type:a | has:~ | step:~ | where:a = 1 TYPE 'b'
 #
 # THE ROUND-3 MECHANISM WAS MEASURED FALSE IN FIX ROUND 4, and the claim is withdrawn here rather
 # than a thousand lines away. The withdrawn mechanism came from the coordinator's fix-round-3 brief
-# (task-5-fix-round-3.md:60 and :111) and was transcribed in good faith; this block's header used
-# to read "THE ONE NO THEOREM AND NO SWEEP CAN EVER SEE", and the lines here used to say the `arg`
-# below "is IR tree_steps will not build -- so the IR is not constructible". MEASURED in fix round
-# 4, on this worktree's sql and on a BASE 3384ede tree, identical on both:
+# (task-5-fix-round-3.md:60 and :111) and was transcribed in good faith; this record's own F3
+# header line used to read "THE ONE NO THEOREM AND NO SWEEP CAN EVER SEE", and the lines here used
+# to say the `arg` below "is IR tree_steps will not build -- so the IR is not constructible".
+# MEASURED in fix round 4, on this worktree's sql and on a BASE 3384ede tree, identical on both:
 # tree_steps([{attr: 'a = 1) (ATTR b = 2'}]) BUILDS (three nodes), prints exactly the text below,
 # and satisfies EXACT and NORMALISING. The IR IS constructible and BOTH theorems are SATISFIED on
 # it, not blind.

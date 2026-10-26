@@ -302,18 +302,28 @@ CREATE OR REPLACE MACRO tree_treeql_quotes_trusted(s) AS
 --
 -- WHAT IT ACTUALLY IS: a HAND-WRITTEN-INPUT defect, requirement 6's class. A person who writes
 -- that text means TWO parenthesised steps, and the printer never writes it for a two-step IR.
--- MEASURED, over the registry: of the eight combinators in tree_catalog.combinators, the seven
--- that are legal at depth 0 each print the two-step IR on TWO LINES as `(ATTR a = 1)` then
--- `<KEYWORD> (ATTR b = 2)`, the `desc` default prints the DESCENDANT form, and `self` refuses
--- outright -- none of them prints the one-line text. So the parser is free to read that text as
+-- MEASURED, over the registry: of the eight combinators in tree_catalog.combinators, the
+-- seven that are legal at depth 0 and the `desc` default all print the two-step IR on
+-- TWO LINES as `(ATTR a = 1)` then `<KEYWORD> (ATTR b = 2)`, and `self` refuses outright
+-- -- none of them prints the one-line text. So the parser is free to read that text as
 -- the ONE-step IR, and does. NO THEOREM OVER PRINTER OUTPUT CAN COVER THAT, because the theorems
 -- quantify over printer output and this text IS printer output whose round trip is correct. That
 -- is why its gate is a record and not a theorem: F3 in the FIX ROUND 3 block of
 -- test/sql/48_treeql_parse.test pins the misread itself, and the FIX ROUND 4 block beside it pins
 -- why -- that the IR builds, prints that text, and satisfies EXACT.
 --
--- The re-review's replacement mechanism -- "the printer is ambiguous for that IR" -- was measured
--- false too, by the same sweep: no two-step IR prints this text, so the preimage is not ambiguous.
+-- The re-review's replacement mechanism -- "the printer is ambiguous for that IR" -- does not
+-- hold either, and the sweep above is the whole of what was measured against it: nine cases of
+-- ONE clause shape. It is a statement about two-step CHAINS only, and what carries it from nine
+-- cases to EVERY chain is READ FROM SOURCE and not measured: sql/06_selector.sql:392 joins
+-- top-level steps with chr(10) and every other arm of that CASE raises, so a selector with two
+-- top-level steps cannot print one line at all. It is NOT a claim about the preimage, and
+-- over TREE_SELECTOR VALUES the preimage is NOT unique -- the printer renders neither node_id nor
+-- parent_id, so the same three nodes renumbered 0, 10, 20 are a DIFFERENT value printing THIS
+-- SAME TEXT (MEASURED, control: an attr arg of `a = 2) (ATTR b = 2` prints different text). The
+-- TASK 4 exact-theorem header in test/sql/48_treeql_parse.test says it from the other side, under
+-- "WHY WHOLE-VALUE `=` AND NOT PRINTED TEXT". Uniqueness over CANONICAL IR was NOT measured.
+-- So the re-review's two-step reading does not exist, and nothing wider than that follows.
 -- Identical on BASE 3384ede. Not fixed here by ruling -- the fallback is what keeps raw-bodied
 -- text no worse off than BASE, and removing it is a behaviour change.
 --
@@ -553,9 +563,8 @@ CREATE OR REPLACE MACRO tree_treeql_reserved() AS
 -- On raw-bodied text the limit is therefore still open.
 --
 -- WHY IT WAS ONE CAUSE AND NOT A CORNER. "A clause list always starts with a keyword, so a
--- leading '(' is
--- the step's own" establishes the LEADING parenthesis and says nothing about the trailing one
--- being its partner. Measured at BASE, the input that showed the gap:
+-- leading '(' is the step's own" establishes the LEADING parenthesis and says nothing about
+-- the trailing one being its partner. Measured at BASE, the input that showed the gap:
 --
 --     tree_treeql_step_parse('(TYPE ''a'') (TYPE ''b'')')  -> body "TYPE 'a') (TYPE 'b'"
 --
