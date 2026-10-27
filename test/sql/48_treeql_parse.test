@@ -1,5 +1,5 @@
 # name: test/sql/48_treeql_parse.test
-# description: M-LANG -- the reader for TREEQL text. parse(print(ir)) == ir on canonical IR.
+# description: M-LANG -- the reader for TREEQL text. parse(print(ir)) == ir on canonical IR, EXCEPT on the shapes test/sweep_treeql.py's KNOWN_EXACT_FAILURES enumerates -- see THE ONE DOCUMENTED LIMIT below.
 
 # THE SEPARATORS OCCUR INSIDE CLAUSE BODIES, which is why this needs a tokenizer and not a split.
 # ATTR and WHERE bodies are emitted unquoted and unescaped by the printer, so a clause list can
