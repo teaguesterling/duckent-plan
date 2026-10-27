@@ -663,18 +663,28 @@ def steps_literal(rows):
         return "[" + ", ".join(out) + "]"
 
     def step(s):
+        # NO CLAUSE-KIND VOCABULARY IS WRITTEN OUT HERE, and that is a requirement rather than a
+        # style: scripts/check_vocabulary_single_source.py refuses a second copy of the registry's
+        # vocabulary at any site that could read the registry, and this script HAS a connection.
+        # Listing the five plain-value kinds failed that lint -- measured, it did -- so the kinds
+        # are told apart by SHAPE instead: a group has children, an attr is split into value/op/arg,
+        # and every other clause carries its body in `value`. A clause kind added to the registry
+        # therefore needs no line here, which is the same property reading the registry would give.
+        # A GROUP is recognised by having CHILDREN -- its chain of steps -- which is why no group
+        # vocabulary is written out either. An empty group has none, so it falls through to the
+        # value branch, answers None and is reported UNCHECKED; tree_steps refuses to build one.
         fields = []
         for c in kids.get(s["node_id"], []):
-            if c["kind"] in ("type", "id", "class", "pseudo", "where"):
-                fields.append("%s: %s" % (key(c["kind"]), sql_str(c["value"])))
-            elif c["kind"] == "attr":
-                body = " ".join(x for x in (c["value"], c["op"], c["arg"]) if x is not None)
-                fields.append("attr: %s" % sql_str(body))
-            elif c["kind"] in ("has", "not"):
+            if kids.get(c["node_id"]):
                 inner = chain(c["node_id"])
                 if inner is None:
                     return None
                 fields.append("%s: %s" % (key(c["kind"]), inner))
+            elif c["op"] is not None or c["arg"] is not None:
+                body = " ".join(x for x in (c["value"], c["op"], c["arg"]) if x is not None)
+                fields.append("%s: %s" % (key(c["kind"]), sql_str(body)))
+            elif c["value"] is not None:
+                fields.append("%s: %s" % (key(c["kind"]), sql_str(c["value"])))
             else:
                 return None
         if s["op"] is not None:
