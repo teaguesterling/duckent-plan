@@ -1035,7 +1035,10 @@ CREATE OR REPLACE MACRO tree_treeql_clause_parts(s) AS (
   SELECT list({ord: ord, part: part} ORDER BY ord) FROM o);
 
 -- TREEQL TEXT to a TREE_SELECTOR, node ids included. This is the macro that makes the exact
--- theorem true: tree_parse_treeql(tree_selector_to_treeql(sel)) = sel as a WHOLE VALUE.
+-- theorem true: tree_parse_treeql(tree_selector_to_treeql(sel)) = sel as a WHOLE VALUE --
+-- EXCEPT on the shapes test/sweep_treeql.py's KNOWN_EXACT_FAILURES enumerates, which is where the
+-- exceptions are counted and declared rather than described. EXACT does NOT hold universally over
+-- the printer's image, and this sentence said it did until fix round 4.
 --
 -- HOW THE NUMBERING IS REPRODUCED, and why it is not a counter. tree_steps numbers by sorting a
 -- PATH struct {i0, a0, i1, a1, i2, a2} -- `i` the 1-based position in a chain, `a` which of a

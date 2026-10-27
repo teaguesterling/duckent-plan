@@ -192,6 +192,19 @@ IR_CASES = [
     ("k08 where, two continuations then a keyword", "[{\"where\": 'a = 1, b = 2, TYPE c'}]"),
     ("k09 where, continuation opens HAS", "[{\"where\": 'a = 1, HAS ( TYPE ''b'' )'}]"),
     ("k10 where, continuation opens NOT", "[{\"where\": 'a = 1, NOT ( TYPE ''b'' )'}]"),
+    # ---- THE EMPTY SELECTOR. It was `b29`, a family-B case with the text '', and it fell OUT of
+    # the denominator because is_printer_output asks the PYTHON and the Python refuses ''. So the
+    # one case this task's own both-refuse audit had just discovered to be printer output was
+    # counted nowhere, and the EXACT line's "enumerated rather than excluded" was false on the
+    # sweep's own case list. As a family-A case it enters the denominator BY CONSTRUCTION -- the
+    # generator prints it from IR -- instead of through the Python's acceptance, which is the whole
+    # point: the admission rule cannot find a case both readings refuse.
+    ("a50 the empty selector", "[{comb: NULL}]"),
+    # ---- A GENUINE COLLISION IN THE ATTR CONTINUATION, as a PAIR so it is legible as one. k07's
+    # declaration used to claim its own case was a collision; it is not (see KNOWN_EXACT_FAILURES).
+    # These two are: the same bytes from two constructible IRs. a51 is the preimage that SURVIVES.
+    ("a51 attr then WHERE, the multi-part preimage", "[{attr: 'a = 1', \"where\": 'b'}]"),
+    ("k11 attr then WHERE, the one-part preimage", "[{attr: 'a = 1, WHERE b'}]"),
 ]
 
 # ----------------------------------------------------------------------------------------------
@@ -243,7 +256,6 @@ TEXT_CASES = [
     ("b27 F3's text", "(ATTR a = 1) (ATTR b = 2)"),
     ("b28 F3's literal-bodied control", "(TYPE 'a') (TYPE 'b')"),
     # --- refusals ---
-    ("b29 empty", ""),
     ("b30 whitespace only", "   "),
     ("b31 unclosed paren", "(TYPE 'a'"),
     ("b32 unopened paren", "TYPE 'a')"),
@@ -402,6 +414,20 @@ DIVERGENT = {
 # than returning a wrong IR, restored in fix round 3 because a silent wrong parse replacing a loud
 # refusal is the worse of the two failures. It still fails EXACT, so it is declared, but its entry
 # says refusal.
+# WHICH PREIMAGE SURVIVES A COLLISION, AND WHY IT GOES BOTH WAYS. Two entries below sit on texts
+# with TWO constructible preimages, and EXACT can hold for at most one. Which one survives depends
+# on whether the clause SEPARATOR survives the quote mask, and the two known classes come out
+# opposite ways -- same mechanism, two outcomes:
+#
+#   the UNPAIRED-QUOTE class (file 48, not a case here): the mask BLANKS the separator, because an
+#     unpaired `"` in one raw body pairs with one in another and everything between is masked. The
+#     reader therefore sees ONE part, and the ONE-PART preimage survives.
+#   k11 / a51 here: the separator is VISIBLE and the continuation opens a clause keyword, so the
+#     reader cuts there and sees TWO parts. The MULTI-PART preimage survives (a51 passes) and the
+#     one-part preimage fails (k11).
+#
+# So "which reading a collision resolves to" is not a policy this parser applies; it is whatever the
+# mask leaves visible. Worth knowing before reading either entry as a decision.
 KNOWN_EXACT_FAILURES = {
     "k01": "raw body cut at `, TYPE` -- slot order would be needed to know a clause cannot follow",
     "k02": "raw body cut at `, WHERE`",
@@ -409,13 +435,34 @@ KNOWN_EXACT_FAILURES = {
     "k04": "raw body cut at `, ID`",
     "k05": "raw body cut at `, PSEUDO`",
     "k06": "raw body cut at a lowercase keyword -- the opener test is case-insensitive",
-    "k07": "an ATTR body cut the same way. Unlike the WHERE shapes this one is a COLLISION: "
-           "`(ATTR a = 1, TYPE b)`... attr is slot 4, so a later clause CAN follow it in printer "
-           "output, and both readings are printer output of different IR",
+    "k07": "an ATTR body cut the same way, and SINGLE-PREIMAGE exactly like k01-k06. This entry "
+           "used to call it a COLLISION on the reasoning that `attr` is slot 4 so a later clause "
+           "can follow it. The reasoning is sound and was attached to the one continuation that "
+           "cannot exhibit it: MEASURED, `type` is slot 1, so the two-clause IR prints "
+           "`(TYPE 'b', ATTR a = 1)` -- DIFFERENT BYTES, in either key order -- and k07's text has "
+           "ONE preimage. The continuations that DO exhibit it are WHERE and PSEUDO; the WHERE one "
+           "is k11/a51 below",
     "k08": "REFUSES rather than returning a wrong IR -- restored in fix round 3. Still not EXACT",
     "k09": "both readings REFUSE: the continuation opens a GROUP, and a group after a raw body is "
            "legitimate, so the merge keeps it separate and the remainder reads as nothing",
     "k10": "the same for NOT",
+
+    # NOT a keyword-continuation shape: the empty selector, moved here from family B by finding 1.
+    "a50": "THE EMPTY SELECTOR. `tree_steps([{comb: NULL}])` builds two nodes and the printer emits "
+           "'' for it, so '' IS printer output -- and both readings refuse it. A refusal of printer "
+           "output is a defect under the Global Constraint, and this one is already ruled "
+           "IRREDUCIBLE at sql/10_treeql.sql: no parser can recover a step from no characters. The "
+           "ruling locates the gap in tree_steps, which builds a selector that cannot be read back; "
+           "sql/06_selector.sql is frozen for this task, but its REPORTING is not, which is why "
+           "this is a declared EXACT failure rather than a sentence in a commit body",
+
+    # a COLLISION, and the direction is the reverse of the unpaired-quote class -- see the note at
+    # the head of this table.
+    "k11": "A GENUINE COLLISION, unlike k07. `(ATTR a = 1, WHERE b)` is printed by BOTH "
+           "`[{attr: 'a = 1, WHERE b'}]` and `[{attr: 'a = 1', \"where\": 'b'}]` -- same bytes, "
+           "measured -- because `where` is slot 6 and so CAN follow an attr clause. EXACT can hold "
+           "for at most one preimage; the MULTI-part one survives (a51 passes) and this one fails. "
+           "`(ATTR a = 1, PSEUDO 'p')` is the same collision and is not a separate case",
 }
 
 
@@ -555,6 +602,7 @@ def main():
     indep_sql = indep_py = indep_n = 0      # family A: scored against a SEPARATELY constructed IR
     adm_sql = adm_n = 0                     # family B: admitted by the Python's own reprint
     both_refuse_cases = []                  # for --both-refuse-audit
+    excluded = []                           # family-B cases NOT in the denominator, with why
     exact_fail = []                         # family-A cases where EXACT is FALSE for either side
     bad = []
     matched = {}            # label -> the signature actually observed, for every DIVERGING case
@@ -578,7 +626,17 @@ def main():
             exact_py += (py == want)
             if sql != want or py != want:
                 exact_fail.append((key, label, text, sql == want, py == want))
-        elif is_printer_output(con, text, py):
+        elif want is None and not is_printer_output(con, text, py):
+            # ROW B's CHECK, AND IT RUNS EVERY TIME. A family-B case can leave the denominator two
+            # ways and BOTH used to be silent: the Python refuses, or the Python accepts and its
+            # reprint differs. Finding 1 was exactly this -- `''` is printer output, the Python
+            # refuses it, and the case was counted nowhere while the gate printed "enumerated
+            # rather than excluded". The exclusions are now listed, so the question "is any of
+            # these printer output?" is asked of the gate instead of of a reader's memory.
+            excluded.append((label, text,
+                             "py refuses" if isinstance(py, tuple)
+                             else "py accepts but its reprint differs"))
+        if want is None and is_printer_output(con, text, py):
             # A FAMILY-B CASE THAT IS PRINTER OUTPUT IS STILL IN THE DENOMINATOR. It is not moved
             # into family A, and that is deliberate rather than lazy: family A is keyed by an IR
             # literal, and several of these shapes have no IR tree_steps will build -- the empty
@@ -687,6 +745,14 @@ def main():
         for label, text, a, b in both_refuse_cases:
             print("  %s\n    text: %r\n    sql: %s\n    py : %s" % (label, text, a, b))
         print()
+        print("EXCLUDED FROM THE EXACT DENOMINATOR -- %d family-B case(s). is_printer_output needs"
+              " the Python to\naccept AND reprint the text, so these are not SHOWN to be printer"
+              " output; that is not the same as\nbeing shown NOT to be. Any of them that IS"
+              " printer output belongs in family A, where its IR is\nknown by construction --"
+              " which is how `a50` got there.\n" % len(excluded))
+        for label, text, why in excluded:
+            print("  %-52s %-34s %s" % (label, repr(text), why))
+        print()
     print("%d case(s): %d agree, %d both-refuse, %d diverge (%d declared, %d undeclared)"
           % (len(cases), counts["agree"], counts["both-refuse"], counts["diverge"],
              counts["diverge"] - len(bad), len(bad)))
@@ -711,6 +777,9 @@ def main():
         print("  so EXACT does NOT hold over the printer's image. It holds on the %d that pass, "
               "and the %d failures are enumerated rather than excluded."
               % (exact_checked - len(exact_fail), len(exact_fail)))
+    if excluded:
+        print("  %d family-B case(s) are NOT in this denominator (listed by --both-refuse-audit): "
+              "%s" % (len(excluded), ", ".join(l.split()[0] for l, _t, _w in excluded)))
     if printer_output_in_b:
         print("  of which %d came from family B, found to be printer output by computation: %s"
               % (len(printer_output_in_b),
