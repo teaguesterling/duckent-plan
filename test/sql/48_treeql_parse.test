@@ -2121,13 +2121,20 @@ true
 # that was argued and then measured, and a reader who meets only the fixed code learns nothing
 # from a sentence that says it was always fine.
 #
-# WHAT REMAINS A LIMIT, and it is the narrow thing the record below actually drives: a top-level
-# comma enclosed by NOTHING. `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` still reads as THREE clauses
-# rather than a WHERE body of `a = 1, PSEUDO 'p'`, because the separator and the body's own comma
-# are genuinely indistinguishable there and the printer emits this same text for both IRs. The
-# parser takes the three-clause reading and it reprints byte-identically. The record below that
-# drives `CASE WHEN a = 1, PSEUDO 'p'` is true about a BARE comma and is the gate for exactly
-# this -- it was never the gate for the bracket half, and it stayed green through the whole of F1.
+# WHAT REMAINS A LIMIT, narrowed TWICE now, and it is the one thing the record below actually
+# drives: a top-level comma followed by TEXT THAT OPENS ANOTHER CLAUSE.
+# `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` still reads as THREE clauses rather than a WHERE body of
+# `a = 1, PSEUDO 'p'`, because there the separator and the body's own comma are genuinely
+# indistinguishable -- the printer emits this same text for both IRs, so no reader can choose. The
+# parser takes the three-clause reading and it reprints byte-identically.
+#
+# THE OTHER TWO SHAPES THIS BLOCK ONCE COVERED ARE BOTH FIXED, so "a top-level comma enclosed by
+# NOTHING" is no longer a limit either: that was b55, fixed in fix round 2 by
+# tree_treeql_clause_parts, which gives a RAW body its own separators back. What makes the shape
+# above different from b55 is that b55's text has exactly ONE valid reading -- `(b = 2)` alone is
+# refused -- while this one has two, both legal. The record below that drives
+# `CASE WHEN a = 1, PSEUDO 'p'` is true about a BARE comma and is the gate for exactly this; it was
+# never the gate for the bracket half, and it stayed green through F1 and b55 alike.
 #
 # test/treeql_parser.py, the second reading, takes the SAME three-clause reading here, so the two
 # front-ends agree on the limit rather than one of them resolving the ambiguity privately.
@@ -2575,46 +2582,122 @@ SELECT tree_parse_treeql(tree_selector_to_treeql(
 ----
 true
 
-# THE RESIDUE, and the sentence that stood here was WRONG in a way worth keeping. It read: this
-# shape "is NOT reachable from a legal predicate ... so the printer cannot emit it from a WHERE
-# body the host door accepted, AND NO THEOREM OVER PRINTER OUTPUT QUANTIFIES OVER IT."
+# b55 -- A RAW BODY'S OWN TOP-LEVEL COMMA, WITH NO ENCLOSURE. FIXED, and these two records now
+# assert the round trip instead of pinning the refusal.
 #
-# The first half is TRUE: a bare top-level comma is not valid DuckDB SQL, which the record below
-# the documented comma limit measures. The last clause is FALSE, and it does not follow from the
-# first -- "not a legal predicate" is not "not printer output". MEASURED:
+# WHAT THEY SAID BEFORE: both were `statement error` records expecting `cannot read b = 2`, with a
+# comment that had already been corrected once. The FIRST version of it claimed the shape "is NOT
+# reachable from a legal predicate ... so the printer cannot emit it from a WHERE body the host door
+# accepted, AND NO THEOREM OVER PRINTER OUTPUT QUANTIFIES OVER IT". The first half is TRUE -- a bare
+# top-level comma is not valid DuckDB SQL, which the record below the documented comma limit
+# measures -- and the last clause is FALSE and does not follow from it. "Not a legal predicate" is
+# not "not printer output", and tree_steps does not validate a WHERE body.
+#
+# WHAT FOUND IT: the sweep's COMPUTED denominator. Classifying each case by whether the printer can
+# emit it, instead of by which list it sat in, put this text in the EXACT denominator and showed the
+# failure. The instrument found a defect in its own declaration.
+#
+# WHY IT IS A DEFECT AND NOT A SECOND F3, which is the question that decided it. MEASURED:
 #
 #     tree_steps([{"where": 'a = 1, b = 2'}])   BUILDS -- three nodes
 #       prints                                  (WHERE a = 1, b = 2)
-#       tree_parse_treeql of that text          REFUSED `cannot read b = 2`
+#       parse of that text, before the fix      REFUSED `cannot read b = 2`
+#     the alternative reading, `(b = 2)` alone  REFUSED -- `b = 2` is not a legal clause
+#     control, `(WHERE a = 1, WHERE b = 2)`     ACCEPTED, 4 nodes
 #
-# tree_steps does not validate a WHERE body, so the IR is CONSTRUCTIBLE and the text IS printer
-# output. EXACT quantifies over printer output, so this is an EXACT FAILURE -- the parser refusing
-# its own printer's output, which the Global Constraint calls a defect and not a gate. It is the
-# only one left after R41, and test/sweep_treeql.py now counts it, which is why that sweep reports
-# 61 of 62 rather than 62 of 62.
+# The third row is the discriminator. F3 cannot be fixed because BOTH of its readings are valid and
+# no parser can choose; here only ONE reading of the text is valid, and it is the one-step IR the
+# printer was handed. A text with a single valid reading that the parser refuses is a plain defect.
 #
-# STILL A REFUSAL-PIN, not an EXACT assertion, because it is not fixed. The fix shape and the two
-# measured obstacles to doing it in this round are at the entry for it in test/sweep_treeql.py's
-# DIVERGENT table. This record stays so that the refusal is pinned rather than remembered, and so
-# that whoever widens the scan has to change this line on purpose.
+# THE FIX is tree_treeql_clause_parts in sql/10_treeql.sql, which puts a raw body's own separators
+# back by SPAN rather than by re-joining -- see that macro for why re-joining breaks NORMALISING on
+# printer output the no-space form produces.
 statement error
-SELECT tree_parse_treeql('(WHERE a = 1, b = 2)');
+SELECT tree_parse_treeql('(b = 2)');
 ----
 tree_parse_treeql: cannot read b = 2
 
-# ...and the SAME refusal reached through the printer rather than through hand-written text, which
-# is what makes it an EXACT failure rather than a rejected input. The IR is built by the ordinary
-# constructor and the text under test is whatever the printer wrote, so nothing here depends on my
-# having transcribed that text correctly.
-#
-# IT CANNOT BE WRITTEN AS `parse(print(ir)) = ir` IS FALSE, which is the obvious shape and does not
-# work: tree_parse_treeql RAISES, so such a query errors instead of answering false, and DuckDB has
-# no TRY expression to catch it. A `statement error` through the printer is the strongest available
-# statement of an EXACT failure in this file's vocabulary.
-statement error
-SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'a = 1, b = 2'}])));
+# THE DISCRIMINATOR, kept as a record so the ruling above cannot drift from it: `b = 2` is not a
+# legal clause on its own, which is why this text has one valid reading and F3 has two. If this
+# record ever goes green, b55's disposition has to be decided again.
+query I
+SELECT tree_parse_treeql('(WHERE a = 1, b = 2)') = tree_steps([{"where": 'a = 1, b = 2'}]);
 ----
-tree_parse_treeql: cannot read b = 2
+true
+
+# ...and the SAME text reached through the PRINTER rather than through hand-written text, so nothing
+# here depends on my having transcribed it correctly. This is the EXACT theorem on the shape that
+# was failing it.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'a = 1, b = 2'}])))
+     = tree_steps([{"where": 'a = 1, b = 2'}]);
+----
+true
+
+# NORMALISING, BYTE FOR BYTE, ON BOTH SPACINGS -- and this is the theorem the obvious fix breaks.
+# The printer passes a raw body through VERBATIM and inserts `, ` only BETWEEN clauses, so the
+# NO-SPACE form is itself printer output. MEASURED:
+#
+#     tree_selector_to_treeql(tree_steps([{"where": 'a = 1,b = 2'}]))  ->  '(WHERE a = 1,b = 2)'
+#
+# A reader that merged by re-joining trimmed parts with a canonical `, ` would reprint that as
+# `(WHERE a = 1, b = 2)`. Both rows below are byte equality against the printer's own output, so a
+# reader that normalised the spacing of a raw body turns the first one red.
+query I
+SELECT ok FROM (
+  SELECT 1 AS i, tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+           tree_steps([{"where": 'a = 1,b = 2'}]))))
+         = tree_selector_to_treeql(tree_steps([{"where": 'a = 1,b = 2'}])) AS ok
+  UNION ALL
+  SELECT 2, tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+              tree_steps([{"where": 'a = 1, b = 2'}]))))
+            = tree_selector_to_treeql(tree_steps([{"where": 'a = 1, b = 2'}]))
+  UNION ALL
+  -- a spacing no printer would choose, to show the span is the text's own and not a canonical form
+  SELECT 3, tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+              tree_steps([{"where": 'a = 1 ,  b = 2'}]))))
+            = tree_selector_to_treeql(tree_steps([{"where": 'a = 1 ,  b = 2'}]))
+) ORDER BY i;
+----
+true
+true
+true
+
+# ...and the printed text itself, as TEXT, so the no-space claim above is readable rather than
+# inferred from an equality.
+query I
+SELECT tree_selector_to_treeql(tree_steps([{"where": 'a = 1,b = 2'}]));
+----
+(WHERE a = 1,b = 2)
+
+# THE RULE'S BOUNDARY, and the reason it asks whether the group's opener is RAW rather than merely
+# whether a part opens a clause. A LITERAL body ends at its closing quote, so the comma after it IS
+# a separator and the part after it stands alone. The coarser rule -- merge any part that opens
+# nothing -- was measured to move all four of these refusals; with the raw test they are unchanged.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', 42)');
+----
+tree_parse_treeql: cannot read 42
+
+statement error
+SELECT tree_parse_treeql('SIDEWAYS (TYPE ''a'', 42)');
+----
+tree_parse_treeql: unknown clause keyword SIDEWAYS
+
+# an EMPTY clause part is still a part (R6), so the trailing comma is still a syntax error rather
+# than being merged into the clause before it
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'',)');
+----
+tree_parse_treeql: cannot read
+
+# and a RAW body's comma followed by something that is no clause at all is now the body's own,
+# because that is what the printer emits for it
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'a = 1, 42'}])))
+     = tree_steps([{"where": 'a = 1, 42'}]);
+----
+true
 
 # THE REAL BOUNDARY OF THE LIMIT, recorded instead of guessed. A bracket or a brace is NOT by
 # itself a problem -- only a COMMA inside one is. Both of these are printer output and both

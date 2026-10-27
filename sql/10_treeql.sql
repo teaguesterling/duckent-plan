@@ -221,11 +221,21 @@ CREATE OR REPLACE MACRO tree_treeql_split_parts(s, sep) AS (
   -- and whitespace moves neither the quote parity nor the paren depth. Measured over whitespace
   -- after a separator, before a separator, at both ends of the input, and alone in a trailing
   -- part: the full character set on this one trim answers all four.
+  -- `lo` AND `hi` ARE CARRIED OUT WITH THE PART, and they are b55's fix in one line. `part` is
+  -- TRIMMED, which loses the spacing around a separator; the printer passes a raw body through
+  -- verbatim, so `(WHERE a = 1,b = 2)` with no space is itself printer output and a reader that
+  -- re-joined trimmed parts would reprint it with a space. tree_treeql_clause_parts merges a raw
+  -- body's parts by SPAN instead, slicing `s` from the first part's `lo` to the last part's `hi`.
+  -- The offsets are the UNTRIMMED span, which is what makes that slice the text's own bytes.
+  --
+  -- ADDITIVE, so no caller had to change: the struct gains two fields and every reader names the
+  -- fields it wants. MEASURED -- the TABLE form and all seven `tree_treeql_split` records in
+  -- test/sql/48_treeql_parse.test select `ord, part` and are untouched.
   parts AS (
     SELECT CAST(row_number() OVER (ORDER BY lo) AS INTEGER) AS ord,
-           trim(s[lo:hi], tree_treeql_ws()) AS part
+           trim(s[lo:hi], tree_treeql_ws()) AS part, lo, hi
     FROM spans WHERE hi IS NOT NULL)
-  SELECT list({ord: ord, part: part} ORDER BY ord) FROM parts);
+  SELECT list({ord: ord, part: part, lo: lo, hi: hi} ORDER BY ord) FROM parts);
 
 -- The TABLE form, derived from the list above. This is the tested interface and the shape
 -- `tree_treeql_split(s, sep)` has always had; it is one `unnest` over the one scan, so there is
@@ -386,9 +396,20 @@ CREATE OR REPLACE MACRO tree_treeql_quotes_even(s) AS
 -- the printer but NOT to this list, leaves the paren scan TRUSTING text it cannot read. The scan
 -- then masks REAL parentheses behind an unpaired apostrophe, and this arm refuses printer output
 -- again -- the exact defect R42 fixed.
-CREATE OR REPLACE MACRO tree_treeql_raw_kw_re() AS
-  (SELECT '\b(' || string_agg(upper(k.keyword), '|') || ')\b'
+-- THE RAW-BODIED KEYWORDS, as one alternation, declared ONCE and read by the two patterns below.
+-- `k.kind IN ('where', 'attr')` is the written record of which kinds carry a raw body, and the long
+-- comment above owns that duplication; factoring the LIST out is what keeps b55's fix from adding
+-- a third copy of it.
+CREATE OR REPLACE MACRO tree_treeql_raw_kws() AS
+  (SELECT string_agg(upper(k.keyword), '|')
    FROM tree_catalog.clause_kinds k WHERE k.kind IN ('where', 'attr'));
+CREATE OR REPLACE MACRO tree_treeql_raw_kw_re() AS '\b(' || tree_treeql_raw_kws() || ')\b';
+-- ...and ANCHORED, which is the question tree_treeql_clause_parts asks: does this part BEGIN with
+-- a raw-bodied keyword? The unanchored form above asks whether a raw body appears ANYWHERE in some
+-- text, which is a different question with a different purpose, and conflating them would make a
+-- part containing the word WHERE look raw-bodied.
+CREATE OR REPLACE MACRO tree_treeql_raw_opener_re() AS
+  '(?i)^(' || tree_treeql_raw_kws() || ')(\s|$)';
 
 -- Does this text carry NO clause kind whose body is raw? COALESCE to TRUE so that empty and NULL
 -- text are judged normally; the no-steps arm owns those.
@@ -894,6 +915,81 @@ CREATE OR REPLACE MACRO tree_treeql_chain_parts(s) AS (
            FROM spanned WHERE part <> '')
   SELECT list({ord: ord, part: part} ORDER BY ord) FROM kept);
 
+-- DOES THIS PART OPEN A CLAUSE-LIST ITEM? True when it begins with a registered clause keyword or
+-- a group keyword, followed by whitespace, a '(' or the end. Both sets come from their registries
+-- -- tree_catalog.clause_kinds and tree_treeql_group_kinds() -- so no keyword is written here, and
+-- this question gains a clause kind the day one is registered.
+--
+-- `\(` is in the follow set because a printed group is `HAS ( chain )` and a hand-written one may
+-- be `HAS(chain)`; `$` is there because a bare keyword with no operand is still a part this has to
+-- classify, before anything refuses it.
+CREATE OR REPLACE MACRO tree_treeql_opener_re() AS
+  (SELECT '(?i)^(' || string_agg(kw, '|') || ')(\s|\(|$)' FROM (
+     SELECT upper(keyword) AS kw FROM tree_catalog.clause_kinds
+     UNION SELECT upper(g) FROM (SELECT unnest(tree_treeql_group_kinds()) AS g)));
+
+-- A CLAUSE LIST'S PARTS: the comma split, with a RAW body's OWN separators put back. This is b55's
+-- fix, and it is the reader every clause-list site uses in place of tree_treeql_split_parts.
+--
+-- WHAT WAS WRONG. The clause-list split cut at EVERY depth-0 comma, whatever body it sat in. An
+-- ATTR or WHERE body is raw host SQL and may contain one, so the printer's own output came apart:
+--
+--     tree_steps([{"where": 'a = 1, b = 2'}])   BUILDS -- three nodes
+--       prints                                  (WHERE a = 1, b = 2)
+--       parse of that text                      REFUSED `cannot read b = 2`
+--
+-- A refusal that rejects printer output is a defect and not a gate. It is NOT a second F3: F3's
+-- text has TWO valid readings and no parser can choose between them, whereas here `(b = 2)` alone
+-- is REFUSED -- measured -- so exactly ONE reading of this text is valid and the parser was
+-- refusing it. The bracket and brace enclosures were F1's half of this defect; this is the half
+-- with no enclosure at all.
+--
+-- THE RULE: a part continues the one before it when the part that STARTED its group has a RAW body
+-- AND this part opens no clause-list item. `gid` groups the parts by their last opener, `graw` asks
+-- whether that opener was raw-bodied, and a NON-raw group is split back into its individual parts
+-- by carrying `ord` into the grouping key.
+--
+-- WHY `graw` AND NOT SIMPLY "this part opens nothing". That coarser rule is the one I first
+-- sketched, and it moves refusals it has no business moving -- MEASURED: it merges `42` into the
+-- part before it, so `(CLASS 'f', 42)` stops being refused `cannot read 42`, and
+-- `SIDEWAYS (TYPE 'a', 42)` flips from `unknown clause keyword` to `unknown combinator`, because
+-- the refusal set's `body_is_clauses` reads this same split. A LITERAL body ends at its closing
+-- quote, so the comma after it IS a separator; only a RAW body can swallow one. With `graw` all
+-- four of those refusals keep their exact wording -- measured, and recorded in
+-- test/sql/48_treeql_parse.test.
+--
+-- THE SPANS ARE WHY THIS CANNOT RE-JOIN THE PARTS, and that is a theorem rather than a preference.
+-- The printer passes a raw body through VERBATIM and inserts `, ` only BETWEEN clauses, so
+-- `(WHERE a = 1,b = 2)` -- no space -- is ITSELF printer output. MEASURED. A merge that re-joined
+-- trimmed parts with a canonical `, ` would reprint it as `(WHERE a = 1, b = 2)`: a byte-level
+-- violation of the NORMALISING theorem on real printer output, not a cosmetic change to
+-- hand-written text. So tree_treeql_split_parts carries each part's `lo`/`hi` offsets and this
+-- merge recovers the ORIGINAL substring from the first part's start to the last part's end --
+-- whatever spacing the text already held. MEASURED: the no-space form, the one-space form and
+-- `a = 1 ,  b = 2` each reprint byte for byte.
+--
+-- The outer trim is the only text this touches. Every separator, and every space BETWEEN the
+-- merged parts, is the text's own.
+CREATE OR REPLACE MACRO tree_treeql_clause_parts(s) AS (
+  WITH p AS (SELECT (x).ord AS ord, (x).part AS part, (x).lo AS lo, (x).hi AS hi
+             FROM (SELECT unnest(tree_treeql_split_parts(s, ',')) AS x)),
+  k AS (SELECT ord, part, lo, hi,
+               ord = 1 OR regexp_matches(part, tree_treeql_opener_re()) AS opens,
+               COALESCE(regexp_matches(part, tree_treeql_raw_opener_re()), false) AS raw
+        FROM p),
+  g AS (SELECT ord, part, lo, hi, opens, raw,
+               sum(CASE WHEN opens THEN 1 ELSE 0 END) OVER (ORDER BY ord) AS gid
+        FROM k),
+  r AS (SELECT ord, lo, hi, gid,
+               first_value(raw) OVER (PARTITION BY gid ORDER BY ord) AS graw
+        FROM g),
+  m AS (SELECT min(lo) AS lo, max(hi) AS hi
+        FROM r GROUP BY gid, CASE WHEN graw THEN 0 ELSE ord END),
+  o AS (SELECT CAST(row_number() OVER (ORDER BY lo) AS INTEGER) AS ord,
+               trim(s[lo:hi], tree_treeql_ws()) AS part
+        FROM m)
+  SELECT list({ord: ord, part: part} ORDER BY ord) FROM o);
+
 -- TREEQL TEXT to a TREE_SELECTOR, node ids included. This is the macro that makes the exact
 -- theorem true: tree_parse_treeql(tree_selector_to_treeql(sel)) = sel as a WHOLE VALUE.
 --
@@ -1018,7 +1114,7 @@ stp0 AS (SELECT i0, part,
            (p).body AS body, (p).alias AS alias, (p).unknown_word AS uw
          FROM rd0),
 pt0 AS (SELECT i0, (x).ord AS n, (x).part AS part
-        FROM (SELECT i0, unnest(tree_treeql_split_parts(body, ',')) AS x
+        FROM (SELECT i0, unnest(tree_treeql_clause_parts(body)) AS x
               FROM stp0 WHERE body IS NOT NULL)),
 -- A PART IS A CLAUSE OR A GROUP, and the two readers are asked in that order: a clause keyword is
 -- never a group keyword (the registries are disjoint and 48_treeql_parse.test asserts it), so a
@@ -1081,7 +1177,7 @@ stp1 AS (SELECT i0, a0, i1, part, (p).op AS op,
            (p).body AS body, (p).alias AS alias, (p).unknown_word AS uw
          FROM rd1),
 pt1 AS (SELECT i0, a0, i1, (x).ord AS n, (x).part AS part
-        FROM (SELECT i0, a0, i1, unnest(tree_treeql_split_parts(body, ',')) AS x
+        FROM (SELECT i0, a0, i1, unnest(tree_treeql_clause_parts(body)) AS x
               FROM stp1 WHERE body IS NOT NULL)),
 cg1 AS (SELECT i0, a0, i1, n, part, tree_treeql_clause_parse(part) AS cl,
                tree_treeql_step_parse(part) AS gp
@@ -1111,7 +1207,7 @@ stp2 AS (SELECT i0, a0, i1, a1, i2, part, (p).op AS op,
            (p).body AS body, (p).alias AS alias, (p).unknown_word AS uw
          FROM rd2),
 pt2 AS (SELECT i0, a0, i1, a1, i2, (x).ord AS n, (x).part AS part
-        FROM (SELECT i0, a0, i1, a1, i2, unnest(tree_treeql_split_parts(body, ',')) AS x
+        FROM (SELECT i0, a0, i1, a1, i2, unnest(tree_treeql_clause_parts(body)) AS x
               FROM stp2 WHERE body IS NOT NULL)),
 cg2 AS (SELECT i0, a0, i1, a1, i2, n, part, tree_treeql_clause_parse(part) AS cl,
                tree_treeql_step_parse(part) AS gp
@@ -1215,7 +1311,7 @@ uws AS (SELECT part, uw, body, trim(part[length(uw) + 1 : ], tree_treeql_ws()) A
 -- `TYPE 'a', 42` is not a legal clause list, and naming SIDEWAYS an unknown combinator there
 -- would point at the wrong token.
 uwp AS (SELECT part, uw, (x).part AS cpart
-        FROM (SELECT part, uw, unnest(tree_treeql_split_parts(body, ',')) AS x
+        FROM (SELECT part, uw, unnest(tree_treeql_clause_parts(body)) AS x
               FROM uws WHERE body IS NOT NULL)),
 uwc AS (SELECT part, uw,
                count(*) FILTER (WHERE tree_treeql_clause_parse(cpart) IS NOT NULL) = count(*)

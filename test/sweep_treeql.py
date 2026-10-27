@@ -301,48 +301,29 @@ DIVERGENT = {
             "clauses can be told from the next step's | py:HAS/NOT needs parentheses around its "
             "chain"),
 
-    # ---- CLASS 3: a raw body's own top-level comma, with no enclosure around it ---- OPEN, AND
-    # THE ONLY EXACT FAILURE LEFT. The sweep's own new denominator check convicted this entry, and
-    # what it convicted was my earlier declaration of it.
+    # ---- CLASS 3: a raw body's own top-level comma, with no enclosure ---- CLOSED in fix round 2.
     #
-    # WHAT THIS ENTRY USED TO SAY: "unreachable from a legal predicate, per 48's
-    # `CASE WHEN a = 1, PSEUDO 'p'` syntax-error record". That record is real and the claim it
-    # supports is TRUE -- a bare top-level comma is not valid DuckDB SQL, so no WHERE body the host
-    # door accepted can hold one.
+    # ONE ENTRY STOOD HERE, b55, and the sweep's own STALE check is what retired it -- the first
+    # time that check has fired on a real fix rather than on a plant. Its reason had already been
+    # corrected once: it said "unreachable from a legal predicate", which is TRUE about SQL
+    # validity, and let that stand as "no theorem over printer output quantifies over it", which
+    # does not follow. The COMPUTED denominator put the text in the EXACT count and convicted the
+    # declaration; the coordinator then ruled it a defect rather than a second F3, on the
+    # discriminator that `(b = 2)` alone is REFUSED -- so exactly one reading of the text is valid,
+    # where F3 has two and no parser can choose.
     #
-    # BUT "NOT A LEGAL PREDICATE" IS NOT "NOT PRINTER OUTPUT", and running the two together is how
-    # this entry read as a documented limit for a whole round. MEASURED:
+    # tree_treeql_clause_parts gives a raw body its own separators back, by SPAN rather than by
+    # re-joining, because the printer emits `(WHERE a = 1,b = 2)` verbatim and a canonical `, `
+    # would break NORMALISING on it. The second obstacle I reported against doing this -- that it
+    # moves generic fragments and the refusal set's `body_is_clauses` reads them -- turned out to be
+    # an artifact of the COARSER rule I had sketched, not of the fix: merging only within a
+    # RAW-bodied group leaves all four of those refusals byte-identical. MEASURED, and recorded in
+    # test/sql/48_treeql_parse.test beside the fix.
     #
-    #     tree_steps([{"where": 'a = 1, b = 2'}])   BUILDS -- three nodes
-    #       prints                                  (WHERE a = 1, b = 2)
-    #       tree_parse_treeql of that text           REFUSED `cannot read b = 2`
-    #
-    # tree_steps does not validate a WHERE body, so the IR is constructible and the text IS printer
-    # output. EXACT quantifies over printer output, so EXACT is FALSE here -- a refusal of the
-    # printer's own output, which the Global Constraint calls a defect and not a gate. The sweep
-    # counts it now, which is why its EXACT line reads 61 of 62 rather than 62 of 62.
-    #
-    # NOT FIXED IN THIS ROUND, and this time the obstacle is MEASURED and not assumed -- the last
-    # time this file declined a fix it gave a wall that did not exist. The rule needed is the one
-    # test/treeql_parser.py uses: a depth-0 comma inside a RAW body separates only if what follows
-    # OPENS another clause. As a post-pass over the comma split that is a running sum over "does
-    # this part open with a clause or group keyword", and it binds. Two things stop it being this
-    # round's work, both measured on a prototype:
-    #   * REJOINING IS LOSSY. tree_treeql_split_parts returns parts already trimmed and carries no
-    #     positions, so a merge must RE-JOIN them -- and `(WHERE a = 1,b = 2)` comes back as
-    #     `a = 1, b = 2`, silently rewriting a hand-written value. Doing it without loss means
-    #     giving that macro a positional result, which is a signature change with four callers.
-    #   * IT MOVES GENERIC FRAGMENTS. `(TYPE 'a', 42)` is refused `cannot read 42` today and would
-    #     be refused `cannot read TYPE 'a', 42`, because the `42` merges into the part before it.
-    #     Same sentence, different fragment -- and the refusal set's `body_is_clauses` test reads
-    #     this same split, so the `comb` / `kw` decision moves with it.
-    # That is a change with its own ripple and it needs its own coordination, not a tail-end edit.
-    "b55": ("py",
-            "48 pins the refusal. IT IS PRINTER OUTPUT and therefore an EXACT failure -- the "
-            "`unreachable from a legal predicate` defence is about SQL validity, not about the "
-            "printer's image. The only EXACT failure left; the fix shape and its two measured "
-            "obstacles are in the comment above",
-            "sql-refuses:generic | py-accepts:3 rows"),
+    # ONE ENTRY IS LEFT IN THE WHOLE TABLE, b57, and it is NOT an EXACT failure -- it is a refusal
+    # WORDING that the two readings name differently on HAND-WRITTEN text. So `sql == py` now holds
+    # on every one of the 62 printer-output cases, which is the state this sweep was built to reach;
+    # what remains is a difference about how to describe a text neither reading accepts.
 }
 
 
