@@ -95,13 +95,15 @@ class TreeqlError(Exception):
 
 # keyword -> clause kind. tree_catalog.clause_kinds, measured: six rows.
 #
-# THE TRAILING MARKERS on the continuation lines are not decoration. scripts/
-# check_vocabulary_single_source.py exempts a construct by a SUBSTRING of the offending LINE, so a
-# declaration spread over two lines needs an anchor on each one; the marker is a stable anchor that
-# names what the line belongs to, instead of an exemption keyed on a run of members that any
-# reformat would silently break.
+# THESE TWO TABLES USED TO CARRY TRAILING MARKER COMMENTS -- `# CLAUSE_KEYWORDS, continued` and the
+# same for COMBINATORS -- with an exemption entry each, justified as: "a declaration spread over
+# two lines needs an anchor on each one". MEASURED FALSE: the lint's THRESHOLD is 3 members on ONE
+# line, and a continuation line here carries two, so it is never an offending line and had nothing
+# to exempt. Two of the four exemptions exempted nothing, and the sentence that justified them was
+# reasoning about a reformat that has not happened, written in the register of a measurement. Both
+# the markers and the entries are gone; the lint reports 8 exempt constructs, not 10.
 CLAUSE_KEYWORDS = {"TYPE": "type", "ID": "id", "CLASS": "class",
-                   "ATTR": "attr", "PSEUDO": "pseudo",  # CLAUSE_KEYWORDS, continued
+                   "ATTR": "attr", "PSEUDO": "pseudo",
                    "WHERE": "where"}
 
 # The kinds whose body reaches the text UNQUOTED and UNESCAPED, so the body's own commas,
@@ -117,7 +119,7 @@ RAW_BODY_KINDS = frozenset(("attr", "where"))
 # upper-cased for half of them -- DESCENDANT is desc, SIBLING is next, FOLLOWING is after and
 # PRECEDING is prev -- so this cannot be derived from the op and has to be written.
 COMBINATORS = {"DESCENDANT": "desc", "CHILD": "child", "SELF": "self", "SIBLING": "next",
-               "FOLLOWING": "after", "PARENT": "parent",  # COMBINATORS, continued
+               "FOLLOWING": "after", "PARENT": "parent",
                "ANCESTOR": "ancestor", "PRECEDING": "prev"}
 
 # A group's printed keyword is upper(kind), which is what tree_treeql_group_kinds() derives from

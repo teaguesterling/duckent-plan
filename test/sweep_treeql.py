@@ -38,6 +38,7 @@ is why the generator builds IR and prints it rather than writing text by hand --
 carries its own expected answer.
 """
 import argparse
+import hashlib
 import os
 import sys
 
@@ -60,7 +61,11 @@ def sql_str(s):
 # EXACT theorem quantifies over it: whatever the two readings do, the right answer is the IR the
 # printer was handed.
 #
-# THE FIVE SHAPES THE PLAN NAMES are a19..a24 and b23, each marked with the blind spot it probes.
+# THE FIVE SHAPES THE PLAN NAMES are a34-a37 (marked `(plan case 1)`..`(plan case 4)`) and b24/b25
+# (`plan case 5`), each marked in place with the blind spot it probes. An earlier draft of this
+# line cited "a19..a24 and b23", which MEASURED is wrong on every label -- a19 is a literal with a
+# comma, a24 is has-and-not on one step, b23 is a bare combinator keyword. Same defect class as the
+# stale line-number citations this file apologises for twice, so it is corrected and not dropped.
 # ----------------------------------------------------------------------------------------------
 IR_CASES = [
     ("a01 type", "[{type: 'a'}]"),
@@ -128,12 +133,38 @@ IR_CASES = [
     # F3's IR. The text it prints is byte-identical to what a person writes for TWO steps, and
     # EXACT requires the one-step reading. See THE F3 RULING in test/sql/48_treeql_parse.test.
     ("a44 F3's constructible IR", "[{attr: 'a = 1) (ATTR b = 2'}]"),
+    # ---- R41: a `"..."` region in a raw body. NOT ONE of these carries an apostrophe, which is
+    # what shows the cause was never "reads every `'` as a delimiter" but "knows nothing of `"..."`
+    # regions". a45 was `b58` and sat in family B, where EXACT is not evaluated, until the review
+    # measured that the printer emits it; a46 was driven by neither family.
+    ("a45 comma inside a double-quoted identifier, WHERE", "[{\"where\": '\"a,b\" = 1'}]"),
+    ("a46 comma inside a double-quoted identifier, ATTR", "[{attr: 'a = \"b,c\"'}]"),
+    # the boundary: a LONE double quote is NOT a region and must stay one ordinary character -- a
+    # region rule that accepted an unterminated `"` would swallow this text's closing parenthesis
+    ("a47 lone double quote in a raw body", "[{\"where\": 'a = \"b'}]"),
+    # a combinator keyword inside a region inside a group: the shape that HID the chain reader's own
+    # defect, because a printed inner step's clause list is parenthesised, so the keyword is never
+    # at chain depth 0 where that scan looks
+    ("a48 combinator keyword inside a region in a group",
+     "[{type: 'a', has: [{\"where\": '\"a CHILD b\" = 1'}]}]"),
+    ("a49 region holding a paren, inside a group",
+     "[{type: 'a', has: [{\"where\": '\"a ) b\" = 1'}]}]"),
 ]
 
 # ----------------------------------------------------------------------------------------------
-# FAMILY B: TEXT written by hand. No theorem quantifies over these -- the printer never emits
-# most of them -- so the only question is whether the two readings answer alike. Requirement 6's
-# territory: tolerated input, and refusals.
+# FAMILY B: TEXT written by hand, where no IR is known by construction.
+#
+# WHICH OF THESE THE PRINTER CAN EMIT IS COMPUTED, NOT ASSERTED. This header used to read "No
+# theorem quantifies over these -- the printer never emits most of them", and MEASURED that was
+# false for at least one member: `(WHERE "a,b" = 1)` sat here and is exactly what
+# `tree_steps([{"where": '"a,b" = 1'}])` prints. Because a family-B case was never counted in the
+# EXACT line, a refusal of printer output was hiding in the family whose header said it could not
+# be, and the gate understated the denominator it reports about itself. The sentence was doing the
+# work a check should do, so `is_printer_output` now does it per case, every run, and the sweep
+# FAILS on any member it finds -- such a case belongs in family A, where its IR is known by
+# construction rather than recovered.
+#
+# What is left here is genuinely requirement 6's territory: tolerated input, and refusals.
 # ----------------------------------------------------------------------------------------------
 TEXT_CASES = [
     ("b01 parenless clause list at top level", "CLASS fn"),
@@ -213,9 +244,6 @@ TEXT_CASES = [
     # parentheses. The macros' groupparen arm stands down on raw-bodied text and the generic
     # counterweight row catches it instead.
     ("b57 parenless group whose part carries a raw body", "(TYPE 'a', HAS WHERE a = 1)"),
-    # b58: a double-quoted identifier holding a comma. The Python reads `"..."` as a quoted
-    # region, which is what the WHERE cases need; the macros do not.
-    ("b58 comma inside a double-quoted identifier", "(WHERE \"a,b\" = 1)"),
 ]
 
 # ----------------------------------------------------------------------------------------------
@@ -229,64 +257,92 @@ TEXT_CASES = [
 # macros do not.
 # ----------------------------------------------------------------------------------------------
 DIVERGENT = {
-    # ---- CLASS 1: the splitter reads every `'` as a delimiter and knows nothing of `"..."` ----
-    # R41, named in 48_treeql_parse.test's R42 block: "EXACT is NOT asserted here: it is FALSE at
-    # BASE for these shapes, because the clause-list splitter mis-splits on the same unpaired
-    # apostrophe. That is R41, it predates this task, and Task 7's differential generator carries
-    # it." This is that carrying. A WHERE body is raw host SQL, so it may hold a double-quoted
-    # IDENTIFIER whose content has an apostrophe -- `WHERE "o'k" = 1` is printer output from the
-    # ordinary constructor and legal DuckDB SQL. The macros' quote parity loses its place on it.
+    # ---- CLASS 1: R41, the splitter knowing nothing of `"..."` regions ---- CLOSED.
     #
-    # NOT FIXED HERE, and the reason is a measurement rather than a preference: the macros' scan is
-    # a WINDOW SUM over one delimiter, which has a closed form. Tracking two delimiters that can
-    # nest needs sequential state -- the state after character i depends on the state after i-1 and
-    # not on a count -- so it is a recursive CTE or a list_reduce, inside a scalar macro that R22
-    # already records a binder wall for. That is a piece of work with its own risk, and this sweep
-    # is what will prove it when someone does it: every entry below turns into an `agree`.
-    # CITED BY THE RECORD'S INPUT AND NOT BY LINE. That is 48_treeql_parse.test's own rule, stated
-    # in its FIX ROUND 3 block: "adding a comment above them moves the line and the citation goes
-    # stale". The first draft of this table cited six records by line number and had moved every
-    # one of them with its own edits to that file before it was ever committed -- the same defect
-    # as HEAD's parent commit, "two locators in the new comments pointed at the wrong record".
-    "a40": ("py", "48's R42 'step1+has' record pins the REPRINT half only, not EXACT"),
-    "a41": ("py", "48's R42 'has+nested' record pins the REPRINT half only, not EXACT"),
-    "a42": ("py", "48's `cannot read` record for the 'step2+has' printer output"),
-    "a43": ("py", "48's R42 DISCRIMINATOR record, the `a ) unmatched` literal with two odd bodies"),
-    "b58": ("py", "no record: the same cause as a40..a43, found by this sweep"),
+    # FIVE ENTRIES STOOD HERE -- a40, a41, a42, a43 and b58 -- declared with this reason:
+    #
+    #   "NOT FIXED HERE, and the reason is a measurement rather than a preference: the macros' scan
+    #    is a WINDOW SUM over one delimiter, which has a closed form. Tracking two delimiters that
+    #    can nest needs sequential state ... so it is a recursive CTE or a list_reduce, inside a
+    #    scalar macro that R22 already records a binder wall for."
+    #
+    # HALF OF THAT WAS TRUE AND STRONGER THAN IT CLAIMED: no window in the count family can compute
+    # the prefix state, because the two delimiters' state maps generate a non-abelian group. THE
+    # OTHER HALF WAS FALSE and had never been tested -- RE2 alternation inside one scalar call does
+    # the sequential scan and binds in every shape R22 names. R41 is fixed in
+    # sql/10_treeql.sql's tree_treeql_quote_mask, which carries both halves with the measurement.
+    #
+    # AND THE REASON NAMED THE WRONG CAUSE: it blamed the apostrophe. `(WHERE "a,b" = 1)` and
+    # `(ATTR a = "b,c")` are printer output and failed with no apostrophe anywhere. The cause was
+    # having no notion of a region at all.
+    #
+    # The five shapes are now a40-a43 and a45 in family A, and all five AGREE. Nothing is left of
+    # this class, and this comment is what stands where the entries did -- a table that only ever
+    # loses entries silently teaches the next reader nothing about why they were there.
 
-    # ---- CLASS 2: the R42 stand-downs, which decline to name a cause on raw-bodied text ----
-    # A refusal arm that asks tree_treeql_no_raw_body first stands down when it is FALSE, on the
-    # reasoning that on mis-split raw-bodied text the fragment it would name is not evidence of the
-    # fault it names. THIS READING NEEDS NO STAND-DOWN -- its scan does not lose its place on a raw
-    # body -- so it can name the real cause, and that is where the two part.
+    # ---- CLASS 2: the `groupparen` arm's R42 stand-down ----
+    # An arm that asks tree_treeql_no_raw_body first stands down when it is FALSE, on the reasoning
+    # that on mis-split raw-bodied text the fragment it would name is not evidence of the fault it
+    # names. THIS READING NEEDS NO STAND-DOWN -- its scan does not lose its place on a raw body --
+    # so it names the real cause, and that is where the two part.
     #
-    # F2 WAS IN THIS CLASS AND IS FIXED. The sweep's b24 and b25 were here, declared, with the
-    # reason "the guard cannot be lifted while CLASS 1 is open, because then a genuinely mis-split
-    # fragment would get a false `parenless` cause". THAT REASON DID NOT REPRODUCE. Measured, with
-    # the two `parenless` arms' guard removed and nothing else changed: a40..a43 and b58 -- the five
-    # mis-split shapes in this very sweep, all printer output -- kept the answers they already had,
-    # none of them reaching that arm; file 48 went to exactly ONE failure, F2's own record; and the
-    # three R42 wording records were `unterminated`, `groupparen` and `unbalanced`, never this arm.
-    # So the guard was protecting against a shape no case could produce, and b24/b25 now AGREE.
+    # THE `parenless` HALF OF THIS CLASS WAS F2 AND IS FIXED, which is why b24/b25 are gone from
+    # here. The `groupparen` arm was NOT touched: a different arm, its own R42 reason, and no
+    # measurement behind lifting it. b57 is what keeps that visible rather than remembered.
     #
-    # WHAT IS LEFT IN THE CLASS is the `groupparen` arm's stand-down, which was NOT removed -- it is
-    # a different arm with its own R42 reason and no measurement behind lifting it.
-    #
-    # b57's SQL MESSAGE CHANGED WITH F2'S FIX, recorded because it is the one wording that fix
-    # costs: it was `cannot read HAS WHERE a = 1` and is now the `parenless` sentence, since
-    # `groupparen` still stands down here and `parenless` now fires. Both refuse and both point at
-    # missing parentheses; the new one names the inner step where the GROUP's own parentheses are
-    # what is missing, so it is less precise and not false. This reading names the group.
-    "b57": ("py", "no record: the groupparen arm's stand-down, the half of CLASS 2 still open"),
+    # b57's SQL message moved once already, with F2's fix: it was `cannot read HAS WHERE a = 1` and
+    # is now the `parenless` sentence, because `groupparen` stands down here and `parenless` now
+    # fires first. Both refuse and both point at missing parentheses; the new one names the inner
+    # step where the GROUP's own parentheses are what is missing, so it is less precise, not false.
+    # It is not printer output, so R42's rule about never rejecting printer output is untouched.
+    "b57": ("py",
+            "no record: the groupparen arm's stand-down, the half of CLASS 2 still open",
+            "both-refuse | sql:a step inside HAS/NOT needs a combinator or parentheses, so its "
+            "clauses can be told from the next step's | py:HAS/NOT needs parentheses around its "
+            "chain"),
 
-    # ---- CLASS 3: a raw body's own top-level comma, where no bracket or brace encloses it ----
-    # The residue of F1 after the splitter learned `[ ]` and `{ }`. NOT REACHABLE FROM A LEGAL
-    # PREDICATE: 48's record that drives `CASE WHEN a = 1, PSEUDO 'p'` measures that a bare
-    # top-level comma is a DuckDB syntax error, so the printer can never emit this shape from a
-    # WHERE body the host door accepted. That is why the bracket and brace cases were the ones
-    # worth fixing and this one is recorded instead.
-    "b55": ("py", "48 pins the refusal; unreachable from a legal predicate, per 48's "
-                  "`CASE WHEN a = 1, PSEUDO 'p'` syntax-error record"),
+    # ---- CLASS 3: a raw body's own top-level comma, with no enclosure around it ---- OPEN, AND
+    # THE ONLY EXACT FAILURE LEFT. The sweep's own new denominator check convicted this entry, and
+    # what it convicted was my earlier declaration of it.
+    #
+    # WHAT THIS ENTRY USED TO SAY: "unreachable from a legal predicate, per 48's
+    # `CASE WHEN a = 1, PSEUDO 'p'` syntax-error record". That record is real and the claim it
+    # supports is TRUE -- a bare top-level comma is not valid DuckDB SQL, so no WHERE body the host
+    # door accepted can hold one.
+    #
+    # BUT "NOT A LEGAL PREDICATE" IS NOT "NOT PRINTER OUTPUT", and running the two together is how
+    # this entry read as a documented limit for a whole round. MEASURED:
+    #
+    #     tree_steps([{"where": 'a = 1, b = 2'}])   BUILDS -- three nodes
+    #       prints                                  (WHERE a = 1, b = 2)
+    #       tree_parse_treeql of that text           REFUSED `cannot read b = 2`
+    #
+    # tree_steps does not validate a WHERE body, so the IR is constructible and the text IS printer
+    # output. EXACT quantifies over printer output, so EXACT is FALSE here -- a refusal of the
+    # printer's own output, which the Global Constraint calls a defect and not a gate. The sweep
+    # counts it now, which is why its EXACT line reads 61 of 62 rather than 62 of 62.
+    #
+    # NOT FIXED IN THIS ROUND, and this time the obstacle is MEASURED and not assumed -- the last
+    # time this file declined a fix it gave a wall that did not exist. The rule needed is the one
+    # test/treeql_parser.py uses: a depth-0 comma inside a RAW body separates only if what follows
+    # OPENS another clause. As a post-pass over the comma split that is a running sum over "does
+    # this part open with a clause or group keyword", and it binds. Two things stop it being this
+    # round's work, both measured on a prototype:
+    #   * REJOINING IS LOSSY. tree_treeql_split_parts returns parts already trimmed and carries no
+    #     positions, so a merge must RE-JOIN them -- and `(WHERE a = 1,b = 2)` comes back as
+    #     `a = 1, b = 2`, silently rewriting a hand-written value. Doing it without loss means
+    #     giving that macro a positional result, which is a signature change with four callers.
+    #   * IT MOVES GENERIC FRAGMENTS. `(TYPE 'a', 42)` is refused `cannot read 42` today and would
+    #     be refused `cannot read TYPE 'a', 42`, because the `42` merges into the part before it.
+    #     Same sentence, different fragment -- and the refusal set's `body_is_clauses` test reads
+    #     this same split, so the `comb` / `kw` decision moves with it.
+    # That is a change with its own ripple and it needs its own coordination, not a tail-end edit.
+    "b55": ("py",
+            "48 pins the refusal. IT IS PRINTER OUTPUT and therefore an EXACT failure -- the "
+            "`unreachable from a legal predicate` defence is about SQL validity, not about the "
+            "printer's image. The only EXACT failure left; the fix shape and its two measured "
+            "obstacles are in the comment above",
+            "sql-refuses:generic | py-accepts:3 rows"),
 }
 
 
@@ -343,6 +399,62 @@ def compare(sql, py, strict_frag):
     return "agree", None
 
 
+def signature(sql, py):
+    """A divergence's CONTENT, as one comparable line, so a DIVERGENT entry pins WHAT the two
+    readings disagree about and not merely THAT they do.
+
+    WHY THIS EXISTS. The entries used to key on the case LABEL alone, so a declared case could
+    regress to a DIFFERENT disagreement and stay declared: `a40` could have started returning a new
+    wrong IR and the sweep would have said nothing. A declaration that survives any change to the
+    thing it declares is not a declaration.
+
+    IT IS LEGIBLE FIRST AND EXACT SECOND. The refusal classes and the row counts read as English,
+    so the table states its claim without anything being run. The digest is appended ONLY where
+    both sides accept, because that is the one case the readable part cannot discriminate -- two
+    different wrong IRs of the same shape would sign alike. It is deliberately opaque: its job is
+    to force a human decision when the content moves, not to describe the move.
+    """
+    sql_ref, py_ref = isinstance(sql, tuple), isinstance(py, tuple)
+    if sql_ref and py_ref:
+        return "both-refuse | sql:%s | py:%s" % (refusal_class(sql[1]), refusal_class(py[1]))
+    if sql_ref:
+        return "sql-refuses:%s | py-accepts:%d rows" % (refusal_class(sql[1]), len(py))
+    if py_ref:
+        return "sql-accepts:%d rows | py-refuses:%s" % (len(sql), refusal_class(py[1]))
+    return "both-accept-different-ir | sql:%d rows | py:%d rows | sql-digest:%s" % (
+        len(sql), len(py), hashlib.sha256(repr(sql).encode()).hexdigest()[:10])
+
+
+def is_printer_output(con, text, py):
+    """Is this text something tree_selector_to_treeql can emit? COMPUTED, never declared.
+
+    WHY IT IS COMPUTED. Family B's header used to say "the printer never emits most of them", and
+    MEASURED that was false for at least one member: `(WHERE "a,b" = 1)` is exactly what
+    `tree_steps([{"where": '"a,b" = 1'}])` prints. A family-B case is never counted in the EXACT
+    line, so a refusal of printer output was hiding in the family whose header asserted it could
+    not be there -- which made the gate understate the denominator it reports about itself. A
+    classification that is recomputed every run cannot go stale the way that sentence did.
+
+    THE TEST. If the Python reading accepts the text, and PRINTING that reading reproduces the text
+    byte for byte, then the text is in the printer's image and the Python's IR is a preimage of it.
+    That is decidable here and needs no guess about which IR was meant. It also makes EXACT
+    meaningful for such a case: the text IS print(ir) for that ir, so `sql == py` on it is the
+    exact theorem for the macros, which is what the sweep already measures.
+
+    WHAT IT CANNOT DO: prove a text is NOT printer output. A text the Python refuses, or whose
+    reprint differs, is merely not shown to be printer output by this route -- so the denominator
+    it produces is a LOWER BOUND, and the sweep prints it as one.
+    """
+    if isinstance(py, tuple):
+        return False
+    try:
+        lit = treeql_parser.to_sql([dict(zip(FIELDS, r)) for r in py])
+        return con.execute("SELECT tree_selector_to_treeql(" + lit + ") = "
+                           + sql_str(text)).fetchone()[0] is True
+    except Exception:
+        return False
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--quick", action="store_true",
@@ -365,18 +477,36 @@ def main():
     counts = {"agree": 0, "both-refuse": 0, "diverge": 0}
     exact_sql = exact_py = exact_checked = 0
     bad = []
+    matched = {}            # label -> the signature actually observed, for every DIVERGING case
+    agreed = set()          # labels that did NOT diverge, so a declaration for them is stale
+    printer_output_in_b = []  # family-B cases the printer CAN emit, found by computation
     for label, text, want in cases:
+        key = label.split()[0]
         sql, py = rows_from_sql(con, text), rows_from_py(text)
         verdict, detail = compare(sql, py, args.strict_frag)
         counts[verdict] += 1
+        # THE DENOMINATOR IS COMPUTED, not taken from which list the case sits in. A family-A case
+        # is printer output by construction and carries the IR it was printed from; a family-B case
+        # is printer output if it reprints to itself through the second reading, and then the
+        # second reading's IR is a preimage, so EXACT for the macros is `sql == py`.
         if want is not None:
             exact_checked += 1
-            if sql == want:
-                exact_sql += 1
-            if py == want:
-                exact_py += 1
+            exact_sql += (sql == want)
+            exact_py += (py == want)
+        elif is_printer_output(con, text, py):
+            # A FAMILY-B CASE THAT IS PRINTER OUTPUT IS STILL IN THE DENOMINATOR. It is not moved
+            # into family A, and that is deliberate rather than lazy: family A is keyed by an IR
+            # literal, and several of these shapes have no IR tree_steps will build -- the empty
+            # FIRST step and the alias-only step are both printer output that the constructor
+            # refuses to construct. Relocating them would mean hand-building IR; evaluating EXACT
+            # on them where they sit costs nothing and cannot be forgotten.
+            printer_output_in_b.append(label)
+            exact_checked += 1
+            exact_sql += (sql == py)
+            exact_py += 1
         if verdict == "diverge":
-            declared = DIVERGENT.get(label.split()[0])
+            matched[key] = signature(sql, py)
+            declared = DIVERGENT.get(key)
             line = "%s\n  text: %r\n  %s" % (label, text, detail)
             if declared:
                 line += "\n  DECLARED: %s (%s is right)" % (declared[1], declared[0])
@@ -384,15 +514,71 @@ def main():
                 bad.append(line)
             print(("DECLARED DIVERGENCE  " if declared else "DIVERGENCE  ") + line)
             print()
+        else:
+            agreed.add(key)
 
-    print("%d case(s): %d agree, %d both-refuse, %d diverge (%d declared)"
+    # ------------------------------------------------------------------------------------------
+    # THE DECLARATIONS ARE CHECKED IN BOTH DIRECTIONS, which is what makes them declarations.
+    #
+    # They were checked in one. `DIVERGENT.get` was consulted ONLY inside the diverge branch, and
+    # the "(N declared)" figure was computed as `diverge - len(undeclared)`, so an entry that
+    # matched nothing contributed to nothing. MEASURED by planting, before this was written: an
+    # entry for a case that AGREES (`a01`) and an entry naming a label no case carries (`zz99`)
+    # each left the sweep at exit 0 with output byte-identical to the unplanted run. On the R41 fix
+    # the sweep printed OK with FIVE entries stale. A mute with no expiry is not a gate -- it is
+    # the exact failure this sweep exists to catch, sitting inside the sweep.
+    #
+    # Three ways a declaration can be wrong, and all three are loud and non-zero now:
+    #   UNKNOWN  the label matches no case at all -- a typo, or a case that was renamed or deleted
+    #   STALE    the case no longer diverges, so the entry is a fix that was never swept up
+    #   MOVED    the case still diverges but about something ELSE than the entry says
+    # ------------------------------------------------------------------------------------------
+    # THE KNOWN-LABEL SET COMES FROM BOTH FAMILIES, never from the cases this RUN selected.
+    # MEASURED, by the check immediately after it was written: with `--quick`, which loads family A
+    # only, b55 and b57 were reported as naming no case -- so the new gate failed a correct
+    # declaration because of the mode it ran in. A label is UNKNOWN only when no case anywhere
+    # carries it; a declaration whose case simply did not run this time is neither unknown nor
+    # stale, because `agreed` holds only cases that actually ran. The cost, stated: `--quick`
+    # cannot detect a STALE family-B declaration. The full run is the gate CI runs.
+    labels = ({lbl.split()[0] for lbl, _ir in IR_CASES}
+              | {lbl.split()[0] for lbl, _t in TEXT_CASES})
+    unknown = sorted(k for k in DIVERGENT if k not in labels)
+    stale = sorted(k for k in DIVERGENT if k in agreed)
+    moved = sorted((k, DIVERGENT[k][2], matched[k]) for k in DIVERGENT
+                   if k in matched and len(DIVERGENT[k]) > 2 and DIVERGENT[k][2] != matched[k])
+    for k in unknown:
+        print("UNKNOWN DECLARATION  %s names no case in this sweep.\n"
+              "  Its stated reason was: %s\n"
+              "  Either the case was renamed or deleted, or the label is a typo. Remove the entry "
+              "or fix the label.\n" % (k, DIVERGENT[k][1]))
+    for k in stale:
+        print("STALE DECLARATION  %s is declared divergent but now AGREES.\n"
+              "  Its stated reason was: %s\n"
+              "  That is a fix landing. Delete the entry -- a declaration left behind a fix is how "
+              "this table becomes a parking lot.\n" % (k, DIVERGENT[k][1]))
+    for k, want_sig, got_sig in moved:
+        print("MOVED DECLARATION  %s still diverges, but about something else than it declares.\n"
+              "  declared: %s\n  observed: %s\n"
+              "  The entry pins the CONTENT of the disagreement, so this is a behaviour change "
+              "that needs a decision, not a resignature.\n" % (k, want_sig, got_sig))
+
+    print("%d case(s): %d agree, %d both-refuse, %d diverge (%d declared, %d undeclared)"
           % (len(cases), counts["agree"], counts["both-refuse"], counts["diverge"],
-             counts["diverge"] - len(bad)))
-    print("EXACT over the %d printer-output case(s): sql %d/%d, py %d/%d"
+             counts["diverge"] - len(bad), len(bad)))
+    print("EXACT over the %d printer-output case(s) -- a LOWER BOUND, see is_printer_output: "
+          "sql %d/%d, py %d/%d"
           % (exact_checked, exact_sql, exact_checked, exact_py, exact_checked))
+    if printer_output_in_b:
+        print("  of which %d came from family B, found to be printer output by computation: %s"
+              % (len(printer_output_in_b),
+                 ", ".join(l.split()[0] for l in printer_output_in_b)))
     if exact_checked == 0 or len(cases) == 0:
         print("FAIL: the sweep compared nothing")
         sys.exit(4)
+    if unknown or stale or moved:
+        print("FAIL: %d unknown, %d stale, %d moved declaration(s)"
+              % (len(unknown), len(stale), len(moved)))
+        sys.exit(1)
     if bad:
         print("FAIL: %d undeclared divergence(s)" % len(bad))
         if args.strict_frag:

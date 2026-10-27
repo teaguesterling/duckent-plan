@@ -41,7 +41,59 @@
 -- sampled.
 CREATE OR REPLACE MACRO tree_treeql_ws() AS ' ' || chr(9) || chr(10) || chr(12) || chr(13);
 
--- A clause list split on `sep` at BRACKET depth 0 and outside single quotes, where "bracket"
+-- R41: WHERE THE QUOTED REGIONS ARE. The text with every quoted region replaced by chr(1), one
+-- character for one character, so the structural scans below can read the mask and know nothing
+-- about quoting at all.
+--
+-- WHY A PARITY COUNT CANNOT DO THIS, which is the whole reason this macro exists. The three scans
+-- below used to decide "inside a quote" as the PARITY of `'` characters strictly before a
+-- position. That works for ONE delimiter and it is a window sum, which is why it was written that
+-- way. TREEQL has TWO: a WHERE or ATTR body is raw host SQL, so it can hold a double-quoted
+-- IDENTIFIER, and `(WHERE "a,b" = 1)` is printer output from the ordinary constructor -- MEASURED.
+-- The two delimiters' state maps are the transpositions (OUT IN_SQ) and (OUT IN_DQ) on three
+-- states, and two transpositions sharing a point generate S3, which is NOT ABELIAN. A sum, a
+-- parity or any count-based window computes a commutative fold, so no window in that family can
+-- compute the prefix state. That is a closure result, not a difficulty.
+--
+-- WHAT REPLACES IT, and it is NOT any of the three constructs the first attempt at this reasoning
+-- predicted. RE2's leftmost-first alternation performs the sequential scan INSIDE ONE SCALAR CALL:
+-- `regexp_extract_all` cuts the text into tokens that are each either a whole quoted region or a
+-- single character, and the order of the alternatives is what makes the scan sequential. No
+-- recursive CTE, no `list_reduce`, no lambda over a subquery, no table function. MEASURED to bind
+-- on a literal, a correlated COLUMN (R22's wall), a `LATERAL unnest` of one, another macro's
+-- output, a nested call, and `tree_parse_treeql` over a table -- on duckdb 1.5.5 and 1.5.6 alike.
+--
+-- TWO DETAILS IN THE PATTERN CARRY BEHAVIOUR, and both are deliberate:
+--   * `(?:''|$)` lets an UNTERMINATED literal run to the end of the text, which is exactly what
+--     the parity scan did. `TYPE 'a` therefore still refuses as `unterminated quoted value`.
+--   * the `"..."` branch REQUIRES its closing quote, so a LONE `"` falls through to `.` and stays
+--     one ordinary character. That is what keeps `(WHERE a = "b)` round-tripping -- MEASURED; a
+--     branch that accepted an unterminated `"` would swallow the closing parenthesis.
+--
+-- THE PLACEHOLDER IS chr(1), chosen because it is none of the things any caller looks for: not a
+-- separator (`,` or a newline), not `(` `)` `[` `]` `{` `}`, not an identifier character, and not
+-- whitespace -- so a masked region is inert to every scan below without any of them testing for
+-- it.
+--
+-- THE LENGTH INVARIANT IS THE WHOLE CONTRACT: `length(mask) = length(s)`, so a position in the
+-- mask is the same position in `s` and every caller still slices its text out of `s`. `repeat`
+-- and `length` count CHARACTERS, not bytes, so a multi-byte region masks to the same number of
+-- characters -- MEASURED on a multi-byte literal. test/sql/48_treeql_parse.test asserts the
+-- invariant over a spread rather than pinning one input.
+--
+-- `tok` AND NOT `t` for the lambda parameter. With `t`, the binder refused every caller with
+-- `Column "t" referenced that exists in the SELECT clause - but this column cannot be referenced
+-- before it is defined`, because the parameter collided with the column the callers below name.
+-- That is the same defect the whole-file note about macro parameters warns of, in a lambda.
+CREATE OR REPLACE MACRO tree_treeql_quote_mask(s) AS
+  array_to_string(
+    list_transform(
+      regexp_extract_all(s, '(?s)''(?:[^'']|'''')*(?:''|$)|"[^"]*"|.'),
+      tok -> CASE WHEN tok[1:1] = '''' OR (tok[1:1] = '"' AND length(tok) > 1)
+                  THEN repeat(chr(1), length(tok)) ELSE tok END),
+    '');
+
+-- A clause list split on `sep` at BRACKET depth 0 and outside a quoted region, where "bracket"
 -- means `( )`, `[ ]` and `{ }` alike -- see THE DEPTH COUNTS THREE PAIRS below.
 --
 -- THE SEPARATORS OCCUR INSIDE THE BODIES. The printer emits ATTR and WHERE bodies unquoted and
@@ -79,17 +131,31 @@ CREATE OR REPLACE MACRO tree_treeql_ws() AS ' ' || chr(9) || chr(10) || chr(12) 
 -- printer cannot emit it from a WHERE body the host door accepted. test/sweep_treeql.py carries it
 -- as a declared divergence rather than leaving it to memory.
 --
--- THE OTHER HALF OF THE SPLITTER'S BLIND SPOT IS STILL OPEN, and naming it here is the honest
--- statement of what this fix is not: the quote scan below reads EVERY `'` as a delimiter and knows
--- nothing of `"..."`, so a raw body holding a double-quoted identifier with an apostrophe --
--- `WHERE "o'k" = 1`, printer output, legal DuckDB SQL -- still mis-splits. That is R41. It is not
--- fixed here because the scan is a WINDOW SUM over one delimiter, which has a closed form, while
--- two delimiters that can nest need sequential state. test/sweep_treeql.py's CLASS 1 entries are
--- the five shapes that prove it, and they turn into agreements the day it is fixed.
+-- THE OTHER HALF OF THE SPLITTER'S BLIND SPOT IS NOW CLOSED TOO, and the paragraph that stood
+-- here is withdrawn rather than deleted, because it was wrong in a way worth keeping. It said:
+-- the quote scan reads every `'` as a delimiter and knows nothing of `"..."`, so a raw body
+-- holding a double-quoted identifier still mis-splits -- "not fixed here because the scan is a
+-- WINDOW SUM over one delimiter, which has a closed form, while two delimiters that can nest need
+-- sequential state". That is R41.
 --
--- "Inside a quote" is the PARITY of quote characters strictly before a position, which is what
--- makes the '' escape free: two quotes restore the parity. Paren depth is a second window over
--- the column the first produced, which needs its own CTE -- window functions do not nest.
+-- THE FIRST HALF OF THAT WAS TRUE AND IS STRONGER THAN IT CLAIMED -- no window in the count family
+-- can do it, because the state maps generate a non-abelian group; see tree_treeql_quote_mask.
+-- THE SECOND HALF WAS FALSE: it concluded that DuckDB could not express the scan, having never
+-- tested one. RE2 alternation inside a single scalar call does it, and it binds everywhere R22
+-- names. The scan now reads the mask and `(WHERE "a,b" = 1)` round-trips.
+--
+-- ALSO WRONG IN THAT PARAGRAPH: it blamed the APOSTROPHE. MEASURED -- `(WHERE "a,b" = 1)` and
+-- `(ATTR a = "b,c")` are both printer output and both failed with NO APOSTROPHE ANYWHERE. The
+-- cause was never the apostrophe; it was having no notion of a `"..."` region at all, of which the
+-- apostrophe was one symptom and the comma another. A fix scoped to the apostrophe would have left
+-- the comma shapes failing.
+--
+-- "INSIDE A QUOTE" IS READ FROM tree_treeql_quote_mask, not counted here. It used to be the
+-- PARITY of quote characters strictly before a position, which made the '' escape free but knew
+-- nothing of `"..."` regions; that is R41 and the macro above carries the reason and the fix. The
+-- depth is now ONE window over the mask instead of a second window over a column the first
+-- produced, so the `quoted` CTE is gone -- a masked character is inert to the depth CASE because
+-- chr(1) is none of the six bracket characters.
 --
 -- `sep` IS ONE CHARACTER. The scan compares `c = sep` per character, so a two-character separator
 -- never matches and the input comes back silently as one part -- a wrong answer, not an error.
@@ -137,21 +203,17 @@ CREATE OR REPLACE MACRO tree_treeql_ws() AS ' ' || chr(9) || chr(10) || chr(12) 
 -- argument binds either way, because the binder folds it before the table function sees it. Only
 -- an inlined macro body reaches it unfolded.
 CREATE OR REPLACE MACRO tree_treeql_split_parts(s, sep) AS (
-  WITH chars AS (SELECT i, s[i:i] AS c FROM (SELECT unnest(range(1, length(s) + 1)) AS i)),
-  quoted AS (
-    SELECT i, c,
-           (COALESCE(sum(CASE WHEN c = '''' THEN 1 ELSE 0 END)
-              OVER (ORDER BY i ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) % 2) = 1 AS inq
-    FROM chars),
+  WITH chars AS (SELECT i, qmask[i:i] AS c
+                 FROM (SELECT unnest(range(1, length(s) + 1)) AS i),
+                      (SELECT tree_treeql_quote_mask(s) AS qmask)),
   depthed AS (
-    SELECT i, c, inq,
-           sum(CASE WHEN inq THEN 0
-                    WHEN c IN ('(', '[', '{') THEN 1
+    SELECT i, c,
+           sum(CASE WHEN c IN ('(', '[', '{') THEN 1
                     WHEN c IN (')', ']', '}') THEN -1 ELSE 0 END)
              OVER (ORDER BY i) AS depth
-    FROM quoted),
+    FROM chars),
   bounds AS (SELECT 0 AS p
-             UNION ALL SELECT i FROM depthed WHERE c = sep AND NOT inq AND depth = 0
+             UNION ALL SELECT i FROM depthed WHERE c = sep AND depth = 0
              UNION ALL SELECT length(s) + 1),
   spans AS (SELECT p + 1 AS lo, lead(p) OVER (ORDER BY p) - 1 AS hi FROM bounds),
   -- The part TEXT and the part BOUNDARIES are the two whitespace-sensitive things here, and only
@@ -200,25 +262,52 @@ CREATE OR REPLACE MACRO tree_treeql_unlit(v) AS
 -- THE DEPTH IS QUOTE-AWARE, which is the whole reason this cannot be a character count. The
 -- printer emits a value's own parenthesis inside a literal -- `(TYPE 'has ) paren')` round-trips
 -- exactly today -- so a count that does not know where the quotes are refuses printer output.
--- "Inside a quote" is the PARITY of quote characters strictly before a position, exactly as in
--- tree_treeql_split_parts, which is what makes the '' escape free.
+-- "Inside a quote" is read from tree_treeql_quote_mask, as in tree_treeql_split_parts and
+-- tree_treeql_chain_parts: one definition, three readers.
 --
--- The two windows and their reasons are tree_treeql_split_parts', and the comment there carries
--- them. What is deliberately different here is the RESULT: a LIST, not a relation, because both
--- readers want one answer about the whole string rather than a row per character. The list form
+-- R41 REACHED THIS SCAN TOO, and the defect was NOT masked by the trust gate below -- which is the
+-- thing I expected and measured false. The old parity scan knew nothing of `"..."`, and
+-- tree_treeql_quotes_trusted gates this macro's two readers on an even `'` count AND no raw-bodied
+-- keyword -- neither of which says anything about a double quote. MEASURED on the old scan:
+--
+--     tree_treeql_depths('("a ( b")')  ->  [1,1,1,1,2,2,2,2,1]   the quoted '(' was COUNTED
+--       quotes_trusted TRUE  (no apostrophe, no raw keyword)  so the gate did NOT stand down
+--       wrapped FALSE and balanced FALSE, both wrong -- the parentheses match
+--       tree_parse_treeql('(TYPE "a ( b")')  ->  REFUSED `unbalanced parentheses`
+--
+-- A refusal naming a cause the text does not have, reachable through the parser. It is NOT printer
+-- output -- the printer writes a TYPE body through tree_sql_lit, so it emits `(TYPE 'a ( b')` --
+-- so no theorem quantified over it and nothing was red. Reading the mask fixes it; measured, that
+-- input now parses.
+--
+-- THE TRUST GATE STAYS, and its REASON NARROWS, which is worth stating because the gate now looks
+-- redundant and is not. tree_treeql_quotes_trusted still gates both readers, so on raw-bodied text
+-- tree_treeql_wrapped still falls back to the first-and-last-character test -- and that fallback is
+-- F3's mechanism. MEASURED: narrowing the gate turns `(ATTR a = 1) (ATTR b = 2)` into a two-step
+-- reading, which turns EXACT red on a constructible IR. So the gate is no longer there because
+-- this scan cannot be trusted; it is there because F3 requires the fallback. See THE F3 RULING in
+-- test/sql/48_treeql_parse.test.
+--
+-- THE DEPTH EXPRESSION DIFFERS FROM tree_treeql_split_parts' AND THAT IS DELIBERATE, stated here
+-- because that macro's header sends the reader to this one: `split_parts` counts `( )`, `[ ]` and
+-- `{ }`, this counts `( )` ONLY. The reason is what each answer is used for. `split_parts` asks
+-- "is this separator enclosed", and a comma inside a DuckDB list or struct literal is enclosed.
+-- This macro's two readers ask whether the step's own PARENTHESES wrap or balance, and a bracket
+-- is not a parenthesis: counting brackets here would make `(WHERE x[1] = 1)` unbalanced on the way
+-- in. Do not unify them without deciding that question again.
+--
+-- What is deliberately different here from split_parts is also the RESULT: a LIST, not a relation,
+-- because both readers want one answer about the whole string rather than a row per character. The list form
 -- also keeps the readers free of an inner subquery, which is the R22 binder wall -- measured,
 -- all three macros below bind when called with a correlated COLUMN argument.
 CREATE OR REPLACE MACRO tree_treeql_depths(s) AS (
-  WITH chars AS (SELECT i, s[i:i] AS c FROM (SELECT unnest(range(1, length(s) + 1)) AS i)),
-  quoted AS (
-    SELECT i, c,
-           (COALESCE(sum(CASE WHEN c = '''' THEN 1 ELSE 0 END)
-              OVER (ORDER BY i ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) % 2) = 1 AS inq
-    FROM chars),
+  WITH chars AS (SELECT i, qmask[i:i] AS c
+                 FROM (SELECT unnest(range(1, length(s) + 1)) AS i),
+                      (SELECT tree_treeql_quote_mask(s) AS qmask)),
   depthed AS (
-    SELECT i, sum(CASE WHEN inq THEN 0 WHEN c = '(' THEN 1 WHEN c = ')' THEN -1 ELSE 0 END)
+    SELECT i, sum(CASE WHEN c = '(' THEN 1 WHEN c = ')' THEN -1 ELSE 0 END)
                  OVER (ORDER BY i) AS d
-    FROM quoted)
+    FROM chars)
   SELECT CAST(list(d ORDER BY i) AS INTEGER[]) FROM depthed);
 
 -- Does the text consist of ONE parenthesised group? True when the first character is '(' and the
@@ -717,27 +806,37 @@ CREATE OR REPLACE MACRO tree_treeql_group_kinds() AS
 --
 -- A WORD, not a prefix: the scan marks maximal runs of identifier characters at paren depth 0 and
 -- outside quotes, and compares the WHOLE run to the registry. Comparing a prefix would split
--- `CHILDREN` and `SELFISH`. Depth and quote state come from the same two windows the clause-list
--- splitter uses, for the same reasons -- a keyword inside a nested clause list or inside a quoted
--- value is not a boundary.
+-- `CHILDREN` and `SELFISH`. The depth comes from one window over tree_treeql_quote_mask, as the
+-- clause-list splitter's does and for the same reasons -- a keyword inside a nested clause list or
+-- inside a quoted value is not a boundary.
+--
+-- R41 REACHED THIS SCAN TOO, and here it was WRONG rather than merely unexercised. MEASURED on the
+-- old parity scan, at this macro's own interface:
+--
+--     tree_treeql_chain_parts('"a CHILD b"')  ->  [{1, '"a'}, {2, 'CHILD b"'}]
+--
+-- a step boundary taken INSIDE a double-quoted identifier. No printed group chain reaches it,
+-- which is why nothing was red: the printer writes every inner step's clause list in parentheses,
+-- so the only text at chain depth 0 is the combinator keyword and the spaces around it, and a
+-- quoted region can never sit there -- MEASURED, `HAS ( DESCENDANT (WHERE "a CHILD b" = 1) )`
+-- round-trips on the old scan. The defect was real and hidden behind the printer's shape, which is
+-- exactly the arrangement this file's note on declaring a set once and reading it at every site
+-- warns about. Reading the mask closes it; measured, that call now answers ONE part.
 --
 -- EMPTY SPANS ARE DROPPED here, unlike in the clause-list splitter, where an empty trailing part
 -- is a real part. A keyword at position 1 would otherwise answer an empty first step, and an
 -- empty inner chain must answer NO steps so that the assembly can refuse the empty group rather
 -- than build a group node with nothing under it.
 CREATE OR REPLACE MACRO tree_treeql_chain_parts(s) AS (
-  WITH chars AS (SELECT i, s[i:i] AS ch FROM (SELECT unnest(range(1, length(s) + 1)) AS i)),
-  quoted AS (
-    SELECT i, ch,
-           (COALESCE(sum(CASE WHEN ch = '''' THEN 1 ELSE 0 END)
-              OVER (ORDER BY i ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0) % 2) = 1 AS inq
-    FROM chars),
+  WITH chars AS (SELECT i, qmask[i:i] AS ch
+                 FROM (SELECT unnest(range(1, length(s) + 1)) AS i),
+                      (SELECT tree_treeql_quote_mask(s) AS qmask)),
   depthed AS (
-    SELECT i, ch, inq,
-           sum(CASE WHEN inq THEN 0 WHEN ch = '(' THEN 1 WHEN ch = ')' THEN -1 ELSE 0 END)
+    SELECT i, ch,
+           sum(CASE WHEN ch = '(' THEN 1 WHEN ch = ')' THEN -1 ELSE 0 END)
              OVER (ORDER BY i) AS depth
-    FROM quoted),
-  wordy AS (SELECT i, ch, depth = 0 AND NOT inq AND regexp_matches(ch, '[A-Za-z0-9_]') AS isw
+    FROM chars),
+  wordy AS (SELECT i, ch, depth = 0 AND regexp_matches(ch, '[A-Za-z0-9_]') AS isw
             FROM depthed),
   -- a word STARTS at an identifier character whose predecessor is not one; `sum` over that marker
   -- then gives every character the id of the word it belongs to
@@ -767,21 +866,21 @@ CREATE OR REPLACE MACRO tree_treeql_chain_parts(s) AS (
   -- step's clause list every parenthesis is at depth 1 or deeper, so the only ')' that can
   -- precede a depth-0 '(' is the one closing the previous step's own clause list. Measured, the
   -- two ways this could have gone wrong: `CHILD (TYPE 'b')` is NOT split (the previous non-blank
-  -- character is `D`), and a ')' inside a quoted value is not one either, because `inq` excludes
+  -- character is `D`), and a ')' inside a quoted value is not one either, because the mask excludes
   -- it -- `(TYPE 'a ) b') (TYPE 'c')` splits at the real boundary and not at the quoted one.
   --
   -- The previous non-blank character is found by a running max of its POSITION and then one
   -- join, rather than by `lag(... ) IGNORE NULLS`, so the scan stays in the window vocabulary the
   -- rest of this file already uses.
-  prevnz AS (SELECT i, ch, inq, depth,
+  prevnz AS (SELECT i, ch, depth,
                max(CASE WHEN NOT regexp_matches(ch, '\s') THEN i END)
                  OVER (ORDER BY i ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS pj
              FROM depthed),
   opens AS (
     SELECT p.i AS lo
     FROM prevnz p JOIN depthed q ON q.i = p.pj
-    WHERE NOT p.inq AND p.ch = '(' AND p.depth = 1
-      AND NOT q.inq AND q.ch = ')' AND q.depth = 0),
+    WHERE p.ch = '(' AND p.depth = 1
+      AND q.ch = ')' AND q.depth = 0),
   -- 1 and length(s) + 1 are sentinels, so one lead() window serves both ends, exactly as in the
   -- clause-list splitter. Here the boundary character is KEPT -- the keyword belongs to the step
   -- it starts -- so the span runs from the boundary itself, not from one past it. UNION, not

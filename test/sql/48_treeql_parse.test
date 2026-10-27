@@ -2188,9 +2188,19 @@ syntax error at or near ","
 # then the quote-BLIND reading is unbalanced too. The fourth record below is that exact shape and
 # is the one that discriminates the two rules.
 #
-# EXACT is NOT asserted here: it is FALSE at BASE for these shapes, because the clause-list
-# splitter mis-splits on the same unpaired apostrophe. That is R41, it predates this task, and
-# Task 7's differential generator carries it. These records pin the REPRINT half only.
+# EXACT IS NOT ASSERTED HERE, AND THAT IS NOW A HISTORICAL FACT RATHER THAN A LIMIT. It was FALSE
+# at BASE for these shapes, because the clause-list splitter mis-split on the unpaired apostrophe
+# in `"o'k"`. That is R41. These records pin the REPRINT half only -- and the reason they COULD do
+# so while the parse was wrong is the point: a swallowed body reprints byte-identically, so a
+# reprint record stays green on a wrong IR. That is why R41 needed the three refusal-pins below
+# and why a theorem here would not have caught it.
+#
+# R41 IS FIXED IN TASK 7, fix round 1. EXACT is now TRUE for all four of these shapes -- MEASURED,
+# and the three records below assert it directly. The sentence this block carried, "it predates
+# this task, and Task 7's differential generator CARRIES it", is withdrawn: the coordinator ruled
+# that the dispatch's "you own the clause-list splitter ... it is yours to fix" governs, because
+# four of R41's shapes are refusals of printer output and the printer is the specification. These
+# four records are left asserting the reprint half only, so the contrast above stays legible.
 # ==============================================================================================
 
 # step1+has -- the smallest two-odd-body shape
@@ -2241,43 +2251,179 @@ SELECT tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
 true
 
 # ----------------------------------------------------------------------------------------------
-# TWO REFUSALS THAT NAMED A CAUSE THE TEXT DOES NOT HAVE. Both shapes are refused at BASE too,
-# with the generic `cannot read`, so refusing them is not the defect -- the WORDING was. A refusal
-# must not claim a cause the text lacks; that is the requirement that narrowed R37 and R38, and it
-# applies to this task's own messages.
+# THREE REFUSALS OF PRINTER OUTPUT, NOW ACCEPTED -- R41 IS FIXED.
 #
-# They keep the GENERIC arm rather than gaining a new wording, because the real cause is R41's
-# mis-split, which this task may not fix and must not describe: `cannot read <fragment>` names the
-# text and claims nothing about why.
+# WHAT THESE THREE RECORDS WERE. All three were `statement error` records expecting
+# `tree_parse_treeql: cannot read`. Each had first been refused with a cause the text does not
+# have -- `unterminated quoted value` with every literal terminated, `HAS/NOT needs parentheses
+# around its chain` with the parentheses present, `unbalanced parentheses` with the parentheses
+# matched -- and each was moved to the GENERIC arm, on this reasoning: "the real cause is R41's
+# mis-split, which this task may not fix and must not describe".
+#
+# EVERY ONE OF THEM PINNED A REFUSAL OF PRINTER OUTPUT. The constructor is ordinary, the text is
+# what the printer wrote, and the parser refused it -- which the Global Constraint calls a defect
+# and not a gate. The reason they were only generic refusals rather than records of a defect is
+# that R41 was believed unfixable in DuckDB. It was not: see tree_treeql_quote_mask in
+# sql/10_treeql.sql, which carries the closure result that made the old scan impossible and the
+# construct that replaced it.
+#
+# SO THESE ARE NOT TESTS BEING WEAKENED. A refusal-pin became an EXACT assertion because the thing
+# it refused is now read correctly, exactly as F1's two records were converted earlier in this
+# task. The IR is stated at each one, MEASURED under duckdb 1.5.5 rather than inferred from
+# "stopped refusing" -- which is not the same claim as "returns the right IR".
+#
+# AND THE REPRINT RECORDS ABOVE DID NOT MOVE, which is what tells you the fix is a fix: the R42
+# block's four `print(parse(print(ir))) = print(ir)` records were green before and are green now.
+# They were green on the WRONG parse too, because a swallowed body reprints byte-identically --
+# that is precisely why a reprint record could not catch R41 and why these three had to be
+# refusal-pins until it was fixed.
 # ----------------------------------------------------------------------------------------------
 
-# step2+has+nested -- was `unterminated quoted value`, when every literal IS terminated
-statement error
+# step2+has+nested. MEASURED: 14 nodes, EXACT true for both front-ends.
+query I
 SELECT tree_parse_treeql(tree_selector_to_treeql(
   tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
                                  has: [{type: 'c', "where": '"o''k" = 1'}]}]},
-              {type: 'e', comb: 'child', "where": '"o''k" = 1'}])));
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}])))
+     = tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                      has: [{type: 'c', "where": '"o''k" = 1'}]}]},
+                   {type: 'e', comb: 'child', "where": '"o''k" = 1'}]);
 ----
-tree_parse_treeql: cannot read
+true
 
-# has+not+nested -- was `HAS/NOT needs parentheses around its chain`, when the parentheses ARE there
-statement error
+# ...and the node count, so a reader can see WHICH IR without rebuilding it. 14 nodes: the root,
+# two top-level steps, their type and where clauses, the HAS and its inner step and clauses, and
+# the nested HAS with its own.
+query I
+SELECT len(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}]))));
+----
+14
+
+# has+not+nested. MEASURED: 15 nodes, EXACT true for both front-ends. This is the shape that was
+# once refused `HAS/NOT needs parentheses around its chain` with its parentheses present.
+query I
 SELECT tree_parse_treeql(tree_selector_to_treeql(
   tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
                                  has: [{type: 'c', "where": '"o''k" = 1'}]}],
-               "not": [{type: 'd', "where": '"o''k" = 1'}]}])));
+               "not": [{type: 'd', "where": '"o''k" = 1'}]}])))
+     = tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                      has: [{type: 'c', "where": '"o''k" = 1'}]}],
+                    "not": [{type: 'd', "where": '"o''k" = 1'}]}]);
 ----
-tree_parse_treeql: cannot read
+true
 
-# step2+has -- the THIRD wording group: refused with `unbalanced parentheses` when the parentheses
-# ARE matched. Same ruling as the two above: the generic arm, because the true cause is R41's
-# mis-split and this task may neither fix it nor describe it.
-statement error
+query I
+SELECT len(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}],
+               "not": [{type: 'd', "where": '"o''k" = 1'}]}]))));
+----
+15
+
+# step2+has. MEASURED: 10 nodes, EXACT true for both front-ends. This is the shape that was once
+# refused `unbalanced parentheses` with its parentheses matched, and it is the sweep's `a42`.
+query I
 SELECT tree_parse_treeql(tree_selector_to_treeql(
   tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1'}]},
-              {type: 'e', comb: 'child', "where": '"o''k" = 1'}])));
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}])))
+     = tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1'}]},
+                   {type: 'e', comb: 'child', "where": '"o''k" = 1'}]);
 ----
-tree_parse_treeql: cannot read
+true
+
+query I
+SELECT len(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1'}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}]))));
+----
+10
+
+# ----------------------------------------------------------------------------------------------
+# R41'S OTHER TWO SHAPES, which no record covered because neither family of the differential drove
+# them. Both are printer output from the ordinary constructor, both were refused, and NEITHER
+# carries an apostrophe -- which is what shows the cause was never "reads every `'` as a
+# delimiter" but "knows nothing of `"..."` regions". A comma inside a double-quoted identifier is
+# the other symptom of the same cause.
+# ----------------------------------------------------------------------------------------------
+
+# a comma inside a double-quoted identifier in a WHERE body. Was refused `cannot read b" = 1`.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": '"a,b" = 1'}])))
+     = tree_steps([{"where": '"a,b" = 1'}]);
+----
+true
+
+# ...and in an ATTR body. Was refused `cannot read c"`.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{attr: 'a = "b,c"'}])))
+     = tree_steps([{attr: 'a = "b,c"'}]);
+----
+true
+
+# THE BOUNDARY, so a later widening of the region rule has to decide about it on purpose: a LONE
+# double quote is NOT a region. The `"..."` branch of the mask pattern requires its closing quote,
+# so an unpaired `"` stays one ordinary character -- without that, this text's closing parenthesis
+# would be swallowed and printer output would be refused again.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'a = "b'}])))
+     = tree_steps([{"where": 'a = "b'}]);
+----
+true
+
+# THE CHAIN READER WAS WRONG TOO, and at its own interface rather than only through the parser.
+# MEASURED on the old parity scan, `tree_treeql_chain_parts('"a CHILD b"')` answered TWO parts --
+# `"a` and `CHILD b"` -- a step boundary taken inside a double-quoted identifier. No printed group
+# chain reaches it, because the printer wraps every inner step's clause list in parentheses and the
+# only text at chain depth 0 is the combinator keyword, so nothing was ever red for it. This record
+# is at the macro's own interface for that reason: a defect hidden behind the printer's shape needs
+# a record that does not depend on the printer's shape.
+query I
+SELECT list_transform(tree_treeql_chain_parts('"a CHILD b"'), x -> x.part);
+----
+["a CHILD b"]
+
+# ...and the shape that hid it: the same keyword inside a region, but inside a printed chain, which
+# round-trips on the old scan AND the new one. Kept so that the record above is read as the narrow
+# fact it is.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{"where": '"a CHILD b" = 1'}]}])))
+     = tree_steps([{type: 'a', has: [{"where": '"a CHILD b" = 1'}]}]);
+----
+true
+
+# THE PAREN SCAN WAS WRONG TOO, and its trust gate did NOT mask it -- which is the thing I expected
+# and measured false. tree_treeql_quotes_trusted gates on an even `'` count AND no raw-bodied
+# keyword; neither says anything about a double quote. MEASURED on the old scan,
+# `tree_treeql_depths('("a ( b")')` returned `[1,1,1,1,2,2,2,2,1]` -- counting a parenthesis inside
+# a quoted identifier -- with `quotes_trusted` TRUE, so `wrapped` and `balanced` both answered
+# FALSE on text whose parentheses match, and this input was refused `unbalanced parentheses`.
+#
+# NOT printer output: the printer writes a TYPE body through tree_sql_lit, so it emits
+# `(TYPE 'a ( b')`. So no theorem quantified over this and nothing was red -- a false cause on
+# hand-written input, which is the class requirement 6 serves.
+query I
+SELECT list_transform(tree_parse_treeql('(TYPE "a ( b")'), x -> x.kind || ':' || COALESCE(x.value, '~'));
+----
+[selector:treeql, step:~, type:"a ( b"]
+
+# THE LENGTH INVARIANT the mask rests on: one character out for one character in, so a position in
+# the mask is the same position in the text and every caller still slices from the text. Asserted
+# over a spread rather than pinned on one input, including a MULTI-BYTE literal -- `repeat` and
+# `length` count characters, not bytes, and a mask that shortened a region would shift every
+# position after it and misread silently.
+query I
+SELECT bool_and(length(tree_treeql_quote_mask(t)) = length(t)) FROM (VALUES
+  ('(WHERE "a,b" = 1)'), ('(TYPE ''it''''s'')'), ('TYPE ''a'), ('(WHERE a = "b)'),
+  ('(ATTR a = 1) (ATTR b = 2)'), ('(TYPE ''say "hi"'')'), (''), ('(TYPE ''a ) b'')'),
+  ('(WHERE [1, 2] = [1, 2])'), ('(TYPE ''two '''''''' quotes '''''''' here'')'),
+  ('(WHERE "o''k" = 1)'), ('(ATTR a = "b,c")'), ('(TYPE ''é'')'), ('(TYPE ''a' || chr(10) || 'b'')')
+) v(t);
+----
+true
 
 # ==============================================================================================
 # FIX ROUND 3 -- THE RECORDS FOR F1, F2 AND F3, AND THE BOUNDARY RECORD BESIDE F1
@@ -2343,14 +2489,25 @@ tree_parse_treeql: cannot read
 # ONE CAUSE BEHIND F1 AND F2: the clause-list splitter is not a tokeniser. It counted `(` and `)`,
 # it read every `'` as a delimiter, and it was blind to `[` `]` and `{` `}`.
 #
-# TASK 7 CLOSED TWO OF THOSE THREE:
+# TASK 7 CLOSED ALL THREE, the third in fix round 1:
 #   * BLIND TO BRACKETS AND BRACES -- CLOSED. tree_treeql_split_parts counts all three enclosure
 #     pairs, so F1's two inputs round-trip. The reasoning is at that macro.
-#   * EVERY `'` IS A DELIMITER -- OPEN. That is R41. A raw body may hold a double-quoted
-#     IDENTIFIER whose content has an apostrophe, and the parity scan loses its place on it. The
-#     scan is a WINDOW SUM over one delimiter; two delimiters that can nest need sequential state,
-#     which is a different piece of work with R22's binder wall in front of it.
-#   * NOT A TOKENISER AT ALL -- OPEN as a description of the splitter, and NOT what F2 rested on.
+#   * EVERY `'` IS A DELIMITER -- CLOSED, and the bullet that stood here said it was open "because
+#     the scan is a WINDOW SUM over one delimiter; two delimiters that can nest need sequential
+#     state, which is a different piece of work with R22's binder wall in front of it". The first
+#     half was true and stronger than stated -- the two delimiters' state maps generate a
+#     non-abelian group, so NO window in the count family can do it. The second half was FALSE and
+#     had never been tested: RE2 alternation inside one scalar call does the sequential scan and
+#     binds in every shape R22 names. See tree_treeql_quote_mask in sql/10_treeql.sql.
+#
+#     AND THE BULLET NAMED THE WRONG CAUSE. It blamed the apostrophe. MEASURED: `(WHERE "a,b" = 1)`
+#     and `(ATTR a = "b,c")` are both printer output and both failed with NO APOSTROPHE ANYWHERE.
+#     The cause was having no notion of a `"..."` region; the apostrophe and the comma are two
+#     symptoms of it. A fix scoped to the apostrophe would have left the comma shapes failing.
+#   * NOT A TOKENISER AT ALL -- CLOSED for the quoting, which is the part that bit. The splitter
+#     still does not know which clause KIND it is inside, and it does not need to: the mask tells
+#     it where the regions are, which is the only thing the quoting question ever needed. This was
+#     NOT what F2 rested on -- see below.
 #
 # F2'S CAUSE WAS THE GUARD, NOT THE SPLITTER, and the sentence that said otherwise is withdrawn
 # here rather than a thousand lines away. It read: F2 "rests on" the splitter not being a tokeniser,
@@ -2367,11 +2524,13 @@ tree_parse_treeql: cannot read
 # the shape of error this block keeps recording -- a mechanism asserted across cases that were only
 # ever measured one at a time.
 #
-# WHERE THE OPEN TWO ARE NOW MEASURED RATHER THAN REMEMBERED: test/sweep_treeql.py reads printed IR
-# back through BOTH front-ends and carries them as DECLARED DIVERGENCES, each naming the record
-# here that pins the macros' answer. Its EXACT column is the adjudicator -- 44 of 44 for the second
-# reading against 40 of 44 for the macros, measured in Task 7 -- so the open shapes are not a
-# difference of opinion between two parsers.
+# WHERE THIS IS MEASURED RATHER THAN REMEMBERED: test/sweep_treeql.py reads printed IR back through
+# BOTH front-ends and compares every field of every row. Its EXACT column is the adjudicator, which
+# is what made each of these a fact rather than a difference of opinion between two parsers. The
+# numbers as the three fixes landed, all measured: the macros went 38 of 44 at BASE, to 40 of 44
+# with F1, to 44 of 44 with R41 -- against 44 of 44 for the second reading throughout. The sweep's
+# own denominator has since been corrected upward; the figure it reports now is the one to read,
+# not these.
 #
 # F3'S CAUSE IS NOT THE SPLITTER, and saying it was is a claim fix round 5 measured false and left
 # for this ruling. MEASURED, with a control: on F3's text, tree_treeql_step_parse returns the
@@ -2416,14 +2575,44 @@ SELECT tree_parse_treeql(tree_selector_to_treeql(
 ----
 true
 
-# THE RESIDUE, recorded rather than left to be rediscovered: a raw body's top-level comma enclosed
-# by NOTHING still splits, because the fix counts enclosures and this comma has none. It is NOT
-# reachable from a legal predicate -- the record below the documented comma limit measures that a
-# bare top-level comma is a DuckDB syntax error -- so the printer cannot emit it from a WHERE body
-# the host door accepted, and no theorem over printer output quantifies over it. This record pins
-# the refusal so that a later widening of the scan has to decide about it on purpose.
+# THE RESIDUE, and the sentence that stood here was WRONG in a way worth keeping. It read: this
+# shape "is NOT reachable from a legal predicate ... so the printer cannot emit it from a WHERE
+# body the host door accepted, AND NO THEOREM OVER PRINTER OUTPUT QUANTIFIES OVER IT."
+#
+# The first half is TRUE: a bare top-level comma is not valid DuckDB SQL, which the record below
+# the documented comma limit measures. The last clause is FALSE, and it does not follow from the
+# first -- "not a legal predicate" is not "not printer output". MEASURED:
+#
+#     tree_steps([{"where": 'a = 1, b = 2'}])   BUILDS -- three nodes
+#       prints                                  (WHERE a = 1, b = 2)
+#       tree_parse_treeql of that text          REFUSED `cannot read b = 2`
+#
+# tree_steps does not validate a WHERE body, so the IR is CONSTRUCTIBLE and the text IS printer
+# output. EXACT quantifies over printer output, so this is an EXACT FAILURE -- the parser refusing
+# its own printer's output, which the Global Constraint calls a defect and not a gate. It is the
+# only one left after R41, and test/sweep_treeql.py now counts it, which is why that sweep reports
+# 61 of 62 rather than 62 of 62.
+#
+# STILL A REFUSAL-PIN, not an EXACT assertion, because it is not fixed. The fix shape and the two
+# measured obstacles to doing it in this round are at the entry for it in test/sweep_treeql.py's
+# DIVERGENT table. This record stays so that the refusal is pinned rather than remembered, and so
+# that whoever widens the scan has to change this line on purpose.
 statement error
 SELECT tree_parse_treeql('(WHERE a = 1, b = 2)');
+----
+tree_parse_treeql: cannot read b = 2
+
+# ...and the SAME refusal reached through the printer rather than through hand-written text, which
+# is what makes it an EXACT failure rather than a rejected input. The IR is built by the ordinary
+# constructor and the text under test is whatever the printer wrote, so nothing here depends on my
+# having transcribed that text correctly.
+#
+# IT CANNOT BE WRITTEN AS `parse(print(ir)) = ir` IS FALSE, which is the obvious shape and does not
+# work: tree_parse_treeql RAISES, so such a query errors instead of answering false, and DuckDB has
+# no TRY expression to catch it. A `statement error` through the printer is the strongest available
+# statement of an EXACT failure in this file's vocabulary.
+statement error
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'a = 1, b = 2'}])));
 ----
 tree_parse_treeql: cannot read b = 2
 

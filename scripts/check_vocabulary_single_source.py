@@ -94,18 +94,11 @@ EXEMPT_CONSTRUCTS = {
          "lexical table this reading needs to recognise a clause at all. Bound by "
          "test/sweep_treeql.py's row-for-row differential against the macros, which read "
          "tree_catalog.clause_kinds, and not by this lint"),
-        ('# CLAUSE_KEYWORDS, continued',
-         "the continuation line of the declaration above. Exempt separately because this lint "
-         "matches a substring of the offending LINE, and anchored on a marker comment rather than "
-         "on a run of members so that a reformat cannot silently void the exemption"),
         ('COMBINATORS = {',
          "the printer's combinator KEYWORD spellings mapped to ops. NOT derivable from the op: "
          "DESCENDANT is desc, SIBLING is next, FOLLOWING is after and PRECEDING is prev, so four "
          "of the eight have to be written. Same binding as above -- the differential, not this "
          "lint"),
-        ('# COMBINATORS, continued',
-         "the continuation line of the declaration above, for the reason given for "
-         "CLAUSE_KEYWORDS' continuation"),
     ),
     "test/test_css_parser.py": (
         ('["selector", "step", "type", "id", "class", "has", "step", "type"]',

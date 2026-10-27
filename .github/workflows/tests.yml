@@ -59,10 +59,18 @@ jobs:
       # tree_selector_to_treeql and reads the result back through both front-ends -- and a
       # generated case list cannot be written out as records.
       #
-      # IT RUNS HERE BECAUSE A DIFFERENTIAL THAT IS NEVER RUN IS NOT A GATE. It fails three ways,
-      # which is what makes it one: on a NEW divergence; on a DECLARED divergence that started
-      # agreeing, because its DIVERGENT table names each shape where the two readings part today
-      # and a fix has to remove the entry; and with exit 4 if it ever compares nothing.
+      # IT RUNS HERE BECAUSE A DIFFERENTIAL THAT IS NEVER RUN IS NOT A GATE. It fails five ways: on
+      # a NEW divergence; on a DECLARED divergence that started AGREEING; on a declaration whose
+      # LABEL matches no case; on a declared case that still diverges but about something ELSE than
+      # the entry says; and with exit 4 if it ever compares nothing.
+      #
+      # THE MIDDLE THREE DID NOT EXIST WHEN THIS COMMENT FIRST CLAIMED THE SECOND OF THEM, and that
+      # is why the list is spelled out rather than summarised. MEASURED by planting, in fix round 1:
+      # a DIVERGENT entry for a case that AGREES, and one naming a label no case carries, each left
+      # the sweep at exit 0 with output byte-identical to the unplanted run. The table was consulted
+      # only when a case diverged, so an entry matching nothing was silent -- and on the R41 fix the
+      # sweep printed OK with FIVE entries stale. The sentence described a gate the code did not
+      # have. The checks exist now, and the same plants are what demonstrate them.
       - name: The two TREEQL readings still agree everywhere they are not declared to differ
         run: python test/sweep_treeql.py
       - name: Runner and mutant harness unit tests
