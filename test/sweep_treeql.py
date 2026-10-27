@@ -220,6 +220,25 @@ IR_CASES = [
     # true, so it would add a passing case and no coverage of the failure.
     ("k12 unpaired double quote across a separator, the multi-part preimage",
      "[{attr: 'a = \"b', \"where\": 'c = \"d'}]"),
+    # ---- THE DOCUMENTED COMMA LIMIT, AS A CASE. `b09` below carries this exact text by hand, and
+    # the EXACT line said nothing about it: b09 is admitted into the denominator on the PYTHON's IR
+    # as the witness, and that witness is the three-clause reading, which the CONSTRUCTOR cannot
+    # build. Printing a non-canonical witness reproduces the text, so the case was admitted and
+    # scored `sql == py` -- both readings take the same wrong reading, so it passed. A differential
+    # cannot see a defect its readings share, and this is a live instance of the SHARED RULES note
+    # above. Driven from family A, the IR comes from the constructor and the failure is counted.
+    #
+    # AND THE TEXT IS NOT A COLLISION -- MEASURED, under duckdb 1.5.5:
+    #     tree_steps([{type: 'x', "where": 'a = 1, PSEUDO ''p'''}])  prints
+    #       (TYPE 'x', WHERE a = 1, PSEUDO 'p')          <- this case's text
+    #     tree_steps([{type: 'x', "where": 'a = 1', pseudo: 'p'}])   prints
+    #       (TYPE 'x', PSEUDO 'p', WHERE a = 1)          <- DIFFERENT BYTES
+    # `pseudo` is slot 5 and `where` slot 6, so the printer emits PSEUDO FIRST and the three-clause
+    # IR cannot print this text. Among constructor-accepted IR the text has exactly ONE preimage --
+    # this one -- so a reader CAN choose, and the parse that returns a `pseudo` node the original
+    # never had is a WRONG parse rather than one horn of an ambiguity.
+    ("k13 where, continuation opens PSEUDO after a TYPE clause -- b09's one constructible preimage",
+     "[{type: 'x', \"where\": 'a = 1, PSEUDO ''p'''}]"),
 ]
 
 # ----------------------------------------------------------------------------------------------
