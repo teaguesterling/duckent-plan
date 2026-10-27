@@ -237,9 +237,11 @@ SPEC = {
          " <> len(list_filter(COALESCE((sem).predicate, []), lambda x: (x).prefix IS NULL))", 1)]),
 
     # --- Task 8 (M-LANG): the first two mutants that point at sql/10_treeql.sql. Until this task
-    # --- no mutant named that file at all -- `grep -c 10_treeql` over the mutants gate's output
-    # --- answered 0 -- so the gate was mute about the parser Task 7 registered. One mutant per
-    # --- half of what the parser is: the TOKENIZER, and the canonical NUMBERING.
+    # --- no mutant named that file at all -- MEASURED over the DECLARATIONS: this SPEC, the
+    # --- manifest, and all 49 .sql files beside it each answered 0 for `grep -c 10_treeql`. Not
+    # --- over the gate's OUTPUT, which cannot see the property either way. So the gate was mute
+    # --- about the parser Task 7 registered. One mutant per half of what the parser is: the
+    # --- TOKENIZER, and the canonical NUMBERING.
     "MN32": ("sql/10_treeql.sql", ["tree_treeql_split_parts"], [
         ("                      (SELECT tree_treeql_quote_mask(s) AS qmask)),",
          "                      -- the mutation: the scan reads the TEXT and not the quote mask, so\n"

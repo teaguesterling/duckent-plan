@@ -316,9 +316,12 @@
   # SIBLING_ORDER governs instead of raising. Verified individually against both suites.
 
   # --- Task 8 (M-LANG): the first two mutants that point at sql/10_treeql.sql. At the task's BASE
-  # --- the gate exited 0 with `grep -c 10_treeql` over its output answering 0 -- every mutant named
-  # --- another file -- so Task 7's gate could not speak to the parser it had just registered. One
-  # --- mutant per half of what the parser is: the TOKENIZER and the canonical NUMBERING.
+  # --- no mutant named that file -- MEASURED over the DECLARATIONS: `grep -c 10_treeql` answered 0
+  # --- for regen.py's SPEC, 0 for this manifest, and 0 summed over all 49 .sql files here. (Not
+  # --- over the GATE's output: run_mutants.py never prints a mutant's source file, so that figure
+  # --- reads 0 whether the gap is open or closed, and the task's report retires it as evidence.)
+  # --- So Task 7's gate could not speak to the parser it had just registered. One mutant per half
+  # --- of what the parser is: the TOKENIZER and the canonical NUMBERING.
   # ---
   # --- IDS. MN32 and MN33 are the next free ids. MN01-MN31 are declared, and the six with no .sql
   # --- file are NOT free: MN09/MN10/MN11/MN16/MN23 are deferred and MN20 is retired, declared in
@@ -346,8 +349,10 @@
     which files name the macro. 28 files, 1832 assertions, 9 failures, and all nine are in
     48_treeql_parse.test. No other file reaches tree_treeql_split_parts at all, because its only
     callers are tree_treeql_split and tree_parse_treeql and 48 is the only suite that calls either.
-    The front-end dispatch that would give another suite a path to it is the extension's, and does
-    not exist yet (see Task 8 Step 6).
+    The front-end dispatch that would give another suite a path to it is the extension's. INFERRED
+    that it does not exist yet, from the design spec section 9 and not from that repository, which
+    this task read no file of -- and section 9's plan-repo half has since gone stale, so treat its
+    extension half as a claim to check too (see Task 8 Step 6).
 - id: MN33
   file: MN33_clauses_after_groups.sql
   what: a step's parts are numbered GROUPS FIRST and clauses second, at all three assembly levels,
