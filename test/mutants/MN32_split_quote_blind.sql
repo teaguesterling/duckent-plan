@@ -59,11 +59,25 @@
 -- after.
 --
 -- WHAT THIS DOES NOT REACH, stated so the fix is not read as wider than it is: a raw body whose
--- top-level comma is enclosed by NOTHING. `(WHERE a = 1, b = 2)` still splits into two parts and
--- still refuses. That shape is NOT reachable from a legal predicate -- the record below the
--- documented comma limit measures that a bare top-level comma is a DuckDB syntax error -- so the
--- printer cannot emit it from a WHERE body the host door accepted. test/sweep_treeql.py carries it
--- as a declared divergence rather than leaving it to memory.
+-- top-level comma is enclosed by NOTHING. `(WHERE a = 1, b = 2)` still comes apart HERE -- this
+-- macro cuts on every unenclosed depth-0 comma, measured:
+--
+--     tree_treeql_split_parts('WHERE a = 1, b = 2', ',')  ->  'WHERE a = 1' and 'b = 2'
+--
+-- and the TEXT is nonetheless ACCEPTED, because tree_treeql_clause_parts puts a raw body's own
+-- separators back by SPAN after this split has run. Measured at this commit, duckdb 1.5.5:
+--
+--     tree_treeql_clause_parts('WHERE a = 1, b = 2')  ->  ONE part, the whole body
+--     tree_parse_treeql('(WHERE a = 1, b = 2)')       ->  one `where` clause, value `a = 1, b = 2`
+--     tree_selector_to_treeql(that)                   ->  `(WHERE a = 1, b = 2)`, byte-identical
+--
+-- THE SENTENCE THAT STOOD HERE SAID THE OPPOSITE, and both halves were false: "still splits into
+-- two parts and still refuses ... test/sweep_treeql.py carries it as a declared divergence". That
+-- shape is `b55`, CLOSED in fix round 2 by tree_treeql_clause_parts -- a fix that touched this
+-- same file and left this header standing behind it -- and DIVERGENT now holds exactly one entry,
+-- `b57`. The reachability argument it rested on ("not reachable from a legal predicate") is still
+-- true about SQL validity and was never the point: EXACT quantifies over the printer's image, not
+-- over bodies that are legal host SQL.
 --
 -- THE OTHER HALF OF THE SPLITTER'S BLIND SPOT IS NOW CLOSED TOO, and the paragraph that stood
 -- here is withdrawn rather than deleted, because it was wrong in a way worth keeping. It said:

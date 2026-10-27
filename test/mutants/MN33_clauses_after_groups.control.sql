@@ -425,10 +425,13 @@ prob AS (
   -- CANNOT REJECT PRINTER OUTPUT -- but NOT for the reason this comment carried until d4dd0da.
   -- The old reason was: the printer emits '(' and ')' only as a matched pair, and a value's own
   -- parenthesis is inside a literal, where tree_treeql_depths does not count it. That second
-  -- half was MEASURED FALSE. tree_treeql_depths decides "inside a literal" by PARITY, and a
-  -- WHERE or ATTR body is raw host SQL, so one unpaired apostrophe in it flips the scanner and
-  -- makes it skip parentheses that are REAL. TWO such bodies sum to an EVEN count, which is why
-  -- the odd-quote stand-down does not catch it. Printer output in that shape was refused here.
+  -- half was MEASURED FALSE. tree_treeql_depths DECIDED "inside a literal" by PARITY then, and a
+  -- WHERE or ATTR body is raw host SQL, so one unpaired apostrophe in it flipped the scanner and
+  -- made it skip parentheses that are REAL. TWO such bodies sum to an EVEN count, which is why
+  -- the odd-quote stand-down did not catch it. Printer output in that shape was refused here.
+  -- PAST TENSE SINCE R41: tree_treeql_depths reads tree_treeql_quote_mask, so it knows `'...'`
+  -- and `"..."` as regions and no longer counts parity at all. The arm's safety still rests on
+  -- the stand-down below rather than on the scan, which is why the paragraph stays.
   --
   -- WHAT MAKES THE ARM SAFE NOW is tree_treeql_balanced standing down on untrusted quoting: it
   -- answers true unless tree_treeql_quotes_trusted(txt) holds, which needs an even quote count

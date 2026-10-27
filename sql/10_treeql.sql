@@ -155,11 +155,25 @@ CREATE OR REPLACE MACRO tree_treeql_quote_mask(s) AS
 -- after.
 --
 -- WHAT THIS DOES NOT REACH, stated so the fix is not read as wider than it is: a raw body whose
--- top-level comma is enclosed by NOTHING. `(WHERE a = 1, b = 2)` still splits into two parts and
--- still refuses. That shape is NOT reachable from a legal predicate -- the record below the
--- documented comma limit measures that a bare top-level comma is a DuckDB syntax error -- so the
--- printer cannot emit it from a WHERE body the host door accepted. test/sweep_treeql.py carries it
--- as a declared divergence rather than leaving it to memory.
+-- top-level comma is enclosed by NOTHING. `(WHERE a = 1, b = 2)` still comes apart HERE -- this
+-- macro cuts on every unenclosed depth-0 comma, measured:
+--
+--     tree_treeql_split_parts('WHERE a = 1, b = 2', ',')  ->  'WHERE a = 1' and 'b = 2'
+--
+-- and the TEXT is nonetheless ACCEPTED, because tree_treeql_clause_parts puts a raw body's own
+-- separators back by SPAN after this split has run. Measured at this commit, duckdb 1.5.5:
+--
+--     tree_treeql_clause_parts('WHERE a = 1, b = 2')  ->  ONE part, the whole body
+--     tree_parse_treeql('(WHERE a = 1, b = 2)')       ->  one `where` clause, value `a = 1, b = 2`
+--     tree_selector_to_treeql(that)                   ->  `(WHERE a = 1, b = 2)`, byte-identical
+--
+-- THE SENTENCE THAT STOOD HERE SAID THE OPPOSITE, and both halves were false: "still splits into
+-- two parts and still refuses ... test/sweep_treeql.py carries it as a declared divergence". That
+-- shape is `b55`, CLOSED in fix round 2 by tree_treeql_clause_parts -- a fix that touched this
+-- same file and left this header standing behind it -- and DIVERGENT now holds exactly one entry,
+-- `b57`. The reachability argument it rested on ("not reachable from a legal predicate") is still
+-- true about SQL validity and was never the point: EXACT quantifies over the printer's image, not
+-- over bodies that are legal host SQL.
 --
 -- THE OTHER HALF OF THE SPLITTER'S BLIND SPOT IS NOW CLOSED TOO, and the paragraph that stood
 -- here is withdrawn rather than deleted, because it was wrong in a way worth keeping. It said:
@@ -350,14 +364,15 @@ CREATE OR REPLACE MACRO tree_treeql_depths(s) AS (
     FROM chars)
   SELECT CAST(list(d ORDER BY i) AS INTEGER[]) FROM depthed);
 
--- Does the text consist of ONE parenthesised group? True when the first character is '(' and the
--- '(' it opens CLOSES AT THE LAST CHARACTER -- which is what the old first-and-last-character test
--- only looked like it asked. `list_position` finds the first position where the depth returns to
--- 0, and that position must be the end.
+-- THE BLOCK THAT STOOD HERE DESCRIBED A DIFFERENT MACRO, and it is removed rather than reworded.
+-- It documented tree_treeql_wrapped -- "`list_position` finds the first position where the depth
+-- returns to 0", "COALESCE to FALSE, not to NULL" -- which has no bearing on tree_treeql_quotes_even
+-- below: that macro has no list_position, no parentheses test, and COALESCEs to TRUE. `001ea6e`
+-- wrote the header above tree_treeql_wrapped and `5cb9618` spliced quotes_even in beneath it
+-- without moving it, with no separator line either. The live copy is where it belongs, above
+-- tree_treeql_wrapped; its last three lines were byte-identical to the ones there, so there was no
+-- second thing being said here.
 --
--- COALESCE to FALSE, not to NULL: a NULL here would make every CASE that reads it return NULL,
--- and the caller would get a selector of NULL instead of a refusal. `(TYPE 'a'` never returns to
--- depth 0, so list_position answers NULL for exactly the input this test exists to reject.
 -- WHEN THE QUOTE COUNT IS ODD, THE DEPTH SCAN IS NOT EVIDENCE, and this is the correction to a
 -- defect this task shipped and then measured. The scan decides "inside a quote" by PARITY, which
 -- assumes every `'` is a TREEQL literal delimiter. A WHERE body breaks that assumption: the
@@ -373,8 +388,13 @@ CREATE OR REPLACE MACRO tree_treeql_depths(s) AS (
 -- refusal that rejects printer output is a defect and not a gate, so the three rules that count
 -- quotes all stand down when the parity is odd. An E-string, `E'it\'s'`, is the same shape.
 --
--- Declared once, read at three sites, because three rules standing down on three different
--- conditions is how the defect would come back in one of them.
+-- Declared once and read at TWO sites -- tree_treeql_quotes_trusted below, and the `unterminated`
+-- arm of the refusal set -- because two rules standing down on two different conditions is how the
+-- defect would come back in one of them. The count said THREE: measured, `grep -n` over this file
+-- answers two code readers, at tree_treeql_quotes_trusted and in tree_parse_treeql's refusal set.
+-- `wrapped` and `balanced` are the third and fourth rules and they stand down TRANSITIVELY, through
+-- tree_treeql_quotes_trusted, which is what the gloss above means by "the three rules that count
+-- quotes all stand down" -- that sentence is still true; only the site count was wrong.
 CREATE OR REPLACE MACRO tree_treeql_quotes_even(s) AS
   COALESCE((length(s) - length(replace(s, '''', ''))) % 2 = 0, true);
 
@@ -391,6 +411,13 @@ CREATE OR REPLACE MACRO tree_treeql_quotes_even(s) AS
 --       4 quotes -> even -> trusted -> tree_treeql_depths reaches -2 -> refused "unbalanced"
 --     (TYPE 'a', HAS ( DESCENDANT (TYPE 'b', WHERE "o'k" = 1) ))
 --       5 quotes -> odd  -> stands down -> accepted
+--
+-- BOTH LINES ARE THE PARITY RULE'S ARITHMETIC AND NOT THIS FILE'S, which the frame above says and
+-- the present tense hides. Under the macros as they now stand -- the mask since R41, the second
+-- term in tree_treeql_quotes_trusted since R42 -- the first text measures `list_min(depths) = 0`,
+-- `quotes_even` TRUE but `quotes_trusted` FALSE, `balanced` TRUE, and it parses and reprints
+-- byte-identically. The `-2` and the "even -> trusted" step are both properties of the rejected
+-- rule; they are kept because the history of the claim is the point of this block.
 --
 -- Every shape in the first family is reprint-TRUE at BASE and was refused here, so the NORMALISING
 -- theorem stopped holding on printer output. That is what makes it a regression and not a limit.
@@ -1454,10 +1481,13 @@ prob AS (
   -- CANNOT REJECT PRINTER OUTPUT -- but NOT for the reason this comment carried until d4dd0da.
   -- The old reason was: the printer emits '(' and ')' only as a matched pair, and a value's own
   -- parenthesis is inside a literal, where tree_treeql_depths does not count it. That second
-  -- half was MEASURED FALSE. tree_treeql_depths decides "inside a literal" by PARITY, and a
-  -- WHERE or ATTR body is raw host SQL, so one unpaired apostrophe in it flips the scanner and
-  -- makes it skip parentheses that are REAL. TWO such bodies sum to an EVEN count, which is why
-  -- the odd-quote stand-down does not catch it. Printer output in that shape was refused here.
+  -- half was MEASURED FALSE. tree_treeql_depths DECIDED "inside a literal" by PARITY then, and a
+  -- WHERE or ATTR body is raw host SQL, so one unpaired apostrophe in it flipped the scanner and
+  -- made it skip parentheses that are REAL. TWO such bodies sum to an EVEN count, which is why
+  -- the odd-quote stand-down did not catch it. Printer output in that shape was refused here.
+  -- PAST TENSE SINCE R41: tree_treeql_depths reads tree_treeql_quote_mask, so it knows `'...'`
+  -- and `"..."` as regions and no longer counts parity at all. The arm's safety still rests on
+  -- the stand-down below rather than on the scan, which is why the paragraph stays.
   --
   -- WHAT MAKES THE ARM SAFE NOW is tree_treeql_balanced standing down on untrusted quoting: it
   -- answers true unless tree_treeql_quotes_trusted(txt) holds, which needs an even quote count
