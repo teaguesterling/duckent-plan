@@ -762,11 +762,39 @@ class Parser:
         # never go NEGATIVE (`TYPE 'a')` closes a group nobody opened) and it must END at zero
         # (`(TYPE 'a'` leaves one open). A single `= 0` test at the end accepts `)TYPE 'a'(`.
         #
-        # NO STAND-DOWN HERE, and that is the difference from tree_treeql_balanced. That macro
-        # answers TRUE whenever the quoting cannot be trusted, because its scan reads every `'` as
-        # a delimiter and a raw body's apostrophe makes it skip parentheses that are REAL -- a
-        # refusal built on it would reject printer output. This scan reads `"..."` as well, so it
-        # does not lose its place on `WHERE "o'k" = 1` and needs no exemption.
+        # NO STAND-DOWN HERE, and THAT IS A DEFECT OF THIS FILE, not a difference worth having.
+        # It refuses PRINTER OUTPUT. MEASURED, duckdb 1.5.5:
+        #
+        #     tree_steps([{"where": 'a = 1)'}])  prints  (WHERE a = 1))
+        #       macros: parsed, one `where` clause of `a = 1)`, EXACT true
+        #       here:   TreeqlError `unbalanced parentheses`
+        #     tree_steps([{attr: 'a = 1)'}])     prints  (ATTR a = 1))     the same, both ways
+        #
+        # A raw body is host SQL passed through verbatim, so it may legitimately carry an unmatched
+        # parenthesis, and then the printer emits text whose parentheses do not balance. "The
+        # printer is the specification. A refusal that rejects printer output is a defect" -- the
+        # Global Constraint. The macros honour it; this reading does not.
+        #
+        # THE REASON THAT STOOD HERE WAS FALSE IN BOTH HALVES, and acting on it is what produced
+        # the defect. It said tree_treeql_balanced stands down "because its scan reads every `'` as
+        # a delimiter", and that this scan "reads `"..."` as well ... and needs no exemption". The
+        # macro's scan has read tree_treeql_quote_mask since R41, so quoting is not the cause --
+        # and decisively, the stand-down is not about quoting AT ALL: a raw body can hold an
+        # unmatched parenthesis with no quote anywhere in the text. So this reading DOES need the
+        # exemption, and concluded otherwise from a cause that had already been superseded.
+        #
+        # WHY THE GUARD IS NOT HERE YET, because an unlanded fix with no reason is worse than a
+        # named one. The guard the fix wants is `self._no_raw_body(text) and ...`, borrowing the
+        # predicate that already guards the `unterminated` check below. The coordinator's condition
+        # for borrowing it was that it AGREE with tree_treeql_quotes_trusted across the sweep
+        # corpus, and MEASURED it does not: 121 of 123 texts agree, and `TYPE 'a` and `TYPE 'it''s`
+        # disagree, because quotes_trusted is `quotes_even AND no_raw_body` and those two texts
+        # have an ODD quote count with no raw body. The disagreement cannot be observed at THIS
+        # site -- both texts have an all-zero paren depth, so this test cannot fire on either, and
+        # both readings answer `unterminated quoted value` on them -- but the condition was a hard
+        # stop and the predicate really is not the same rule, so the ruling is the coordinator's.
+        # test/sweep_treeql.py drives no case in this class yet, by the same decision: a case with
+        # no fix behind it would leave the gate red.
         if pdepth and (min(pdepth) < 0 or pdepth[-1] != 0):
             self.fault("unbalanced", text)
 
