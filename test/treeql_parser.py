@@ -422,25 +422,53 @@ class Parser:
         followed by a clause keyword is read as two parts. `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` is
         therefore three clauses and not a WHERE body of `a = 1, PSEUDO 'p'` -- the documented limit
         in test/sql/48_treeql_parse.test, and the reading the macros take as well, so the two agree
-        on it. The text is genuinely ambiguous and the printer emits that same text for both IRs.
+        on it. That whole class is declared as KNOWN EXACT FAILURES in test/sweep_treeql.py.
+
+        AND WHERE IT DECLINES TO GUESS: a raw group absorbs its continuations only when the NEXT
+        group opens a GROUP keyword, or when there is no next group. If the next group opens a
+        CLAUSE keyword the parts stay separate, so `(WHERE a = 1, b = 2, TYPE c)` REFUSES rather
+        than returning a two-clause IR the printer would never emit in that order. A silent wrong
+        parse replacing a loud refusal is the worse of the two failures.
+
+        THIS RULE IS SHARED WITH THE MACROS, and that is a cost this file should name rather than
+        hide: see the SHARED RULES note in test/sweep_treeql.py. A differential cannot see a defect
+        its two readings share, and the keyword-continuation class above is one they do share.
         """
         inq, _pd, sdepth, _ol = _scan(body)
         seps = [i for i, c in enumerate(body) if c == "," and not inq[i] and sdepth[i] == 0]
-        parts, start = [], 0
-        for i in seps:
-            frag = body[start:i]
-            lead = _lead_word(frag.strip(WS))
-            kind = CLAUSE_KEYWORDS.get(lead.upper()) if lead else None
-            if kind in RAW_BODY_KINDS:
-                nxt = _lead_word(body[i + 1:].strip(WS))
-                opens = bool(nxt) and (nxt.upper() in CLAUSE_KEYWORDS
-                                       or nxt.upper() in GROUP_KEYWORDS)
-                if not opens:
-                    continue
-            parts.append(frag.strip(WS))
-            start = i + 1
-        parts.append(body[start:].strip(WS))
-        return parts
+        marks = [-1] + seps + [len(body)]
+        spans = [(marks[j] + 1, marks[j + 1]) for j in range(len(marks) - 1)]
+
+        def props(lo, hi):
+            lead = _lead_word(body[lo:hi].strip(WS))
+            u = lead.upper() if lead else None
+            return (u is not None and (u in CLAUSE_KEYWORDS or u in GROUP_KEYWORDS),
+                    u is not None and CLAUSE_KEYWORDS.get(u) in RAW_BODY_KINDS,
+                    u is not None and u in GROUP_KEYWORDS)
+
+        info = [(lo, hi) + props(lo, hi) for lo, hi in spans]
+        gid, g = [], 0
+        for n, it in enumerate(info):
+            if n == 0 or it[2]:
+                g += 1
+            gid.append(g)
+        head = {}
+        for n, gg in enumerate(gid):
+            head.setdefault(gg, info[n])
+        out = []
+        for gg in sorted(head):
+            members = [n for n, x in enumerate(gid) if x == gg]
+            nxt = head.get(gg + 1)
+            # A RAW group absorbs its continuations UNLESS the NEXT group opens a CLAUSE keyword.
+            # There the text is ambiguous and absorbing it would turn a loud refusal into a silent
+            # wrong parse -- which is the worse of the two failures. A GROUP keyword after a raw
+            # body is legitimate, because the printer puts groups after clauses.
+            tail_ok = nxt is None or nxt[4]
+            if head[gg][3] and tail_ok:
+                out.append(body[info[members[0]][0]:info[members[-1]][1]].strip(WS))
+            else:
+                out.extend(body[info[n][0]:info[n][1]].strip(WS) for n in members)
+        return out
 
     @staticmethod
     def read_clause(part):
@@ -561,12 +589,21 @@ class Parser:
                     continue
                 groups.append((path, gbody, part))
                 continue
-            # neither a clause nor a group: the catch-all, which names the fragment and claims
-            # nothing about why. An unknown leading word is classified below instead.
-            if uw is not None:
-                self.classify_unknown(part, uw, gbody, gtail)
-            else:
-                self.fault("generic", part)
+            # NEITHER A CLAUSE NOR A GROUP: the catch-all, which names the fragment and claims
+            # nothing about why.
+            #
+            # AND IT STAYS GENERIC EVEN WHEN THE PART HAS AN UNKNOWN LEADING WORD. This used to
+            # call classify_unknown here, giving `(WHERE a = 1, b = 2, TYPE c)` the refusal
+            # `unknown clause keyword b` where the macros say `cannot read b = 2`. The macros are
+            # right and this was wrong: their comb/kw arms read `uws`, which collects the unknown
+            # leading word of a STEP at each of the three levels, never of a clause-list PART. The
+            # distinction is deliberate there -- a step's leading word sits in a combinator slot,
+            # so naming it as a misspelled combinator or clause keyword points at something; a
+            # part inside a clause list has no such slot, and `cannot read <fragment>` is the
+            # honest answer. MEASURED: this divergence was invisible until fix round 3 added a case
+            # whose unreadable part HAS a leading word -- `42` and the empty part, the two shapes
+            # that reached here before, have none.
+            self.fault("generic", part)
         return groups
 
     @staticmethod

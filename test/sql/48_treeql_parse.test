@@ -2370,14 +2370,141 @@ SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{attr: 'a = "b,c"'}
 ----
 true
 
-# THE BOUNDARY, so a later widening of the region rule has to decide about it on purpose: a LONE
-# double quote is NOT a region. The `"..."` branch of the mask pattern requires its closing quote,
-# so an unpaired `"` stays one ordinary character -- without that, this text's closing parenthesis
-# would be swallowed and printer output would be refused again.
+# THE BOUNDARY, and the sentence that stood here was FALSE for want of one qualification. It read:
+# "a LONE double quote is NOT a region ... so an unpaired `"` stays one ordinary character". True of
+# a text holding ONE `"`, which is all this record exercises; FALSE as a property of "an unpaired
+# `"`", because THE PAIRING IS GLOBAL and two unpaired ones in two different raw bodies pair with
+# each other. The claim and its record were the same width, which is why nothing was red: this was
+# the class's only double-quote boundary case. The records below widen it.
 query I
 SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'a = "b'}])))
      = tree_steps([{"where": 'a = "b'}]);
 ----
+true
+
+# ==============================================================================================
+# TWO UNPAIRED DOUBLE QUOTES -- A COLLISION CLASS, NOT A FIXABLE MISREAD
+#
+# WHAT HAPPENS. tree_treeql_quote_mask pairs `"` globally, so an unpaired `"` in one raw body pairs
+# with an unpaired `"` in another and the mask blanks everything between them -- the real `, `
+# separator and any group parentheses included. That is the mechanism this file documents for the
+# APOSTROPHE in its R42 block: "TWO odd bodies sum to an EVEN total, the stand-down never engages,
+# and the masked quotes hide the parentheses". The fix for the apostrophe reproduced the
+# apostrophe's own ambiguity in the double quote.
+#
+# WHY IT IS NOT CALLED A MISREAD, and this had to be measured rather than argued: EVERY shape in the
+# class is a COLLISION. Two IRs the ordinary constructor builds print BYTE-IDENTICAL text, so EXACT
+# can hold for at most ONE of them and nothing in the text distinguishes them. MEASURED over five
+# shapes -- attr+where, two top-level steps, step+HAS, step+NOT, three unpaired quotes -- the two
+# preimages print the same text for ALL FIVE:
+#
+#     at 02931a3   EXACT on the 1-part preimage FALSE, on the multi-part preimage TRUE
+#     now          EXACT on the 1-part preimage TRUE,  on the multi-part preimage FALSE
+#
+# EXACT did not disappear. It MOVED between preimages, which is the only thing it can do on a
+# collision -- and the APOSTROPHE already took the 1-part branch for these same five shapes at
+# 02931a3, so what changed is that the double quote stopped DISAGREEING with the apostrophe. The
+# branch taken is F3's own: the one-part reading of printer output.
+#
+# THE RECORDS BELOW PIN BOTH SIDES, which the single boundary record above could not do: the text is
+# EXACT-true for the ONE-part IR and EXACT-FALSE for the multi-part IR that prints the same bytes.
+# If either moves, the branch choice has moved and somebody has to re-decide it on purpose.
+# ==============================================================================================
+
+# the ONE-part preimage: EXACT holds.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{attr: 'a = "b, WHERE c = "d'}])))
+     = tree_steps([{attr: 'a = "b, WHERE c = "d'}]);
+----
+true
+
+# ...and the MULTI-part preimage prints the SAME BYTES, so EXACT cannot also hold for it. Both rows
+# are needed: the first alone reads as "this works", the pair says "this is a collision, and here is
+# the branch".
+query I
+SELECT ok FROM (
+  SELECT 1 AS i, tree_selector_to_treeql(tree_steps([{attr: 'a = "b', "where": 'c = "d'}]))
+                 = tree_selector_to_treeql(tree_steps([{attr: 'a = "b, WHERE c = "d'}])) AS ok
+  UNION ALL
+  SELECT 2, tree_parse_treeql(tree_selector_to_treeql(
+              tree_steps([{attr: 'a = "b', "where": 'c = "d'}])))
+            = tree_steps([{attr: 'a = "b', "where": 'c = "d'}])
+) ORDER BY i;
+----
+true
+false
+
+# THE SAME COLLISION ACROSS TWO TOP-LEVEL STEPS, where the masked span swallows a NEWLINE and a pair
+# of group parentheses rather than a comma. Separate from the record above because the span crosses
+# a different kind of boundary, and a reader should not have to infer that it does.
+query I
+SELECT tree_selector_to_treeql(tree_steps([{"where": 'a = "b'}, {"where": 'c = "d', comb: 'desc'}]))
+     = tree_selector_to_treeql(tree_steps([{"where": 'a = "b)' || chr(10)
+                                                     || 'DESCENDANT (WHERE c = "d'}]));
+----
+true
+
+# AND THE CONTROL THAT KEEPS THE CLASS NARROW: two unpaired `"` in ONE raw body are not a collision
+# and round-trip exactly, because there is no separator between them for the mask to blank.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'a = "b c = "d'}])))
+     = tree_steps([{"where": 'a = "b c = "d'}]);
+----
+true
+
+# ==============================================================================================
+# ROW B -- A REFUSAL THAT HAD BECOME A SILENT WRONG PARSE, RESTORED
+#
+# `(WHERE a = 1, b = 2, TYPE c)` is printer output of ONE IR and only one: the two-clause reading
+# would print `(TYPE 'c', WHERE a = 1, b = 2)`, because the constructor emits clauses in SLOT order
+# with `type` before `where` and a type value through tree_sql_lit. MEASURED -- so unlike the
+# double-quote class above this is NOT a collision, and EXACT is genuinely owed on it.
+#
+# WHAT WENT WRONG. At 02931a3 this REFUSED (`cannot read b = 2`). b55's raw-body merge then absorbed
+# `b = 2` into the where body and stopped at `TYPE c`, producing a two-clause IR the printer would
+# never emit in that order -- a loud refusal turned into a SILENT WRONG PARSE, which this task's own
+# commit calls "the worse of the two failures". Nothing was red, because no record pinned the shape.
+#
+# THE FIX: a raw group absorbs its continuations UNLESS the NEXT group opens a CLAUSE keyword. There
+# the text is ambiguous and the merge would be guessing, so the parts stay separate and `b = 2` is
+# refused by name as it was before. A group keyword after a raw body is fine -- the printer puts
+# groups after clauses -- so `(WHERE a = 1, b = 2, HAS ( ... ))` still merges.
+#
+# EXACT IS STILL FALSE HERE, and the record says refusal rather than EXACT deliberately: making it
+# EXACT needs the merge to know that `where` is the LAST clause slot, and the registry has no order
+# column. That is the keyword-continuation class, declared in test/sweep_treeql.py. A refusal is the
+# honest answer until that is decided.
+# ==============================================================================================
+statement error
+SELECT tree_parse_treeql('(WHERE a = 1, b = 2, TYPE c)');
+----
+tree_parse_treeql: cannot read b = 2
+
+# ...and reached through the PRINTER, so the shape is not a matter of my transcription.
+statement error
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{"where": 'a = 1, b = 2, TYPE c'}])));
+----
+tree_parse_treeql: cannot read b = 2
+
+# THE FOUR NEIGHBOURS THAT MUST NOT MOVE WITH IT. b55 itself still merges; a group keyword after a
+# raw body still merges; the documented comma limit still reads as three clauses; and a raw body
+# preceded by a real clause still merges.
+query I
+SELECT ok FROM (
+  SELECT 1 AS i, len(tree_parse_treeql('(WHERE a = 1, b = 2)')) = 3 AS ok
+  UNION ALL
+  SELECT 2, len(tree_parse_treeql('(WHERE a = 1, b = 2, HAS ( DESCENDANT (TYPE ''c'') ))')) = 6
+  UNION ALL
+  SELECT 3, len(tree_parse_treeql('(TYPE ''x'', WHERE a = 1, PSEUDO ''p'')')) = 5
+  UNION ALL
+  SELECT 4, len(tree_parse_treeql('(TYPE ''t'', WHERE a = 1, b = 2)')) = 4
+) ORDER BY i;
+----
+true
+true
+true
 true
 
 # THE CHAIN READER WAS WRONG TOO, and at its own interface rather than only through the parser.

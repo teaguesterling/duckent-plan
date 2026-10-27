@@ -66,9 +66,39 @@ CREATE OR REPLACE MACRO tree_treeql_ws() AS ' ' || chr(9) || chr(10) || chr(12) 
 -- TWO DETAILS IN THE PATTERN CARRY BEHAVIOUR, and both are deliberate:
 --   * `(?:''|$)` lets an UNTERMINATED literal run to the end of the text, which is exactly what
 --     the parity scan did. `TYPE 'a` therefore still refuses as `unterminated quoted value`.
---   * the `"..."` branch REQUIRES its closing quote, so a LONE `"` falls through to `.` and stays
---     one ordinary character. That is what keeps `(WHERE a = "b)` round-tripping -- MEASURED; a
---     branch that accepted an unterminated `"` would swallow the closing parenthesis.
+--   * the `"..."` branch REQUIRES its closing quote, so a `"` WITH NO PARTNER ANYWHERE IN THE TEXT
+--     falls through to `.` and stays one ordinary character. That is what keeps `(WHERE a = "b)`
+--     round-tripping -- MEASURED; a branch that accepted an unterminated `"` would swallow the
+--     closing parenthesis.
+--
+--     THAT QUALIFICATION WAS MISSING AND THE SENTENCE WAS FALSE WITHOUT IT. It read "so a LONE `"`
+--     falls through ... MEASURED", and it is measured only where the text holds ONE `"`. THE
+--     PAIRING IS GLOBAL: with an unpaired `"` in two different raw bodies the two pair with each
+--     other and the mask blanks everything between them -- real separators and group parentheses
+--     included. MEASURED, printer output from the ordinary constructor:
+--
+--         tree_steps([{attr: 'a = "b', "where": 'c = "d'}])
+--           prints  (ATTR a = "b, WHERE c = "d)   and the mask blanks  "b, WHERE c = "
+--
+--     That is the mechanism this repo already documents for the APOSTROPHE -- "TWO odd bodies sum
+--     to an EVEN total, the stand-down never engages, and the masked quotes hide the parentheses"
+--     -- so the fix for the apostrophe reproduced the apostrophe's own ambiguity in the double
+--     quote.
+--
+--     WHAT IT COSTS, AND WHY IT IS NOT "FIXED", measured rather than argued. Every shape in the
+--     class is a COLLISION: two IRs the ordinary constructor builds print BYTE-IDENTICAL text, so
+--     EXACT can hold for at most ONE of them and no scan can choose between them. MEASURED over
+--     five shapes -- attr+where, two top-level steps, step+HAS, step+NOT, three strays -- the two
+--     preimages print the same text for ALL FIVE, and:
+--
+--         at 02931a3   EXACT on the 1-part preimage FALSE, on the multi-part preimage TRUE
+--         here         EXACT on the 1-part preimage TRUE,  on the multi-part preimage FALSE
+--
+--     So EXACT did not disappear; it MOVED between preimages, which is the only thing it can do on
+--     a collision. The APOSTROPHE already took the 1-part branch for these same five shapes at
+--     02931a3 -- measured -- so what this scan changed is that the double quote stopped disagreeing
+--     with the apostrophe. The branch taken is F3's: the one-part reading of printer output. The
+--     two-unpaired-quote records in test/sql/48_treeql_parse.test pin it from both sides.
 --
 -- THE PLACEHOLDER IS chr(1), chosen because it is none of the things any caller looks for: not a
 -- separator (`,` or a newline), not `(` `)` `[` `]` `{` `}`, not an identifier character, and not
@@ -928,6 +958,13 @@ CREATE OR REPLACE MACRO tree_treeql_opener_re() AS
      SELECT upper(keyword) AS kw FROM tree_catalog.clause_kinds
      UNION SELECT upper(g) FROM (SELECT unnest(tree_treeql_group_kinds()) AS g)));
 
+-- DOES THIS PART OPEN A GROUP? The group kinds only, from tree_treeql_group_kinds(), so no
+-- keyword is written here. Read by tree_treeql_clause_parts to tell a continuation that is
+-- genuinely more raw body from one that may be a clause the printer put after it.
+CREATE OR REPLACE MACRO tree_treeql_group_opener_re() AS
+  (SELECT '(?i)^(' || string_agg(upper(g), '|') || ')(\s|\(|$)'
+   FROM (SELECT unnest(tree_treeql_group_kinds()) AS g));
+
 -- A CLAUSE LIST'S PARTS: the comma split, with a RAW body's OWN separators put back. This is b55's
 -- fix, and it is the reader every clause-list site uses in place of tree_treeql_split_parts.
 --
@@ -975,16 +1012,23 @@ CREATE OR REPLACE MACRO tree_treeql_clause_parts(s) AS (
              FROM (SELECT unnest(tree_treeql_split_parts(s, ',')) AS x)),
   k AS (SELECT ord, part, lo, hi,
                ord = 1 OR regexp_matches(part, tree_treeql_opener_re()) AS opens,
-               COALESCE(regexp_matches(part, tree_treeql_raw_opener_re()), false) AS raw
+               COALESCE(regexp_matches(part, tree_treeql_raw_opener_re()), false) AS raw,
+               COALESCE(regexp_matches(part, tree_treeql_group_opener_re()), false) AS isgrp
         FROM p),
-  g AS (SELECT ord, part, lo, hi, opens, raw,
+  g AS (SELECT ord, part, lo, hi, raw, isgrp,
                sum(CASE WHEN opens THEN 1 ELSE 0 END) OVER (ORDER BY ord) AS gid
         FROM k),
-  r AS (SELECT ord, lo, hi, gid,
-               first_value(raw) OVER (PARTITION BY gid ORDER BY ord) AS graw
-        FROM g),
-  m AS (SELECT min(lo) AS lo, max(hi) AS hi
-        FROM r GROUP BY gid, CASE WHEN graw THEN 0 ELSE ord END),
+  -- one row per GROUP, carrying the properties of the part that OPENED it
+  sm AS (SELECT gid, min(ord) AS head FROM g GROUP BY gid),
+  hd AS (SELECT sm.gid, x.raw AS graw, x.isgrp AS ggrp
+         FROM sm JOIN g x ON x.gid = sm.gid AND x.ord = sm.head),
+  -- a raw group may absorb its continuations UNLESS the NEXT group opens a CLAUSE keyword. There
+  -- the text is ambiguous and absorbing would turn a loud refusal into a silent wrong parse.
+  dec AS (SELECT h.gid, h.graw, COALESCE(n.ggrp, true) AS tail_ok
+          FROM hd h LEFT JOIN hd n ON n.gid = h.gid + 1),
+  m AS (SELECT min(g.lo) AS lo, max(g.hi) AS hi
+        FROM g JOIN dec d ON d.gid = g.gid
+        GROUP BY g.gid, CASE WHEN d.graw AND d.tail_ok THEN 0 ELSE g.ord END),
   o AS (SELECT CAST(row_number() OVER (ORDER BY lo) AS INTEGER) AS ord,
                trim(s[lo:hi], tree_treeql_ws()) AS part
         FROM m)

@@ -22,6 +22,36 @@ THE TWO READINGS ARE ARCHITECTURALLY DIFFERENT, which is what makes the agreemen
 Neither is a transcription of the other, and the shapes where they disagree are listed in
 DIVERGENT below with the record that pins each one.
 
+SHARED RULES, AND WHAT THEY COST THIS INSTRUMENT. Read this before reading the numbers below.
+
+A differential is evidence because two independent readings can only agree by both being right.
+That argument weakens exactly as far as the two readings share a rule, and THREE TIMES in this
+task a fix gave them one:
+
+  * the QUOTE MASK. Both readings now treat `'...'` and `"..."` as regions and both pair them
+    globally, so an unpaired quote in two different raw bodies pairs across a real separator in
+    BOTH. MEASURED: before that fix the macros and this reading DISAGREED on five such shapes, and
+    the differential caught them; after it they AGREE, and it cannot.
+  * the RAW-BODY MERGE. Both put a raw body's own separators back by span, and both cut the body
+    when the continuation opens a clause keyword. The KNOWN_EXACT_FAILURES below are ten shapes
+    where they are wrong TOGETHER.
+  * the REFUSAL PRIORITY ORDER and the `min(fragment)` tie-break, transcribed rather than derived
+    -- which this file has always said, and which is the same cost in a smaller place.
+
+So the honest reading of a green run is: the two readings agree, AND where they share a rule that
+agreement is not independent evidence. What still carries weight is EXACT, because it compares a
+reading against an IR built by a third thing -- the constructor -- rather than against the other
+reading. That is why the EXACT line is printed separately from the agreement counts, why its
+independent half is reported apart from its construction-true half, and why KNOWN_EXACT_FAILURES
+exists at all: ten of the shapes below are cases where BOTH readings fail and nothing but EXACT
+can say so.
+
+THIS LIMIT IS NOT REMOVED AND CANNOT BE REMOVED BY THIS METHOD. Two readings that must agree on
+printer output will converge on a shared rule wherever the grammar is ambiguous, because there is
+only one right answer to converge on and the printer does not disambiguate. Naming it is the
+remedy available here; a second INDEPENDENT oracle -- the C++ front-end, when it exists -- is the
+remedy that is not.
+
 WHAT IS COMPARED, and the one place it is deliberately loose. For an accepted selector: every
 field of every row, node ids included, which is the comparison test/sql/38_css_lower.test makes
 for the css pair and the reason it is worth making -- a numbering that agreed on shape and not on
@@ -149,6 +179,19 @@ IR_CASES = [
      "[{type: 'a', has: [{\"where\": '\"a CHILD b\" = 1'}]}]"),
     ("a49 region holding a paren, inside a group",
      "[{type: 'a', has: [{\"where\": '\"a ) b\" = 1'}]}]"),
+    # ---- THE KEYWORD-CONTINUATION CLASS. Printer output whose raw body continues after a comma
+    # with text that OPENS a clause or group. These are KNOWN EXACT FAILURES, declared below in
+    # KNOWN_EXACT_FAILURES, and they are cases rather than prose so the EXACT line counts them.
+    ("k01 where, continuation opens TYPE", "[{\"where\": 'a = 1, TYPE b'}]"),
+    ("k02 where, continuation opens WHERE", "[{\"where\": 'a = 1, WHERE b'}]"),
+    ("k03 where, continuation opens CLASS", "[{\"where\": 'a = 1, CLASS x'}]"),
+    ("k04 where, continuation opens ID", "[{\"where\": 'a = 1, ID x'}]"),
+    ("k05 where, continuation opens PSEUDO", "[{\"where\": 'a = 1, PSEUDO p'}]"),
+    ("k06 where, continuation opens a LOWERCASE keyword", "[{\"where\": 'a = 1, type x'}]"),
+    ("k07 attr, continuation opens TYPE", "[{attr: 'a = 1, TYPE b'}]"),
+    ("k08 where, two continuations then a keyword", "[{\"where\": 'a = 1, b = 2, TYPE c'}]"),
+    ("k09 where, continuation opens HAS", "[{\"where\": 'a = 1, HAS ( TYPE ''b'' )'}]"),
+    ("k10 where, continuation opens NOT", "[{\"where\": 'a = 1, NOT ( TYPE ''b'' )'}]"),
 ]
 
 # ----------------------------------------------------------------------------------------------
@@ -327,6 +370,55 @@ DIVERGENT = {
 }
 
 
+# ----------------------------------------------------------------------------------------------
+# KNOWN EXACT FAILURES. Printer-output cases on which `parse(print(ir)) = ir` is FALSE and which
+# are NOT fixed. They are declared here, and they are CASES rather than a comment, so the EXACT
+# line counts them against the denominator instead of the project being able to say EXACT holds
+# while they fail.
+#
+# THE RULING THEY REST ON, stated by the coordinator in fix round 3 and the reason these are
+# counterexamples rather than exempt shapes:
+#
+#   EXACT quantifies over the PRINTER'S IMAGE: every text tree_selector_to_treeql can emit for IR
+#   the ordinary constructor accepts. Whether a raw body is executable host SQL is a DIFFERENT
+#   predicate and is not a term in either theorem.
+#
+# WHY THAT IS THE RIGHT SIDE and not merely the consistent one: the Global Constraint makes the
+# printer the specification and conditions nothing on a body's semantics -- the printer passes raw
+# bodies through without inspecting them. And the alternative is unimplementable HERE: narrowing
+# EXACT to "bodies that are legal host SQL" would need the sweep to decide SQL validity, which
+# needs the database that the second reading deliberately does not have. A qualification the
+# instrument cannot evaluate is an escape hatch, not a qualification. `b55` was first declared
+# under exactly that defence and then fixed, which rejected it in practice; this states it.
+#
+# THE CAUSE of every entry below is one thing: tree_treeql_clause_parts decides a part is a new
+# clause-list item by `tree_treeql_opener_re()`, so a raw body's continuation that BEGINS with a
+# clause or group keyword is read as a new item and the body is cut. Fixing it needs the merge to
+# know the SLOT ORDER of the clause kinds -- `where` is the last slot, so nothing but a group can
+# follow a WHERE clause in printer output -- and the registry has NO ORDER COLUMN, which
+# test/css_parser.py's own CLAUSE_SLOT exemption records from the other side.
+#
+# k08 IS NOT HERE and that is deliberate: it is the one shape in the class that REFUSES rather
+# than returning a wrong IR, restored in fix round 3 because a silent wrong parse replacing a loud
+# refusal is the worse of the two failures. It still fails EXACT, so it is declared, but its entry
+# says refusal.
+KNOWN_EXACT_FAILURES = {
+    "k01": "raw body cut at `, TYPE` -- slot order would be needed to know a clause cannot follow",
+    "k02": "raw body cut at `, WHERE`",
+    "k03": "raw body cut at `, CLASS`",
+    "k04": "raw body cut at `, ID`",
+    "k05": "raw body cut at `, PSEUDO`",
+    "k06": "raw body cut at a lowercase keyword -- the opener test is case-insensitive",
+    "k07": "an ATTR body cut the same way. Unlike the WHERE shapes this one is a COLLISION: "
+           "`(ATTR a = 1, TYPE b)`... attr is slot 4, so a later clause CAN follow it in printer "
+           "output, and both readings are printer output of different IR",
+    "k08": "REFUSES rather than returning a wrong IR -- restored in fix round 3. Still not EXACT",
+    "k09": "both readings REFUSE: the continuation opens a GROUP, and a group after a raw body is "
+           "legitimate, so the merge keeps it separate and the remainder reads as nothing",
+    "k10": "the same for NOT",
+}
+
+
 def rows_from_sql(con, text):
     """The SQL front-end's reading: a list of field tuples, or ('REFUSED', message)."""
     q = ("SELECT " + ", ".join(FIELDS) + " FROM (SELECT unnest(tree_parse_treeql("
@@ -440,6 +532,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--quick", action="store_true",
                     help="the printer-output cases only")
+    ap.add_argument("--both-refuse-audit", action="store_true",
+                    help="list every both-refuse case so a human can decide whether it is "
+                         "printer output -- the admission rule cannot decide it")
     ap.add_argument("--strict-frag", action="store_true",
                     help="compare the fragment in `cannot read <fragment>` too")
     args = ap.parse_args()
@@ -457,6 +552,10 @@ def main():
 
     counts = {"agree": 0, "both-refuse": 0, "diverge": 0}
     exact_sql = exact_py = exact_checked = 0
+    indep_sql = indep_py = indep_n = 0      # family A: scored against a SEPARATELY constructed IR
+    adm_sql = adm_n = 0                     # family B: admitted by the Python's own reprint
+    both_refuse_cases = []                  # for --both-refuse-audit
+    exact_fail = []                         # family-A cases where EXACT is FALSE for either side
     bad = []
     matched = {}            # label -> the signature actually observed, for every DIVERGING case
     agreed = set()          # labels that did NOT diverge, so a declaration for them is stale
@@ -472,8 +571,13 @@ def main():
         # second reading's IR is a preimage, so EXACT for the macros is `sql == py`.
         if want is not None:
             exact_checked += 1
+            indep_n += 1
+            indep_sql += (sql == want)
+            indep_py += (py == want)
             exact_sql += (sql == want)
             exact_py += (py == want)
+            if sql != want or py != want:
+                exact_fail.append((key, label, text, sql == want, py == want))
         elif is_printer_output(con, text, py):
             # A FAMILY-B CASE THAT IS PRINTER OUTPUT IS STILL IN THE DENOMINATOR. It is not moved
             # into family A, and that is deliberate rather than lazy: family A is keyed by an IR
@@ -483,8 +587,16 @@ def main():
             # on them where they sit costs nothing and cannot be forgotten.
             printer_output_in_b.append(label)
             exact_checked += 1
+            adm_n += 1
+            adm_sql += (sql == py)
             exact_sql += (sql == py)
+            # CONSTRUCTION-TRUE, NOT A CONFIRMATION. The admission rule admits this text only
+            # because the Python already reprinted it, so the Python's IR IS the preimage and
+            # `py == want` cannot fail here. It is counted so the denominator is whole, and
+            # reported separately so it is never read as 13 more confirmations of the Python.
             exact_py += 1
+        if verdict == "both-refuse":
+            both_refuse_cases.append((label, text, refusal_class(sql[1]), refusal_class(py[1])))
         if verdict == "diverge":
             matched[key] = signature(sql, py)
             declared = DIVERGENT.get(key)
@@ -524,6 +636,25 @@ def main():
     labels = ({lbl.split()[0] for lbl, _ir in IR_CASES}
               | {lbl.split()[0] for lbl, _t in TEXT_CASES})
     unknown = sorted(k for k in DIVERGENT if k not in labels)
+    # KNOWN_EXACT_FAILURES gets the SAME discipline as DIVERGENT, for the same reason: a
+    # declaration that outlives the thing it declares is a mute. An EXACT failure with no entry
+    # FAILS; an entry whose case now passes, or whose label names nothing, is LOUD.
+    ef_keys = {k for k, _l, _t, _a, _b in exact_fail}
+    ef_undeclared = sorted((k, l) for k, l, _t, _a, _b in exact_fail
+                           if k not in KNOWN_EXACT_FAILURES)
+    ef_unknown = sorted(k for k in KNOWN_EXACT_FAILURES if k not in labels)
+    ef_stale = sorted(k for k in KNOWN_EXACT_FAILURES if k in labels and k not in ef_keys)
+    for k, l in ef_undeclared:
+        print("UNDECLARED EXACT FAILURE  %s\n"
+              "  parse(print(ir)) != ir for a printer-output case, and nothing declares it. Fix "
+              "it, or add a KNOWN_EXACT_FAILURES entry saying why not.\n" % l)
+    for k in ef_unknown:
+        print("UNKNOWN EXACT-FAILURE DECLARATION  %s names no case in this sweep.\n"
+              "  Its stated reason was: %s\n" % (k, KNOWN_EXACT_FAILURES[k]))
+    for k in ef_stale:
+        print("STALE EXACT-FAILURE DECLARATION  %s is declared a known EXACT failure but now "
+              "PASSES.\n  Its stated reason was: %s\n  That is a fix landing. Delete the entry.\n"
+              % (k, KNOWN_EXACT_FAILURES[k]))
     stale = sorted(k for k in DIVERGENT if k in agreed)
     moved = sorted((k, DIVERGENT[k][2], matched[k]) for k in DIVERGENT
                    if k in matched and len(DIVERGENT[k]) > 2 and DIVERGENT[k][2] != matched[k])
@@ -543,12 +674,43 @@ def main():
               "  The entry pins the CONTENT of the disagreement, so this is a behaviour change "
               "that needs a decision, not a resignature.\n" % (k, want_sig, got_sig))
 
+    if args.both_refuse_audit:
+        # THE ONE THING THE ADMISSION RULE CANNOT TELL YOU. A both-refuse case leaves the
+        # denominator SILENTLY: the Python refuses, so no preimage can be exhibited, so
+        # is_printer_output answers false -- and it answers false identically for "malformed text
+        # both readings correctly refuse" and for "printer output both readings wrongly refuse".
+        # The second is a defect under the Global Constraint. The sweep cannot separate them, so
+        # it lists them instead of pretending to, and a human decides once.
+        print("\nBOTH-REFUSE AUDIT -- %d case(s). The admission rule CANNOT decide whether any of"
+              " these is printer output;\nthese are listed so the question is asked rather than"
+              " assumed. A refusal of printer output is a defect.\n" % len(both_refuse_cases))
+        for label, text, a, b in both_refuse_cases:
+            print("  %s\n    text: %r\n    sql: %s\n    py : %s" % (label, text, a, b))
+        print()
     print("%d case(s): %d agree, %d both-refuse, %d diverge (%d declared, %d undeclared)"
           % (len(cases), counts["agree"], counts["both-refuse"], counts["diverge"],
              counts["diverge"] - len(bad), len(bad)))
     print("EXACT over the %d printer-output case(s) -- a LOWER BOUND, see is_printer_output: "
           "sql %d/%d, py %d/%d"
           % (exact_checked, exact_sql, exact_checked, exact_py, exact_checked))
+    # THE TWO HALVES OF THAT py FIGURE ARE NOT THE SAME KIND OF FACT, and printing one number read
+    # as N independent confirmations when some of them cannot fail. Family A is scored against an
+    # IR built separately from the parse; family B is admitted BECAUSE the Python reprinted it, so
+    # its `py` column is true by the admission rule's construction. The macros' column is a real
+    # measurement in both halves -- in family B it is scored against the Python as the witness,
+    # which is the best available when the printer is not injective (F3's own ruling).
+    print("  of which %d are INDEPENDENT (family A, against a constructed IR): sql %d/%d, py %d/%d"
+          % (indep_n, indep_sql, indep_n, indep_py, indep_n))
+    print("  and %d are ADMITTED by the Python's own reprint, so py is CONSTRUCTION-TRUE there "
+          "and not a confirmation: sql %d/%d, py %d/%d (forced)"
+          % (adm_n, adm_sql, adm_n, adm_n, adm_n))
+    if exact_fail:
+        print("  %d printer-output case(s) FAIL EXact, all declared in KNOWN_EXACT_FAILURES: %s"
+              .replace("EXact", "EXACT")
+              % (len(exact_fail), ", ".join(sorted(k for k, _l, _t, _a, _b in exact_fail))))
+        print("  so EXACT does NOT hold over the printer's image. It holds on the %d that pass, "
+              "and the %d failures are enumerated rather than excluded."
+              % (exact_checked - len(exact_fail), len(exact_fail)))
     if printer_output_in_b:
         print("  of which %d came from family B, found to be printer output by computation: %s"
               % (len(printer_output_in_b),
@@ -556,9 +718,11 @@ def main():
     if exact_checked == 0 or len(cases) == 0:
         print("FAIL: the sweep compared nothing")
         sys.exit(4)
-    if unknown or stale or moved:
-        print("FAIL: %d unknown, %d stale, %d moved declaration(s)"
-              % (len(unknown), len(stale), len(moved)))
+    if unknown or stale or moved or ef_undeclared or ef_unknown or ef_stale:
+        print("FAIL: %d unknown, %d stale, %d moved divergence declaration(s); "
+              "%d undeclared, %d unknown, %d stale EXACT-failure declaration(s)"
+              % (len(unknown), len(stale), len(moved),
+                 len(ef_undeclared), len(ef_unknown), len(ef_stale)))
         sys.exit(1)
     if bad:
         print("FAIL: %d undeclared divergence(s)" % len(bad))
