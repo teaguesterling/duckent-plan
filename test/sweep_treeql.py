@@ -205,6 +205,21 @@ IR_CASES = [
     # These two are: the same bytes from two constructible IRs. a51 is the preimage that SURVIVES.
     ("a51 attr then WHERE, the multi-part preimage", "[{attr: 'a = 1', \"where\": 'b'}]"),
     ("k11 attr then WHERE, the one-part preimage", "[{attr: 'a = 1, WHERE b'}]"),
+    # ---- THE OTHER COLLISION CLASS, so both are CASES and not one case plus a paragraph. The note
+    # at the head of KNOWN_EXACT_FAILURES names two classes that resolve OPPOSITE ways, and only
+    # k11/a51 was driven here: the unpaired-`"` class was described in prose and in file 48, where
+    # EXACT is not counted. So the sweep's own EXACT figure said nothing about it.
+    #
+    # The two preimages of `(ATTR a = "b, WHERE c = "d)` -- MEASURED, the same bytes:
+    #     [{attr: 'a = "b, WHERE c = "d'}]            the ONE-part reading,   EXACT TRUE
+    #     [{attr: 'a = "b', "where": 'c = "d'}]       the MULTI-part reading, EXACT FALSE  <- k12
+    # The mask BLANKS the separator, because the unpaired `"` in the attr body pairs with the one
+    # in the where body and everything between them is masked, so both readings see ONE part. That
+    # is the reverse of k11/a51, where the separator stays visible and the multi-part preimage is
+    # the one that survives. Only the FAILING preimage is a case here: the surviving one is EXACT
+    # true, so it would add a passing case and no coverage of the failure.
+    ("k12 unpaired double quote across a separator, the multi-part preimage",
+     "[{attr: 'a = \"b', \"where\": 'c = \"d'}]"),
 ]
 
 # ----------------------------------------------------------------------------------------------
@@ -463,6 +478,15 @@ KNOWN_EXACT_FAILURES = {
            "measured -- because `where` is slot 6 and so CAN follow an attr clause. EXACT can hold "
            "for at most one preimage; the MULTI-part one survives (a51 passes) and this one fails. "
            "`(ATTR a = 1, PSEUDO 'p')` is the same collision and is not a separate case",
+
+    # the UNPAIRED-QUOTE class, which the note above describes and which no case drove until now.
+    "k12": "THE UNPAIRED-`\"` COLLISION, and the opposite resolution to k11. `(ATTR a = \"b, WHERE "
+           "c = \"d)` is printed by BOTH `[{attr: 'a = \"b', \"where\": 'c = \"d'}]` (this case) and "
+           "`[{attr: 'a = \"b, WHERE c = \"d'}]` -- same bytes, measured. The mask pairs the two "
+           "unpaired `\"` across the separator and blanks it, so both readings see ONE part: the "
+           "ONE-part preimage survives (measured EXACT true) and this MULTI-part one fails. Not "
+           "fixable by the slot order k01-k07 want, because the separator is not visible to the "
+           "merge at all -- the mask removed it before the merge ran",
 }
 
 
@@ -617,6 +641,12 @@ def main():
         # is printer output by construction and carries the IR it was printed from; a family-B case
         # is printer output if it reprints to itself through the second reading, and then the
         # second reading's IR is a preimage, so EXACT for the macros is `sql == py`.
+        #
+        # ASKED ONCE. The two branches below used to call is_printer_output separately, so every
+        # family-B case paid for the reprint twice -- it parses the text with the Python, builds an
+        # IR literal from it and asks the database to print it. The `want is None` conjunct keeps
+        # the short-circuit the second branch had: a family-A case never reaches the call at all.
+        printer_output = want is None and is_printer_output(con, text, py)
         if want is not None:
             exact_checked += 1
             indep_n += 1
@@ -626,7 +656,7 @@ def main():
             exact_py += (py == want)
             if sql != want or py != want:
                 exact_fail.append((key, label, text, sql == want, py == want))
-        elif want is None and not is_printer_output(con, text, py):
+        elif not printer_output:
             # ROW B's CHECK, AND IT RUNS EVERY TIME. A family-B case can leave the denominator two
             # ways and BOTH used to be silent: the Python refuses, or the Python accepts and its
             # reprint differs. Finding 1 was exactly this -- `''` is printer output, the Python
@@ -636,7 +666,7 @@ def main():
             excluded.append((label, text,
                              "py refuses" if isinstance(py, tuple)
                              else "py accepts but its reprint differs"))
-        if want is None and is_printer_output(con, text, py):
+        if printer_output:
             # A FAMILY-B CASE THAT IS PRINTER OUTPUT IS STILL IN THE DENOMINATOR. It is not moved
             # into family A, and that is deliberate rather than lazy: family A is keyed by an IR
             # literal, and several of these shapes have no IR tree_steps will build -- the empty
