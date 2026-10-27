@@ -452,8 +452,12 @@ class Parser:
         WHAT THE RULE GIVES UP, stated rather than hidden: a raw body whose own top-level comma IS
         followed by a clause keyword is read as two parts. `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` is
         therefore three clauses and not a WHERE body of `a = 1, PSEUDO 'p'` -- the documented limit
-        in test/sql/48_treeql_parse.test, and the reading the macros take as well, so the two agree
-        on it. That whole class is declared as KNOWN EXACT FAILURES in test/sweep_treeql.py.
+        in test/sql/48_treeql_parse.test. The macros take the same reading, which is why the
+        DIFFERENTIAL cannot see it rather than why it is right: measured, `pseudo` is slot 5 and
+        `where` slot 6, so the printer emits PSEUDO first and the three-clause IR prints DIFFERENT
+        BYTES -- the text has exactly ONE constructor-accepted preimage and this reading is WRONG
+        on it. The class is declared as KNOWN EXACT FAILURES in test/sweep_treeql.py, this member
+        included, as `k13`; "the two agree on it" stood here and read a shared defect as agreement.
 
         AND WHERE IT DECLINES TO GUESS: a raw group absorbs its continuations only when the NEXT
         group opens a GROUP keyword, or when there is no next group. If the next group opens a

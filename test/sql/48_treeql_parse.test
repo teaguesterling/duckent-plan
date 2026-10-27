@@ -2099,10 +2099,13 @@ true
 # ----------------------------------------------------------------------------------------------
 # THE ONE DOCUMENTED LIMIT, and the reason it is a limit rather than a bug.
 #
-# A `WHERE` body with a TOP-LEVEL comma is genuinely ambiguous: the clause separator and the
-# body's own comma are indistinguishable at paren depth 0, so `(TYPE 'x', WHERE a = 1, PSEUDO 'p')`
-# reads as THREE clauses and not as a WHERE body of `a = 1, PSEUDO 'p'`. The parser takes the
-# three-clause reading, and it reprints byte-identically.
+# A `WHERE` body with a TOP-LEVEL comma is cut at the comma when what follows opens a clause, so
+# `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` reads as THREE clauses and not as a WHERE body of
+# `a = 1, PSEUDO 'p'`. The parser takes the three-clause reading, and it reprints byte-identically.
+#
+# "GENUINELY AMBIGUOUS" STOOD IN THAT SENTENCE AND IS MEASURED FALSE -- see WHAT REMAINS A LIMIT
+# below for the measurement. The text has exactly ONE constructor-accepted preimage, so the
+# three-clause reading is a WRONG parse and this is a limit only because its fix is blocked.
 #
 # "UNREACHABLE" WAS MEASURED FALSE IN FIX ROUND 3, and the claim is withdrawn here rather than
 # a thousand lines away. The old claim was: no valid DuckDB boolean predicate carries a bare
@@ -2124,20 +2127,45 @@ true
 # WHAT REMAINS A LIMIT, narrowed TWICE now, and it is the one thing the record below actually
 # drives: a top-level comma followed by TEXT THAT OPENS ANOTHER CLAUSE.
 # `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` still reads as THREE clauses rather than a WHERE body of
-# `a = 1, PSEUDO 'p'`, because there the separator and the body's own comma are genuinely
-# indistinguishable -- the printer emits this same text for both IRs, so no reader can choose. The
-# parser takes the three-clause reading and it reprints byte-identically.
+# `a = 1, PSEUDO 'p'`. The parser takes the three-clause reading and it reprints byte-identically.
+#
+# "THE PRINTER EMITS THIS SAME TEXT FOR BOTH IRs, SO NO READER CAN CHOOSE" stood here, as the
+# reason this is a limit. MEASURED FALSE, duckdb 1.5.5:
+#
+#     tree_steps([{type: 'x', "where": 'a = 1, PSEUDO ''p'''}])
+#       prints  (TYPE 'x', WHERE a = 1, PSEUDO 'p')      <- the text the records below drive
+#     tree_steps([{type: 'x', "where": 'a = 1', pseudo: 'p'}])
+#       prints  (TYPE 'x', PSEUDO 'p', WHERE a = 1)      <- DIFFERENT BYTES
+#
+# `pseudo` is slot 5 and `where` slot 6, so the printer emits PSEUDO FIRST and the three-clause IR
+# CANNOT print this text. Among constructor-accepted IR the text has exactly ONE preimage -- the
+# one-clause WHERE body -- so a reader CAN choose here, and this one chooses wrong. That makes it a
+# FIXABLE DEFECT recorded as an unfixable ambiguity, which is the error k07's declaration already
+# corrected once for its own text.
+#
+# WHAT IT IS BLOCKED ON, which is why it is still a limit: the merge would need the clause kinds'
+# SLOT ORDER to know that nothing but a group can follow a WHERE clause in printer output, and
+# tree_catalog has NO ORDER COLUMN. That is the blocker parking k01-k07, and this text is declared
+# with them as `k13` in test/sweep_treeql.py's KNOWN_EXACT_FAILURES.
 #
 # THE OTHER TWO SHAPES THIS BLOCK ONCE COVERED ARE BOTH FIXED, so "a top-level comma enclosed by
 # NOTHING" is no longer a limit either: that was b55, fixed in fix round 2 by
 # tree_treeql_clause_parts, which gives a RAW body its own separators back. What makes the shape
-# above different from b55 is that b55's text has exactly ONE valid reading -- `(b = 2)` alone is
-# refused -- while this one has two, both legal. The record below that drives
+# above different from b55 is NOT the number of readings -- measured, each text has exactly ONE
+# constructor-accepted preimage, and "while this one has two, both legal" stood here and is false
+# for the reason above. The difference is that b55's was FIXABLE WITHOUT THE REGISTRY and this one
+# is not: the merge there only had to keep reading, where this one has to know the slot order. The
+# record below that drives
 # `CASE WHEN a = 1, PSEUDO 'p'` is true about a BARE comma and is the gate for exactly this; it was
 # never the gate for the bracket half, and it stayed green through F1 and b55 alike.
 #
-# test/treeql_parser.py, the second reading, takes the SAME three-clause reading here, so the two
-# front-ends agree on the limit rather than one of them resolving the ambiguity privately.
+# test/treeql_parser.py, the second reading, takes the SAME three-clause reading here -- and that
+# is WHY THE DIFFERENTIAL COULD NOT SEE THIS, not a second opinion in its favour. The two readings
+# share the raw-body merge rule, so they are wrong TOGETHER and `sql == py` holds; the sentence
+# that stood here read that as "the two front-ends agree on the limit rather than one of them
+# resolving the ambiguity privately", which presents a shared defect as a virtue. Agreement on a
+# SHARED rule is not independent evidence -- test/sweep_treeql.py's SHARED RULES note says so, and
+# the one constructible preimage is now driven there as case `k13` so the EXACT line counts it.
 # ----------------------------------------------------------------------------------------------
 query I
 SELECT tree_selector_to_treeql(tree_parse_treeql('(TYPE ''x'', WHERE a = 1, PSEUDO ''p'')'))
@@ -2145,9 +2173,16 @@ SELECT tree_selector_to_treeql(tree_parse_treeql('(TYPE ''x'', WHERE a = 1, PSEU
 ----
 true
 
-# ...and it reads as three clauses, which is the reading the comment above names. The order is
-# TEXTUAL position within the step -- requirement 2 orders clauses before GROUPS, not clauses
-# among themselves -- so `where` sits between `type` and `pseudo`, where the author wrote it.
+# ...and it reads as three clauses. THIS PINS A KNOWN WRONG PARSE, not a chosen reading: the text's
+# one constructor-accepted preimage is the one-clause WHERE body above, so the `pseudo` node this
+# record expects is a node the printed IR never had. It is pinned because a SILENT change to a
+# known wrong answer is worse than a declared one, and it is declared as `k13` in
+# test/sweep_treeql.py's KNOWN_EXACT_FAILURES with the blocker that parks it. The expected value
+# moves when the slot order lands, not before.
+#
+# The ORDER here is TEXTUAL position within the step -- requirement 2 orders clauses before GROUPS,
+# not clauses among themselves -- so `where` sits between `type` and `pseudo`, where the author
+# wrote it. That part is true under either reading.
 query I
 SELECT list(kind ORDER BY node_id) FROM (SELECT unnest(
   tree_parse_treeql('(TYPE ''x'', WHERE a = 1, PSEUDO ''p'')'), recursive := true));
