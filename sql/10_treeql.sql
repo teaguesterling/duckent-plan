@@ -564,9 +564,26 @@ CREATE OR REPLACE MACRO tree_treeql_wrapped(s) AS
 -- and the two records in test/sql/48_treeql_parse.test are the check.
 --
 -- WHAT IS GIVEN UP, stated rather than hidden: a selector that genuinely has unbalanced parentheses
--- AND carries a WHERE or ATTR body no longer gets this named message. It still refuses, through the
--- generic arm, which names the fragment and claims nothing. That is the right direction to fail --
--- a missing refusal beats a false cause -- and it is what BASE did for all such text.
+-- AND carries a WHERE or ATTR body no longer gets this named message. That is the right direction
+-- to fail -- a missing refusal beats a false cause -- and it is what BASE did for all such text.
+--
+-- WHAT HAPPENS INSTEAD SPLITS INTO TWO PAIRS, and the sentence that stood here conflated them. It
+-- said such text "still refuses, through the generic arm, which names the fragment and claims
+-- nothing". MEASURED, duckdb 1.5.5, on the four shapes of the class:
+--
+--     (WHERE a = 1))   ACCEPTED, one `where` clause of `a = 1)`    <- printer output
+--     (ATTR a = 1))    ACCEPTED, attr `a` `=` `1)`                 <- printer output
+--     ((WHERE a = 1)   REFUSED  `cannot read (WHERE a = 1`         <- the generic arm
+--     )WHERE a = 1(    REFUSED  `cannot read )WHERE a = 1(`        <- the generic arm
+--
+-- The first two are ACCEPTED, and that is CORRECT rather than given up: a raw body is host SQL
+-- passed through verbatim, so it may carry an unmatched parenthesis, and `tree_steps([{"where":
+-- 'a = 1)'}])` PRINTS the first of them. Refusing printer output is what the Global Constraint
+-- forbids. Only the last two fall to the generic arm, and the old sentence was true of those.
+--
+-- test/treeql_parser.py, the second reading, REFUSES the first two with the `unbalanced` message
+-- as of this commit, and that is a defect of that file rather than of this macro -- its own
+-- comment carries the measurement and why the guard is not landed yet.
 --
 -- COALESCE to TRUE: empty and NULL text have no parentheses to balance, and the no-steps arm --
 -- which runs first -- is the refusal that owns them.
