@@ -34,18 +34,27 @@ task a fix gave them one:
     BOTH. MEASURED: before that fix the macros and this reading DISAGREED on five such shapes, and
     the differential caught them; after it they AGREE, and it cannot.
   * the RAW-BODY MERGE. Both put a raw body's own separators back by span, and both cut the body
-    when the continuation opens a clause keyword. The KNOWN_EXACT_FAILURES below are ten shapes
-    where they are wrong TOGETHER.
+    when the continuation opens a clause keyword. MEASURED: the KNOWN_EXACT_FAILURES table below
+    now holds 14 entries, and 12 of them are this rule being wrong in BOTH readings at once --
+    k01-k13 less k12, whose cause is the mask instead. `k13` is the newest and the clearest: the
+    text has exactly ONE constructible preimage, so a reader CAN choose, and both readings choose
+    the same wrong one. The count said "ten shapes" here and in the EXACT paragraph below.
   * the REFUSAL PRIORITY ORDER and the `min(fragment)` tie-break, transcribed rather than derived
     -- which this file has always said, and which is the same cost in a smaller place.
+  * THE `unbalanced` STAND-DOWN -- added as a rule the two readings DO NOT yet share, so the note
+    is not silent about where the instrument is pointed next. tree_treeql_balanced stands down on
+    raw-bodied text and test/treeql_parser.py does not, so the macros ACCEPT `(WHERE a = 1))` --
+    printer output -- and the second reading refuses it. No case drives that class yet; the
+    measurement and why the guard is not landed are in test/treeql_parser.py beside the check.
 
 So the honest reading of a green run is: the two readings agree, AND where they share a rule that
 agreement is not independent evidence. What still carries weight is EXACT, because it compares a
 reading against an IR built by a third thing -- the constructor -- rather than against the other
 reading. That is why the EXACT line is printed separately from the agreement counts, why its
 independent half is reported apart from its construction-true half, and why KNOWN_EXACT_FAILURES
-exists at all: ten of the shapes below are cases where BOTH readings fail and nothing but EXACT
-can say so.
+exists at all: 14 of the shapes below are cases where BOTH readings fail and nothing but EXACT
+can say so. That figure moves, so it is also PRINTED by every run -- and the printed one is the
+measurement; this sentence is a reader's bearing and said "ten" until the final-review fix round.
 
 THIS LIMIT IS NOT REMOVED AND CANNOT BE REMOVED BY THIS METHOD. Two readings that must agree on
 printer output will converge on a shared rule wherever the grammar is ambiguous, because there is
@@ -411,9 +420,10 @@ DIVERGENT = {
     # test/sql/48_treeql_parse.test beside the fix.
     #
     # ONE ENTRY IS LEFT IN THE WHOLE TABLE, b57, and it is NOT an EXACT failure -- it is a refusal
-    # WORDING that the two readings name differently on HAND-WRITTEN text. So `sql == py` now holds
-    # on every one of the 62 printer-output cases, which is the state this sweep was built to reach;
-    # what remains is a difference about how to describe a text neither reading accepts.
+    # WORDING that the two readings name differently on HAND-WRITTEN text. So `sql == py` holds on
+    # every one of the 75 printer-output cases this run admits -- MEASURED at this commit, and the
+    # figure the run PRINTS is the one to read; the number here said 62 and had gone stale. What
+    # remains is a difference about how to describe a text neither reading accepts.
 }
 
 
@@ -438,25 +448,35 @@ DIVERGENT = {
 # instrument cannot evaluate is an escape hatch, not a qualification. `b55` was first declared
 # under exactly that defence and then fixed, which rejected it in practice; this states it.
 #
-# THE CAUSE of every entry below is one thing: tree_treeql_clause_parts decides a part is a new
-# clause-list item by `tree_treeql_opener_re()`, so a raw body's continuation that BEGINS with a
-# clause or group keyword is read as a new item and the body is cut. Fixing it needs the merge to
-# know the SLOT ORDER of the clause kinds -- `where` is the last slot, so nothing but a group can
-# follow a WHERE clause in printer output -- and the registry has NO ORDER COLUMN, which
-# test/css_parser.py's own CLAUSE_SLOT exemption records from the other side.
+# THE CAUSE OF TWELVE OF THE FOURTEEN ENTRIES below is one thing -- k01-k11 and k13:
+# tree_treeql_clause_parts decides a part is a new clause-list item by `tree_treeql_opener_re()`,
+# so a raw body's continuation that BEGINS with a clause or group keyword is read as a new item and
+# the body is cut. Fixing it needs the merge to know the SLOT ORDER of the clause kinds -- `where`
+# is the last slot, so nothing but a group can follow a WHERE clause in printer output -- and the
+# registry has NO ORDER COLUMN, which test/css_parser.py's own CLAUSE_SLOT exemption records from
+# the other side.
 #
-# k08 IS NOT HERE and that is deliberate: it is the one shape in the class that REFUSES rather
-# than returning a wrong IR, restored in fix round 3 because a silent wrong parse replacing a loud
-# refusal is the worse of the two failures. It still fails EXACT, so it is declared, but its entry
-# says refusal.
+# THE OTHER TWO HAVE THEIR OWN CAUSES, and each entry says so: `a50` is the EMPTY SELECTOR, already
+# ruled IRREDUCIBLE -- no parser can recover a step from no characters -- and `k12` is the
+# unpaired-`"` collision, which the slot order CANNOT fix because the mask removes the separator
+# before the merge ever sees it. This sentence used to read "THE CAUSE of every entry below is one
+# thing", which its own table contradicted in two rows.
+#
+# k08 IS HERE, at its own entry, and the sentence that said "k08 IS NOT HERE and that is
+# deliberate" contradicted its own last clause three lines later. What is true of k08 is the rest
+# of what that sentence said: it is the one shape in the class that REFUSES rather than returning a
+# wrong IR, restored in fix round 3 because a silent wrong parse replacing a loud refusal is the
+# worse of the two failures. It still fails EXACT, so it is declared, and its entry says refusal.
+#
 # WHICH PREIMAGE SURVIVES A COLLISION, AND WHY IT GOES BOTH WAYS. Two entries below sit on texts
 # with TWO constructible preimages, and EXACT can hold for at most one. Which one survives depends
 # on whether the clause SEPARATOR survives the quote mask, and the two known classes come out
 # opposite ways -- same mechanism, two outcomes:
 #
-#   the UNPAIRED-QUOTE class (file 48, not a case here): the mask BLANKS the separator, because an
-#     unpaired `"` in one raw body pairs with one in another and everything between is masked. The
-#     reader therefore sees ONE part, and the ONE-PART preimage survives.
+#   the UNPAIRED-QUOTE class (`k12` here since 9ff1e82, and in file 48 -- this line said "not a
+#     case here", which that commit made false): the mask BLANKS the separator, because an unpaired
+#     `"` in one raw body pairs with one in another and everything between is masked. The reader
+#     therefore sees ONE part, and the ONE-PART preimage survives.
 #   k11 / a51 here: the separator is VISIBLE and the continuation opens a clause keyword, so the
 #     reader cuts there and sees TWO parts. The MULTI-PART preimage survives (a51 passes) and the
 #     one-part preimage fails (k11).
