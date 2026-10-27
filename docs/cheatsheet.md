@@ -181,7 +181,7 @@ Candidate bindings: "labels", "_level", "file_path", "descendant_count", "name"
 | language | parser | printer | bare_safe |
 |---|---|---|---|
 | `css` | `tree_css_lower` | `tree_selector_to_treeql` | true |
-| `treeql` | _none_ | `tree_selector_to_treeql` | true |
+| `treeql` | `tree_parse_treeql` | `tree_selector_to_treeql` | true |
 
 Selector text that names no language is parsed as `css` (`tree_catalog.settings`). Text handed over as IR was never parsed, so its provenance stays `treeql` whatever the default says.
 
@@ -207,7 +207,7 @@ The two tiers can reach the same name. With both a `pre_` binding and a `sel_sha
 
 ### Handing over a pre-parsed selector
 
-TREEQL's text form has no parser yet, so a selector given as text is refused (the message names the registry row it consulted). What TREEQL has instead is a door: hand the IR over directly. A front-end that parses its own syntax elsewhere -- in the host, in another extension -- emits these rows and passes them as a `TREE_SELECTOR`, which is what `tree_steps` itself produces.
+TREEQL text is read by `tree_parse_treeql`, the parser its registry row above names. A language whose `parser` is `_none_` refuses a text selector instead, and the message names the registry row it consulted. Every language has a door as well: hand the IR over directly. A front-end that parses its own syntax elsewhere -- in the host, in another extension -- emits these rows and passes them as a `TREE_SELECTOR`, which is what `tree_steps` itself produces.
 
 | column | type |
 |---|---|

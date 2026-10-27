@@ -202,8 +202,13 @@ GLOSS_DOMAIN = {
 
 
 # ---------------------------------------------------------------------------
-# The host door: TREEQL's text form has no parser yet (that is M-LANG), so a front-end hands
-# selectors over as IR. These describe that handover.
+# The host door: a front-end hands selectors over as IR rather than as text. These describe that
+# handover.
+#
+# IT IS NO LONGER THE ONLY WAY IN FOR TREEQL, and the old wording here said it was: "TREEQL's
+# text form has no parser yet (that is M-LANG)". M-LANG arrived -- sql/10_treeql.sql names
+# tree_parse_treeql in tree_catalog.selector_languages -- so the door is now what it was always
+# for: a syntax THIS repo does not read, parsed in the host or in another extension.
 # ---------------------------------------------------------------------------
 
 # One well-formed selector, used both to read the row layout off the type and as the base the
@@ -725,11 +730,23 @@ def render(m):
 
     # -- 5b. the host door ---------------------------------------------------
     out.write("### Handing over a pre-parsed selector\n\n")
-    out.write("TREEQL's text form has no parser yet, so a selector given as text is refused "
-              "(the message names the registry row it consulted). What TREEQL has instead is "
-              "a door: hand the IR over directly. A front-end that parses its own syntax "
+    # The parser is READ, not written out here. The sentence below used to say "TREEQL's text
+    # form has no parser yet, so a selector given as text is refused", which Task 6 made false in
+    # both halves -- and nothing in this generator would have noticed, because it was prose. It
+    # is prose that names a value now, so the value comes from the registry and the probe below
+    # fails the generator if the registry stops supplying one.
+    treeql_parser = m.one("SELECT parser FROM tree_catalog.selector_languages "
+                          "WHERE language = 'treeql'")
+    if treeql_parser is None:
+        stale.append("the host-door prose says which parser reads TREEQL text, but the treeql "
+                     "row of tree_catalog.selector_languages names none")
+    out.write("TREEQL text is read by %s, the parser its registry row above names. A language "
+              "whose `parser` is `_none_` refuses a text selector instead, and the message names "
+              "the registry row it consulted. Every language has a door as well: hand the IR "
+              "over directly. A front-end that parses its own syntax "
               "elsewhere -- in the host, in another extension -- emits these rows and passes "
-              "them as a `TREE_SELECTOR`, which is what `tree_steps` itself produces.\n\n")
+              "them as a `TREE_SELECTOR`, which is what `tree_steps` itself produces.\n\n"
+              % code(treeql_parser))
 
     layout = m.ir_layout()
     table(out, ["column", "type"], [[code(c), code(t)] for c, t in layout])
