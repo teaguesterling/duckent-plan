@@ -12,9 +12,10 @@ reason; test/treeql_parser.py is this pair's, and this script is what binds it t
 THE TWO READINGS ARE ARCHITECTURALLY DIFFERENT, which is what makes the agreement evidence:
 
   * sql/10_treeql.sql SPLITS FIRST. It cuts the text on a depth-0 newline, then on depth-0 commas,
-    then before combinator keywords, and asks a per-part reader what each fragment is. Depth and
-    "inside a quote" come from two window functions over the characters, so the scan knows nothing
-    about which clause kind it is inside.
+    then before combinator keywords, and asks a per-part reader what each fragment is. The scan
+    knows nothing about which clause kind it is inside, so a raw body's separators are put back
+    AFTER the cut, by tree_treeql_clause_parts. ("Depth and `inside a quote` come from two window
+    functions" stood here and is stale: since R41 it is ONE window over tree_treeql_quote_mask.)
   * test/treeql_parser.py DESCENDS. It reads a keyword, then reads that keyword's body by the rule
     for its kind -- a literal body stops at its closing quote, a raw body runs to the next
     separator that is followed by a clause keyword -- so the scan always knows what it is inside.

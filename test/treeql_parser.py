@@ -39,15 +39,25 @@ rather than a round trip:
 
   * sql/10_treeql.sql SPLITS FIRST and asks afterwards. It cuts on a depth-0 newline, then on
     depth-0 commas, then before combinator keywords, and hands each fragment to a per-part reader.
-    Depth and "inside a quote" come from two window functions over the characters, so the scan is
-    blind to which clause kind it is inside, so it cannot tell a raw body's own comma from a
-    separator, and it reads EVERY `'` as a delimiter. It does count `[ ]` and `{ }` alongside
-    `( )` -- that half was Task 7's one-line fix to tree_treeql_split_parts, which is why the
-    bracket and brace cases AGREE below rather than appearing in DIVERGENT.
+    The scan is blind to which clause kind it is inside, so it cannot tell a raw body's own comma
+    from a separator at the point where it cuts. It counts `[ ]` and `{ }` alongside `( )` -- Task
+    7's one-line fix to tree_treeql_split_parts, which is why the bracket and brace cases AGREE
+    below rather than appearing in DIVERGENT.
   * THIS MODULE DESCENDS and knows where it is. It reads a keyword, then reads that keyword's body
     by the rule for that kind: a literal body ends at its closing quote, a RAW body (attr, where)
-    runs to the next separator that is followed by another clause keyword. Its character scan
-    tracks `'...'` literals AND `"..."` identifiers, and counts `[ ]` and `{ }` as well as `( )`.
+    runs to the next separator that is followed by another clause keyword, so the scan never cuts
+    inside a raw body at all.
+
+TWO CLAIMS THAT STOOD HERE ARE WITHDRAWN, because they are what the macros USED to do and this
+paragraph is where a reader decides how much the differential is worth. It said the macros take
+depth and "inside a quote" from TWO WINDOW FUNCTIONS and that the splitter "reads EVERY `'` as a
+delimiter", and it offered "tracks `'...'` literals AND `"..."` identifiers" as THIS reading's
+distinguishing property. All three are false since R41: tree_treeql_quote_mask is one RE2 scan
+that masks `'...'` and `"..."` alike, tree_treeql_depths is ONE window over that mask, and
+sql/10_treeql.sql says so in as many words ("the depth is now ONE window over the mask ... so the
+`quoted` CTE is gone"). MEASURED: `tree_treeql_quote_mask('(WHERE "o''k" = 1)')` masks the whole
+double-quoted region, apostrophe included. The region rule is now SHARED -- test/sweep_treeql.py's
+SHARED RULES note says what that costs the instrument, and says it FIRST.
 
 Those two differences are the whole reason the sweep finds anything. Nothing in THIS file changes
 the macros; what the differential found is fixed in sql/10_treeql.sql, where it belongs, and
@@ -206,12 +216,19 @@ def _scan(s):
     `open_literal` is True when a `'...'` region ran to the end of the text with no closing quote,
     which is what "unterminated quoted value" names.
 
-    TWO QUOTE CHARACTERS, not one, and that is the substantive difference from the macros. A WHERE
-    or ATTR body is raw host SQL, so it can hold a double-quoted IDENTIFIER whose content has an
-    apostrophe -- `WHERE "o'k" = 1` is printer output from the ordinary constructor and legal
-    DuckDB SQL. Reading every `'` as a delimiter makes the scan lose its place there; reading the
-    region that opened FIRST, to its own closing delimiter, does not. The doubled delimiter is the
-    escape in both regions, exactly as `''` restores the macros' quote parity.
+    TWO QUOTE CHARACTERS, not one, and the reason is the grammar rather than a difference from the
+    macros. A WHERE or ATTR body is raw host SQL, so it can hold a double-quoted IDENTIFIER whose
+    content has an apostrophe -- `WHERE "o'k" = 1` is printer output from the ordinary constructor
+    and legal DuckDB SQL. Reading every `'` as a delimiter makes the scan lose its place there;
+    reading the region that opened FIRST, to its own closing delimiter, does not. The doubled
+    delimiter is the escape in both regions.
+
+    THIS USED TO SAY "that is the substantive difference from the macros ... exactly as `''`
+    restores the macros' quote parity". Both halves are false since R41: tree_treeql_quote_mask
+    reads two quote characters by the same opened-first rule, and there is no parity left for `''`
+    to restore -- the mask replaced the count. The two readings now AGREE on this rule and the
+    differential cannot see a defect in it, which is the first entry of test/sweep_treeql.py's
+    SHARED RULES note.
 
     AN UNPAIRED `"` IS AN ORDINARY CHARACTER, while an unpaired `'` swallows the rest of the text.
     The asymmetry is deliberate: a double-quoted identifier that never closes is not an identifier,
@@ -415,8 +432,22 @@ class Parser:
 
         A LITERAL-bodied clause ends at the next separator. A RAW-bodied one -- attr, where -- runs
         PAST a separator unless what follows it opens another part, which is a clause keyword or a
-        group keyword. That is the rule the macros do not have: they cut on every depth-0 comma
-        whatever body it sits in, so `(WHERE [1, 2] = [1, 2])` comes apart.
+        group keyword.
+
+        THE MACROS REACH THE SAME ANSWER BY A DIFFERENT ROUTE, which this used to deny ("that is
+        the rule the macros do not have ... so `(WHERE [1, 2] = [1, 2])` comes apart"). Measured,
+        both halves are stale: tree_treeql_split_parts cuts on every UNENCLOSED depth-0 comma
+        whatever body it sits in, and then tree_treeql_clause_parts puts a raw body's own
+        separators back by SPAN --
+
+            tree_treeql_split_parts('WHERE a = 1, b = 2', ',')  ->  'WHERE a = 1' and 'b = 2'
+            tree_treeql_clause_parts('WHERE a = 1, b = 2')      ->  ONE part, the whole body
+
+        -- and the bracket example does not come apart at all, because Task 7's one-line fix made
+        the splitter count `[ ]` and `{ }` as well as `( )`. So this is a rule the two readings
+        SHARE, by the second entry of test/sweep_treeql.py's SHARED RULES note, and what parts them
+        is only WHERE the decision is made: this module never cuts inside a raw body, the macros
+        cut and then merge.
 
         WHAT THE RULE GIVES UP, stated rather than hidden: a raw body whose own top-level comma IS
         followed by a clause keyword is read as two parts. `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` is
