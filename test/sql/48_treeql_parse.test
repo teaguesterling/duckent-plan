@@ -2532,13 +2532,32 @@ SELECT language, parser FROM tree_catalog_languages() ORDER BY language;
 css	tree_css_lower
 treeql	tree_parse_treeql
 
-# THE DEFAULT-LANGUAGE PATH, and the provenance stamp with it. Two things are measured here that
-# no record above can measure: the lookup in tree_catalog.settings picks treeql for text that
-# names no language, and `_match_language` then comes from the stamp tree_parse_treeql wrote on
-# the IR's root row. Where a record names `language := 'treeql'`, _match_language is
-# COALESCE(language, stamp) and reads the ARGUMENT -- so that record says nothing about the
-# stamp. The setting is put back immediately: it is session state, and every record after it
-# would otherwise run under a default this one moved.
+# THE DEFAULT-LANGUAGE PATH. ONE thing is measured here, and it is the lookup in
+# tree_catalog.settings picking treeql for text that names no language. A record whose text
+# carries `language := 'treeql'` cannot measure that, because its argument decides the front-end
+# before the setting is ever read.
+#
+# WHAT THIS RECORD CANNOT WITNESS, said here so that nobody re-adds the claim: the PROVENANCE
+# STAMP. An earlier version of this comment said `_match_language` "comes from the stamp
+# tree_parse_treeql wrote on the IR's root row". It cannot tell. `tree_selector_language` is
+# `COALESCE(min((x).value), 'treeql')` (sql/06_selector.sql), and sql/07_match.sql documents the
+# fallback on purpose -- "IR that stamps nothing still reads treeql". **The stamp and the default
+# are the same string**, so this record reads `treeql` whether the stamp is there or not, and a
+# selector that stamped nothing at all would satisfy it. MEASURED in fix round 1: with the stamp
+# blanked, this record still passes.
+#
+# WHERE THE STAMP *IS* COVERED, since it is not here and it is not only in the record below.
+# MEASURED, same run: blanking the stamp turns 68 of this file's 218 assertions red. The record
+# below is the directly-addressed one, and it is here because it sits next to the comment that
+# used to make the false claim. But the coverage already existed before fix round 1 added it --
+# :1189's node-by-node projection wants `selector treeql` explicitly, the two string_agg records
+# near the end carry `selector:treeql`, and every `parse(print(ir)) == ir` theorem compares a
+# parsed selector against `tree_steps` IR whose root value IS `treeql`. So the gap this record
+# closes is one of LEGIBILITY beside a false sentence, not of coverage, and saying otherwise would
+# be the same kind of overclaim the sentence above was.
+#
+# The setting is put back immediately: it is session state, and every record after it would
+# otherwise run under a default this one moved.
 statement ok
 UPDATE tree_catalog.settings SET value = 'treeql' WHERE name = 'tree_default_selector_language';
 
@@ -2549,6 +2568,24 @@ treeql
 
 statement ok
 UPDATE tree_catalog.settings SET value = 'css' WHERE name = 'tree_default_selector_language';
+
+# THE STAMP ITSELF, read with no COALESCE anywhere in the path. This reaches the root row's
+# `value` field directly, so a front-end that stops stamping shows up as NULL here instead of
+# being answered by tree_selector_language's default. That is the whole difference between this
+# record and the one above it, and it is why both exist.
+#
+# PROVED RATHER THAN ASSERTED, in fix round 1: with `'treeql'::VARCHAR AS value` at
+# sql/10_treeql.sql's root row temporarily changed to `NULL::VARCHAR`, this record FAILS
+# (`got: ['NULL']`) while the `_match_language` record above it still PASSES. Restoring the line
+# returns both to green. One run, both legs, so the contrast is the evidence.
+#
+# No `::TREE_SELECTOR` cast: tree_parse_treeql already returns that type. The cast in
+# tree_selector_language is there because its parameter is untyped, which is not the case here.
+query I
+SELECT (x).value FROM (SELECT unnest(tree_parse_treeql('(TYPE ''function_definition'')')) AS x)
+WHERE (x).kind = 'selector';
+----
+treeql
 
 # ==============================================================================================
 # THE parser IS NULL PATH -- the refusal is the REGISTRY'S, not a branch's
@@ -2571,11 +2608,36 @@ FROM tree_match('main', 'app', '(TYPE ''function_definition'')', language := 'tr
 ----
 tree_match: selector language 'treeql' has no parser: tree_catalog.selector_languages.parser IS NULL
 
-# THE CONTROL. Without it the refusal above is also what a BROKEN PARSER would produce, and a
-# zero is evidence about the instrument until the instrument has produced a non-zero on a case
-# that should be non-zero. The parser is still here and still reads this text to its three
-# nodes; the registry row is what changed.
+# THE CONTROL, and what it is a control FOR. It proves the parser is still LIVE after the registry
+# row is blanked -- that the refusal above was not bought by also breaking the thing being
+# refused for.
+#
+# WHAT IT DOES *NOT* PROVE, corrected in fix round 1: it does not exclude a broken parser. An
+# earlier version of this comment said the refusal above "is also what a BROKEN PARSER would
+# produce". It is not. test/run.py's parse_selector raises on `parser IS NULL` BEFORE it consults
+# PARSER_DRIVERS, so tree_parse_treeql is never called on that path, and the expected text at the
+# record above is the registry's own message, matched as a substring. A broken parser cannot
+# satisfy that record at all. The MESSAGE does that exclusion; this record does not.
+#
+# WHERE THE REGISTRY-DRIVEN EVIDENCE ACTUALLY LIVES, named so that a later tidy-up cannot prune it
+# and leave a passing refusal next to a passing control: it is the SEQUENCE. The records above
+# accept the same text in the same session, the UPDATE blanks the row, and then the identical call
+# is refused. A hardcoded branch on the language's name would have failed those acceptances, and
+# nothing else in this file would have moved. Delete the acceptances and the refusal stops being
+# evidence about the registry.
+#
+# IDENTITY, NOT ARITY. This asserted `len(...) = 3` until fix round 1, and three WRONG nodes
+# satisfy that: `tree_steps([{type: 'class'}])` is also three nodes. MEASURED: the comparison below
+# is False for it and True for the right IR, so the record now pins what the parser produced and
+# not how much of it there was.
+#
+# ONE CONSEQUENCE, so that a later reader is not surprised by it: the comparison includes the root
+# row, so this record is now sensitive to the PROVENANCE STAMP as well. MEASURED in fix round 1 --
+# blanking the stamp in sql/10_treeql.sql turns this record red along with 67 others. That is extra
+# sensitivity and not a defect, but it does mean a red here is not by itself evidence that the
+# parser is dead. Read it with the stamp record earlier in this block.
 query I
-SELECT len(tree_parse_treeql('(TYPE ''function_definition'')')) = 3;
+SELECT tree_parse_treeql('(TYPE ''function_definition'')')
+     = tree_steps([{type: 'function_definition'}]);
 ----
 true

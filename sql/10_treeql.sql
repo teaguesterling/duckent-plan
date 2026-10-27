@@ -1353,5 +1353,13 @@ SELECT CASE
 -- It lives HERE, not in sql/01_catalog.sql, for the same reason 09_css.sql registers css: the
 -- extension's difference is WHICH FILES it embeds, not what they say. A core-only build that does
 -- not embed this file still finds parser IS NULL and still refuses text -- by a registry lookup
--- rather than a hardcoded branch, which is what sql/01_catalog.sql asks for in as many words.
+-- rather than a hardcoded branch, which is what sql/09_css.sql's own registration comment says in
+-- as many words.
+--
+-- THE SECOND CITATION WAS WRONG AND IS CORRECTED HERE, not quietly swapped. It read "which is
+-- what sql/01_catalog.sql asks for in as many words", and that file does not contain the word
+-- "lookup" anywhere -- measured. The lookup-versus-hardcoded-branch contrast is 09_css.sql's,
+-- beside its own INSERT. What IS 01_catalog.sql's, word for word, is the middle sentence above,
+-- and that is exactly what made the wrong citation look safe to anyone who checked the quotation
+-- rather than the claim.
 UPDATE tree_catalog.selector_languages SET parser = 'tree_parse_treeql' WHERE language = 'treeql';
