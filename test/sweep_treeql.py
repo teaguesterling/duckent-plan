@@ -350,10 +350,19 @@ TEXT_CASES = [
 # exceptions are a wildcard is worthless. Each entry names ONE case label, the record in
 # test/sql/48_treeql_parse.test that pins the SQL side's answer, and WHICH reading is right.
 #
-# "sql" means the macros are right and this script's Python is wrong -- there are none of those,
-# and the entry shape allows one so that a future divergence cannot be recorded without saying so.
-# "py" means test/treeql_parser.py returns the answer the printer's own output requires and the
-# macros do not.
+# "sql" means the macros are right and this script's Python is wrong -- there are no ENTRIES of
+# that kind, and the entry shape allows one so that a future divergence cannot be recorded without
+# saying so. "py" means test/treeql_parser.py returns the answer the printer's own output requires
+# and the macros do not.
+#
+# THAT DIRECTION IS NOT HYPOTHETICAL ANY MORE, and the table says none only because the class is
+# UNDRIVEN. MEASURED, duckdb 1.5.5: `tree_steps([{"where": 'a = 1)'}])` prints `(WHERE a = 1))`,
+# the macros parse it with EXACT true, and this script's Python refuses it as `unbalanced
+# parentheses` -- a refusal of printer output, which the Global Constraint makes a defect. The same
+# for `(ATTR a = 1))`. No case drives either, so no entry is needed and none exists; the fix is one
+# guard in test/treeql_parser.py, held on a ruling, with the measurement beside the check there.
+# An empty table row is not the same as an empty world, and this is the place that could have said
+# so and did not.
 # ----------------------------------------------------------------------------------------------
 DIVERGENT = {
     # ---- CLASS 1: R41, the splitter knowing nothing of `"..."` regions ---- CLOSED.
@@ -529,7 +538,8 @@ KNOWN_EXACT_FAILURES = {
            "merge at all -- the mask removed it before the merge ran",
 
     # the 14th member of the k01-k07 class, and the one the EXACT line used to score as a PASS.
-    "k13": "NOT A COLLISION, and the four documents that called it one are corrected in this "
+    "k13": "NOT A COLLISION, and the three documents that called it one -- file 48, "
+           "test/treeql_parser.py and the plan -- are corrected in this "
            "round. `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` has exactly ONE constructor-accepted "
            "preimage -- this case -- because `pseudo` is slot 5 and `where` slot 6, so the "
            "three-clause IR prints `(TYPE 'x', PSEUDO 'p', WHERE a = 1)`, DIFFERENT BYTES, "
