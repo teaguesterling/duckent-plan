@@ -518,7 +518,10 @@ KNOWN_EXACT_FAILURES = {
            "are blocked on: the merge would need the clause kinds' SLOT ORDER to know that "
            "nothing but a group can follow a WHERE clause in printer output, and the registry has "
            "NO ORDER COLUMN. Fixing one member of the class while its siblings stay parked would "
-           "make their entries wrong about why they are parked, so this is declared with them",
+           "make their entries wrong about why they are parked, so this is declared with them. "
+           "`b09` is the same TEXT, written by hand, and is no longer admitted to the EXACT "
+           "denominator: the witness that admitted it is this text's NON-CANONICAL reading -- see "
+           "is_printer_output",
 }
 
 
@@ -601,6 +604,71 @@ def signature(sql, py):
         len(sql), len(py), hashlib.sha256(repr(sql).encode()).hexdigest()[:10])
 
 
+def steps_literal(rows):
+    """The tree_steps ARGUMENT that would build these IR rows, as SQL text -- or None when this
+    reconstruction cannot express the shape.
+
+    It exists for one question, asked by is_printer_output below: is a witness IR the IR the
+    CONSTRUCTOR builds, or merely one the printer can print? treeql_parser.to_sql writes node rows
+    directly and so bypasses tree_steps entirely, which is what let a non-canonical witness admit a
+    case. Handing the rows back to tree_steps is the only oracle here for "canonical", because
+    canonical means nothing more or less than "what tree_steps builds".
+
+    NONE RATHER THAN A GUESS. A row kind this does not know, a chain whose child is not a step, or
+    a group it cannot descend all answer None, and the caller then reports the case as UNCHECKED
+    instead of admitting it. An attr body is rebuilt as `value op arg` with single spaces, which
+    need not be the printer's spacing -- it does not have to be, because the comparison is against
+    the witness ROWS and the constructor re-splits the body it is given.
+    """
+    kids = {}
+    for r in rows:
+        kids.setdefault(r["parent_id"], []).append(r)
+    roots = [r for r in rows if r["kind"] == "selector"]
+    if len(roots) != 1:
+        return None
+
+    def key(k):
+        return '"%s"' % k if k in ("where", "not", "as") else k
+
+    def chain(parent_id):
+        out = []
+        for s in kids.get(parent_id, []):
+            if s["kind"] != "step":
+                return None
+            one = step(s)
+            if one is None:
+                return None
+            out.append(one)
+        return "[" + ", ".join(out) + "]"
+
+    def step(s):
+        fields = []
+        for c in kids.get(s["node_id"], []):
+            if c["kind"] in ("type", "id", "class", "pseudo", "where"):
+                fields.append("%s: %s" % (key(c["kind"]), sql_str(c["value"])))
+            elif c["kind"] == "attr":
+                body = " ".join(x for x in (c["value"], c["op"], c["arg"]) if x is not None)
+                fields.append("attr: %s" % sql_str(body))
+            elif c["kind"] in ("has", "not"):
+                inner = chain(c["node_id"])
+                if inner is None:
+                    return None
+                fields.append("%s: %s" % (key(c["kind"]), inner))
+            else:
+                return None
+        if s["op"] is not None:
+            fields.append("comb: %s" % sql_str(s["op"]))
+        if s["alias"] is not None:
+            fields.append('"as": %s' % sql_str(s["alias"]))
+        # a step with nothing at all is the EMPTY step, which `a50` builds as `{comb: NULL}`
+        return "{" + ", ".join(fields or ["comb: NULL"]) + "}"
+
+    return chain(roots[0]["node_id"])
+
+
+ADMITTED = ""           # is_printer_output's verdict for a case that ENTERS the EXACT denominator
+
+
 def is_printer_output(con, text, py):
     """Is this text something tree_selector_to_treeql can emit? COMPUTED, never declared.
 
@@ -620,15 +688,60 @@ def is_printer_output(con, text, py):
     WHAT IT CANNOT DO: prove a text is NOT printer output. A text the Python refuses, or whose
     reprint differs, is merely not shown to be printer output by this route -- so the denominator
     it produces is a LOWER BOUND, and the sweep prints it as one.
+
+    AND THE WITNESS MUST BE CANONICAL, which this used to leave unasked -- the hole `k13` was found
+    through. The reprint proves the text is print(W) for the witness W, and nothing more. If W is
+    not the IR the CONSTRUCTOR builds, the text may have a DIFFERENT, constructor-accepted preimage
+    that the readings are getting wrong, and `sql == py` scored against W says nothing about it.
+    MEASURED, duckdb 1.5.5, on `b09`:
+
+        the witness        [{type: 'x', "where": 'a = 1', pseudo: 'p'}]-shaped rows, which
+                           tree_steps prints as `(TYPE 'x', PSEUDO 'p', WHERE a = 1)`
+        the text           `(TYPE 'x', WHERE a = 1, PSEUDO 'p')`, whose ONE constructible
+                           preimage is k13's one-clause WHERE body -- on which EXACT is FALSE
+
+    So the case was admitted, both readings took the same wrong reading, `sql == py` held, and it
+    counted among the passes. The headline "all declared" was a property of the case list.
+
+    THE ORACLE IS tree_steps, because canonical means what tree_steps builds and nothing else:
+    steps_literal above rebuilds the constructor's argument from the witness rows and the rows that
+    come back are compared field for field, node ids included. Three verdicts, and only the first
+    is admitted -- a case this cannot CHECK is named rather than admitted, which is the rule the
+    old `return False` had no way to express.
+
+    MEASURED, the whole corpus, duckdb 1.5.5: of the 13 cases this admitted before, ELEVEN
+    reconstruct to rows tree_steps reproduces exactly, and TWO do not -- `b09` above, and `b53`,
+    `(TYPE 'a', HAS ( (TYPE 'b') (TYPE 'c') ))`, whose witness gives the group's inner steps a NULL
+    combinator. tree_steps coalesces those to `desc` (measured: with NULL, with 'desc' and with
+    'child' it prints `DESCENDANT` keywords and never this text), so b53's text is printer output
+    of HAND-BUILT IR only and has no constructible preimage at all. That is a weaker fault than
+    b09's -- nothing is being read wrong -- but the admission was unsound for the same reason, so
+    it leaves the denominator too and is named in the run's output.
     """
     if isinstance(py, tuple):
-        return False
+        return "py refuses"
+    rows = [dict(zip(FIELDS, r)) for r in py]
     try:
-        lit = treeql_parser.to_sql([dict(zip(FIELDS, r)) for r in py])
-        return con.execute("SELECT tree_selector_to_treeql(" + lit + ") = "
+        lit = treeql_parser.to_sql(rows)
+        same = con.execute("SELECT tree_selector_to_treeql(" + lit + ") = "
                            + sql_str(text)).fetchone()[0] is True
     except Exception:
-        return False
+        return "py accepts but its reprint differs"
+    if not same:
+        return "py accepts but its reprint differs"
+    arg = steps_literal(rows)
+    if arg is None:
+        return "py reprints it, but canonicality is UNCHECKED: no tree_steps argument for this IR"
+    try:
+        built = [tuple(r) for r in con.execute(
+            "SELECT " + ", ".join(FIELDS) + " FROM (SELECT unnest(tree_steps(" + arg
+            + "), recursive := true))").fetchall()]
+    except Exception as e:
+        return ("py reprints it, but canonicality is UNCHECKED: tree_steps refused the "
+                "reconstruction (%s)" % str(e).split("\n")[0])
+    if built != [tuple(r) for r in py]:
+        return "py reprints it, but its IR is NOT CANONICAL: tree_steps builds different rows"
+    return ADMITTED
 
 
 def main():
@@ -664,6 +777,7 @@ def main():
     matched = {}            # label -> the signature actually observed, for every DIVERGING case
     agreed = set()          # labels that did NOT diverge, so a declaration for them is stale
     printer_output_in_b = []  # family-B cases the printer CAN emit, found by computation
+    unsound_witness = []      # family-B cases a NON-CANONICAL or UNCHECKED witness would admit
     for label, text, want in cases:
         key = label.split()[0]
         sql, py = rows_from_sql(con, text), rows_from_py(text)
@@ -678,7 +792,8 @@ def main():
         # family-B case paid for the reprint twice -- it parses the text with the Python, builds an
         # IR literal from it and asks the database to print it. The `want is None` conjunct keeps
         # the short-circuit the second branch had: a family-A case never reaches the call at all.
-        printer_output = want is None and is_printer_output(con, text, py)
+        why_not = ADMITTED if want is not None else is_printer_output(con, text, py)
+        printer_output = want is None and why_not == ADMITTED
         if want is not None:
             exact_checked += 1
             indep_n += 1
@@ -689,22 +804,31 @@ def main():
             if sql != want or py != want:
                 exact_fail.append((key, label, text, sql == want, py == want))
         elif not printer_output:
-            # ROW B's CHECK, AND IT RUNS EVERY TIME. A family-B case can leave the denominator two
-            # ways and BOTH used to be silent: the Python refuses, or the Python accepts and its
-            # reprint differs. Finding 1 was exactly this -- `''` is printer output, the Python
-            # refuses it, and the case was counted nowhere while the gate printed "enumerated
-            # rather than excluded". The exclusions are now listed, so the question "is any of
-            # these printer output?" is asked of the gate instead of of a reader's memory.
-            excluded.append((label, text,
-                             "py refuses" if isinstance(py, tuple)
-                             else "py accepts but its reprint differs"))
+            # ROW B's CHECK, AND IT RUNS EVERY TIME. A family-B case can leave the denominator
+            # FOUR ways and the first two used to be silent: the Python refuses, the Python accepts
+            # and its reprint differs, the reprint holds but the witness is NOT CANONICAL, or the
+            # reprint holds and canonicality cannot be checked. Finding 1 of the task review was
+            # the first -- `''` is printer output, the Python refuses it, and the case was counted
+            # nowhere while the gate printed "enumerated rather than excluded"; the third is
+            # k13/b09. is_printer_output names which, so the question "is any of these printer
+            # output, and is any of them admitted on the wrong witness?" is asked of the gate
+            # instead of of a reader's memory.
+            excluded.append((label, text, why_not))
+            if "CANONICAL" in why_not or "UNCHECKED" in why_not:
+                unsound_witness.append((label, why_not))
         if printer_output:
             # A FAMILY-B CASE THAT IS PRINTER OUTPUT IS STILL IN THE DENOMINATOR. It is not moved
             # into family A, and that is deliberate rather than lazy: family A is keyed by an IR
-            # literal, and several of these shapes have no IR tree_steps will build -- the empty
-            # FIRST step and the alias-only step are both printer output that the constructor
-            # refuses to construct. Relocating them would mean hand-building IR; evaluating EXACT
-            # on them where they sit costs nothing and cannot be forgotten.
+            # LITERAL, which is a text a person writes, while what a family-B case has is ROWS --
+            # relocating one means hand-writing the literal that builds those rows and keeping the
+            # two in step. Evaluating EXACT on them where they sit costs nothing and cannot be
+            # forgotten. (The reason that stood here was that "several of these shapes have no IR
+            # tree_steps will build -- the empty FIRST step and the alias-only step". MEASURED
+            # FALSE by the canonicality check added below it: `b14`'s empty first step rebuilds as
+            # `[{comb: NULL}, {type: 'b', comb: 'child'}]` and `b17`'s alias-only step as
+            # `[{"as": 'x'}]`, and tree_steps builds both, row for row. The shapes the constructor
+            # really does refuse are b53's NULL combinator inside a group -- and that one is no
+            # longer admitted.)
             printer_output_in_b.append(label)
             exact_checked += 1
             adm_n += 1
@@ -846,6 +970,12 @@ def main():
         print("  of which %d came from family B, found to be printer output by computation: %s"
               % (len(printer_output_in_b),
                  ", ".join(l.split()[0] for l in printer_output_in_b)))
+    # NAMED IN THE DEFAULT OUTPUT, not only under --both-refuse-audit, and not merely counted among
+    # the exclusions above. A case here reprints to itself, so the old rule ADMITTED it and scored
+    # `sql == py` as the exact theorem on it -- which is exactly what the theorem is not when the
+    # witness is not the constructor's IR. The whole defect was that this was silent.
+    for label, why in unsound_witness:
+        print("  WITNESS NOT SOUND, so NOT in the denominator: %s\n    %s" % (label, why))
     if exact_checked == 0 or len(cases) == 0:
         print("FAIL: the sweep compared nothing")
         sys.exit(4)
