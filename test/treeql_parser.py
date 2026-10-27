@@ -49,10 +49,10 @@ rather than a round trip:
     runs to the next separator that is followed by another clause keyword. Its character scan
     tracks `'...'` literals AND `"..."` identifiers, and counts `[ ]` and `{ }` as well as `( )`.
 
-Those two differences are the whole reason the sweep finds anything. They are not a fix applied
-here -- the macros are unchanged by this file -- and test/sweep_treeql.py's DIVERGENT table names
-each shape where the two readings part, with the record in test/sql/48_treeql_parse.test that pins
-the macros' answer.
+Those two differences are the whole reason the sweep finds anything. Nothing in THIS file changes
+the macros; what the differential found is fixed in sql/10_treeql.sql, where it belongs, and
+test/sweep_treeql.py's DIVERGENT table names each shape where the two readings still part, with the
+record in test/sql/48_treeql_parse.test that pins the macros' answer.
 
 THE ONE PLACE THIS READING IS BOUND TO A RULING RATHER THAN TO THE GRAMMAR, stated here because
 it looks like a quirk and is not: a step's clause list closes at the LAST ')' on the step's line,

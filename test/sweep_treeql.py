@@ -243,39 +243,50 @@ DIVERGENT = {
     # not on a count -- so it is a recursive CTE or a list_reduce, inside a scalar macro that R22
     # already records a binder wall for. That is a piece of work with its own risk, and this sweep
     # is what will prove it when someone does it: every entry below turns into an `agree`.
-    "a40": ("py", "the R42 record at 48_treeql_parse.test:2189 pins the REPRINT half only"),
-    "a41": ("py", "the R42 record at 48_treeql_parse.test:2198 pins the REPRINT half only"),
-    "a42": ("py", "the `cannot read` record at 48_treeql_parse.test:2267 (step2+has)"),
-    "a43": ("py", "the R42 discriminator record at 48_treeql_parse.test:2225"),
+    # CITED BY THE RECORD'S INPUT AND NOT BY LINE. That is 48_treeql_parse.test's own rule, stated
+    # in its FIX ROUND 3 block: "adding a comment above them moves the line and the citation goes
+    # stale". The first draft of this table cited six records by line number and had moved every
+    # one of them with its own edits to that file before it was ever committed -- the same defect
+    # as HEAD's parent commit, "two locators in the new comments pointed at the wrong record".
+    "a40": ("py", "48's R42 'step1+has' record pins the REPRINT half only, not EXACT"),
+    "a41": ("py", "48's R42 'has+nested' record pins the REPRINT half only, not EXACT"),
+    "a42": ("py", "48's `cannot read` record for the 'step2+has' printer output"),
+    "a43": ("py", "48's R42 DISCRIMINATOR record, the `a ) unmatched` literal with two odd bodies"),
     "b58": ("py", "no record: the same cause as a40..a43, found by this sweep"),
 
     # ---- CLASS 2: the R42 stand-downs, which decline to name a cause on raw-bodied text ----
-    # Three refusal arms ask tree_treeql_no_raw_body first and stand down when it is FALSE, because
-    # on mis-split raw-bodied text the fragment they would name is not evidence of the fault they
-    # name. sql/10_treeql.sql states the cost of that at its `parenless` arms: "on raw-bodied text
-    # this arm does not fire AND nothing downstream catches it, so a WHERE or ATTR body SWALLOWS
-    # THE STEP THAT FOLLOWS IT and the parse is silently wrong."
+    # A refusal arm that asks tree_treeql_no_raw_body first stands down when it is FALSE, on the
+    # reasoning that on mis-split raw-bodied text the fragment it would name is not evidence of the
+    # fault it names. THIS READING NEEDS NO STAND-DOWN -- its scan does not lose its place on a raw
+    # body -- so it can name the real cause, and that is where the two part.
     #
-    # THIS READING NEEDS NO STAND-DOWN, which is why it diverges: its scan does not lose its place
-    # on a raw body, so it can name the real cause. b24/b25 are F2 -- the macros return a clean
-    # WRONG parse and this reading refuses by name.
+    # F2 WAS IN THIS CLASS AND IS FIXED. The sweep's b24 and b25 were here, declared, with the
+    # reason "the guard cannot be lifted while CLASS 1 is open, because then a genuinely mis-split
+    # fragment would get a false `parenless` cause". THAT REASON DID NOT REPRODUCE. Measured, with
+    # the two `parenless` arms' guard removed and nothing else changed: a40..a43 and b58 -- the five
+    # mis-split shapes in this very sweep, all printer output -- kept the answers they already had,
+    # none of them reaching that arm; file 48 went to exactly ONE failure, F2's own record; and the
+    # three R42 wording records were `unterminated`, `groupparen` and `unbalanced`, never this arm.
+    # So the guard was protecting against a shape no case could produce, and b24/b25 now AGREE.
     #
-    # NOT FIXED HERE, by the authority file's own wording. 48_treeql_parse.test says of F1 "Task 7
-    # owns the fix", and of this gap "THE GAP IS NOT FIXED HERE, by ruling ... Task 7's
-    # differential generator owns it." The generator is what owns it, and these three entries are
-    # it: the guard cannot be lifted while CLASS 1 is open, because then a genuinely mis-split
-    # fragment would get a false `parenless` cause -- which is the defect R42 added the guard for.
-    "b24": ("py", "F2, pinned at 48_treeql_parse.test:2380 -- the macros' wrong parse is the record"),
-    "b25": ("py", "F2's ATTR twin; the record at :2380 pins the WHERE one"),
-    "b57": ("py", "no record: the groupparen arm's stand-down, same cause as b24/b25"),
+    # WHAT IS LEFT IN THE CLASS is the `groupparen` arm's stand-down, which was NOT removed -- it is
+    # a different arm with its own R42 reason and no measurement behind lifting it.
+    #
+    # b57's SQL MESSAGE CHANGED WITH F2'S FIX, recorded because it is the one wording that fix
+    # costs: it was `cannot read HAS WHERE a = 1` and is now the `parenless` sentence, since
+    # `groupparen` still stands down here and `parenless` now fires. Both refuse and both point at
+    # missing parentheses; the new one names the inner step where the GROUP's own parentheses are
+    # what is missing, so it is less precise and not false. This reading names the group.
+    "b57": ("py", "no record: the groupparen arm's stand-down, the half of CLASS 2 still open"),
 
     # ---- CLASS 3: a raw body's own top-level comma, where no bracket or brace encloses it ----
     # The residue of F1 after the splitter learned `[ ]` and `{ }`. NOT REACHABLE FROM A LEGAL
-    # PREDICATE: the record at 48_treeql_parse.test:2145 measures that a bare top-level comma is a
-    # DuckDB syntax error, so the printer can never emit this shape from a WHERE body the host door
-    # accepted. That is why the bracket and brace cases were the ones worth fixing and this one is
-    # recorded instead -- and why it is listed here rather than left to be rediscovered.
-    "b55": ("py", "no record: unreachable from a legal predicate, see the record at :2145"),
+    # PREDICATE: 48's record that drives `CASE WHEN a = 1, PSEUDO 'p'` measures that a bare
+    # top-level comma is a DuckDB syntax error, so the printer can never emit this shape from a
+    # WHERE body the host door accepted. That is why the bracket and brace cases were the ones
+    # worth fixing and this one is recorded instead.
+    "b55": ("py", "48 pins the refusal; unreachable from a legal predicate, per 48's "
+                  "`CASE WHEN a = 1, PSEUDO 'p'` syntax-error record"),
 }
 
 

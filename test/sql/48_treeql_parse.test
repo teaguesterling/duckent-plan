@@ -2282,16 +2282,22 @@ tree_parse_treeql: cannot read
 # ==============================================================================================
 # FIX ROUND 3 -- THE RECORDS FOR F1, F2 AND F3, AND THE BOUNDARY RECORD BESIDE F1
 #
-# SEVEN RECORDS SIT HERE, and TASK 7 MOVED TWO OF THEM BETWEEN CLASSES. The classification below
-# is fix round 5's, updated where the fix changed what a record pins; the original counts are kept
-# in the sentences that name them, because this block is a record of how the classes were argued.
+# TASK 7 EMPTIED THE "KNOWN WRONG" CLASS. The classification below is fix round 5's, updated where
+# a fix changed what a record pins; the original counts are kept in the sentences that name them,
+# because this block is a record of how the classes were argued, not just of where they ended.
 #
-# ONE PINS BEHAVIOUR THAT IS KNOWN WRONG and is not intent: F2's wrong parse value.
+# NOTHING HERE NOW PINS BEHAVIOUR THAT IS KNOWN WRONG. Fix round 5 counted THREE such records --
+# F1's two refusals of printer output and F2's wrong parse value -- and all three are fixed:
+#   * F1's PAIR now assert EXACT round trips, because the splitter counts brackets and braces. A
+#     third record sits beside them for the residue that fix does not reach.
+#   * F2's RECORD now asserts a refusal, because the `parenless` arm's stand-down is gone. Three
+#     records sit beside it: its ATTR twin, which had no record and does now, and two controls.
 #
-# TWO USED TO PIN KNOWN-WRONG BEHAVIOUR AND NOW ASSERT THE FIX: F1's pair. They were two of the
-# "THREE ... KNOWN WRONG" this header counted, as refusals of printer output; Task 7 made the
-# splitter count brackets and braces, and they are EXACT assertions now. A third record was added
-# beside them for the residue the fix does not reach.
+# RECORDS ARE NAMED BY THEIR INPUT BELOW AND NOT BY LINE, which is this block's own rule and the
+# reason it exists: "adding a comment above them moves the line and the citation goes stale --
+# which is exactly what happened to the first draft of this very block." Task 7 made it happen
+# again, to its own first draft of the DIVERGENT table in test/sweep_treeql.py, which cited six
+# records by line and had moved every one of them by its own edits before it was committed.
 #
 # TWO PIN BEHAVIOUR THAT IS CORRECT and guard it. The boundary record below F1 -- a bracket or a
 # brace on its own round-trips EXACTLY, so a "fix" that refuses brackets outright turns it red.
@@ -2337,17 +2343,29 @@ tree_parse_treeql: cannot read
 # ONE CAUSE BEHIND F1 AND F2: the clause-list splitter is not a tokeniser. It counted `(` and `)`,
 # it read every `'` as a delimiter, and it was blind to `[` `]` and `{` `}`.
 #
-# TASK 7 CLOSED ONE OF THOSE THREE and the other two are open, which is why F1's records moved and
-# F2's did not:
+# TASK 7 CLOSED TWO OF THOSE THREE:
 #   * BLIND TO BRACKETS AND BRACES -- CLOSED. tree_treeql_split_parts counts all three enclosure
 #     pairs, so F1's two inputs round-trip. The reasoning is at that macro.
 #   * EVERY `'` IS A DELIMITER -- OPEN. That is R41. A raw body may hold a double-quoted
 #     IDENTIFIER whose content has an apostrophe, and the parity scan loses its place on it. The
 #     scan is a WINDOW SUM over one delimiter; two delimiters that can nest need sequential state,
 #     which is a different piece of work with R22's binder wall in front of it.
-#   * NOT A TOKENISER AT ALL -- OPEN, and it is what F2 rests on. The splitter does not know which
-#     clause kind it is inside, so it cannot tell a raw body's own comma from a separator, and the
-#     refusal arms that would catch the consequence stand down on raw-bodied text.
+#   * NOT A TOKENISER AT ALL -- OPEN as a description of the splitter, and NOT what F2 rested on.
+#
+# F2'S CAUSE WAS THE GUARD, NOT THE SPLITTER, and the sentence that said otherwise is withdrawn
+# here rather than a thousand lines away. It read: F2 "rests on" the splitter not being a tokeniser,
+# because it "cannot tell a raw body's own comma from a separator". MEASURED FALSE: F2's text is
+# `(TYPE 'a', HAS ( WHERE a = 1 TYPE 'b' ))`, whose one comma IS a separator and is split
+# correctly, and which carries no apostrophe, bracket or brace for the splitter to trip on. The
+# inner chain `WHERE a = 1 TYPE 'b'` holds no combinator keyword, so it arrives as ONE parenless
+# step -- and the `parenless` arm was standing down on it because the text carries a raw body.
+# Removing that stand-down, with no splitter change whatever, is what fixed it: file 48 went to
+# exactly one failure, F2's own record.
+#
+# SO THE HEADER'S "ONE CAUSE BEHIND F1 AND F2" IS ITSELF TOO STRONG. F1's cause was the splitter.
+# F2's was a refusal arm's guard. They are two causes, and the claim that one sat behind both is
+# the shape of error this block keeps recording -- a mechanism asserted across cases that were only
+# ever measured one at a time.
 #
 # WHERE THE OPEN TWO ARE NOW MEASURED RATHER THAN REMEMBERED: test/sweep_treeql.py reads printed IR
 # back through BOTH front-ends and carries them as DECLARED DIVERGENCES, each naming the record
@@ -2424,23 +2442,54 @@ SELECT ok FROM (
 true
 true
 
-# F2. A CLEAN WRONG PARSE, PINNED. The WHERE body swallows the step that follows it: `TYPE 'b'`
-# ends up INSIDE the where value. The parenless arm (R36) does not fire, because the arm asks
-# tree_treeql_no_raw_body first and this text carries a raw body.
+# F2. FIXED IN TASK 7, and this record now asserts the refusal rather than pinning the wrong parse.
 #
-# WHAT I DID NOT MEASURE, said plainly: I did NOT establish that the stand-down CAUSES this. The
-# coordinator measured f836e29 -- which has the arm but not the guard -- accepting the same input,
-# because the splitter had already mis-split the text so no part ever looked parenless. Same end
-# state by a different route. BASE accepts it too, measured by me.
+# WHAT IT SAID BEFORE: it was a `query I` record pinning a CLEAN WRONG PARSE --
+# `selector:treeql | step:~ | type:a | has:~ | step:~ | where:a = 1 TYPE 'b'` -- in which the WHERE
+# body SWALLOWED the step that follows it and `TYPE 'b'` ended up inside the where value. The
+# parenless arm (R36) did not fire, because it asked tree_treeql_no_raw_body first and this text
+# carries a raw body.
 #
-# THE PARSE RESULT IS PINNED, not merely "no error": a record that only asserted acceptance would
-# stay green if the wrong value changed shape.
-query I
-SELECT string_agg(kind || ':' || COALESCE(value, '~'), ' | ' ORDER BY node_id)
-FROM (SELECT unnest(tree_parse_treeql('(TYPE ''a'', HAS ( WHERE a = 1 TYPE ''b'' ))'),
-                    recursive := true));
+# THE FIX: that stand-down is removed from the two `parenless` arms. The reasoning, the measurement
+# that made it safe, and the one wording it costs are at those arms in sql/10_treeql.sql.
+#
+# WHY IT WAS WORTH FIXING rather than documenting: a clean wrong parse is the worse of the two
+# failures, which is R42's counterweight's own words. The guard bought a true message on a shape no
+# case could produce and paid with a wrong answer on this one.
+#
+# THE ROUND-3 CAUTION IS DISCHARGED, not deleted. It read: "I did NOT establish that the stand-down
+# CAUSES this", because f836e29 -- which had the arm but not the guard -- accepted the same input,
+# the splitter having already mis-split the text so that no part ever looked parenless. On THIS
+# HEAD it is established, by removing the guard and nothing else and watching this one record
+# change: measured, file 48 went to exactly ONE failure, this record's, with 221 assertions and
+# every other record green. So on HEAD the guard is the cause.
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( WHERE a = 1 TYPE ''b'' ))');
 ----
-selector:treeql | step:~ | type:a | has:~ | step:~ | where:a = 1 TYPE 'b'
+tree_parse_treeql: a step inside HAS/NOT needs a combinator or parentheses
+
+# THE ATTR TWIN, which had no record of its own and does now. sql/10_treeql.sql measured both
+# shapes when it documented the gap; only the WHERE one was pinned, so the ATTR one was a matter of
+# memory. It was accepted with attr arg `1 TYPE 'b'`.
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( ATTR a = 1 TYPE ''b'' ))');
+----
+tree_parse_treeql: a step inside HAS/NOT needs a combinator or parentheses
+
+# THE CONTROL, and what it is a control FOR: that the arm still refuses what it always refused, so
+# the two records above are not bought by an arm that now fires on everything. This shape carries
+# NO raw body, so it reached the arm before the fix too.
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( TYPE ''b'' TYPE ''c'' ))');
+----
+tree_parse_treeql: a step inside HAS/NOT needs a combinator or parentheses
+
+# ...AND THE OTHER SIDE OF THE CONTROL: a parenless clause list at TOP level is requirement 6 and
+# stays legal. The arm is scoped to levels 1 and 2, and removing its guard did not widen that scope.
+query I
+SELECT tree_parse_treeql('CLASS fn') = tree_steps([{class: 'fn'}]);
+----
+true
 
 # F3. THE ONE WHOSE ONLY GATE IS A RECORD, and fix round 4 had to correct WHY. Two parenthesised
 # steps side by side collapse into ONE step whose attr `arg` holds the rest of the text.

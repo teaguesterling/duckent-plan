@@ -961,16 +961,20 @@ rd1 AS (SELECT i0, a0, i1, part, tree_treeql_step_parse(part) AS p FROM lvl1),
 -- still have applied to is either refused or has a combinator of its own, and
 -- test/sql/48_treeql_parse.test gates that by re-adding the COALESCE as a mutant.
 --
--- THAT SENTENCE IS FALSE ON RAW-BODIED TEXT, measured in fix round 3. A THIRD case exists that the
--- sentence does not allow for: a parenless inner step whose text carries a WHERE or ATTR body is
--- NEITHER refused NOR given a combinator of its own -- it is accepted, with the raw body
--- swallowing the step that follows. Measured, `(TYPE 'a', HAS ( WHERE a = 1 TYPE 'b' ))` parses to
--- a single inner step whose where value is `a = 1 TYPE 'b'`. The R36 arm stands down on raw bodies
--- and nothing downstream catches it.
+-- THAT SENTENCE WAS FALSE ON RAW-BODIED TEXT until Task 7, and the history is kept because it is
+-- how the hole was found. Measured in fix round 3: a THIRD case existed that the sentence did not
+-- allow for -- a parenless inner step whose text carries a WHERE or ATTR body was NEITHER refused
+-- NOR given a combinator of its own. It was accepted, with the raw body swallowing the step that
+-- follows, so `(TYPE 'a', HAS ( WHERE a = 1 TYPE 'b' ))` parsed to a single inner step whose where
+-- value was `a = 1 TYPE 'b'`. The R36 arm stood down on raw bodies and nothing downstream caught it.
 --
--- The mutant the sentence points at still gates what it always gated -- the DEFAULT's absence on
--- text the arm can read. It does not gate the raw-bodied case, and it never did. Identical on
--- BASE, not fixed here by ruling, pinned as a record in the FIX ROUND 3 block.
+-- TASK 7 REMOVED THAT STAND-DOWN, so the sentence is true again: every text the default could have
+-- applied to is now either refused or has a combinator of its own, raw-bodied text included. The
+-- reasoning and the measurement that made the removal safe are at the `parenless` arms below.
+--
+-- The mutant the sentence points at gates what it always gated -- the DEFAULT's absence on text the
+-- arm can read. It never gated the raw-bodied case; what gates that now is the arm firing on it,
+-- recorded in the FIX ROUND 3 block.
 --
 -- The TOP-LEVEL default in stp0 is untouched: there the separator is a newline, the first step is
 -- the only one that may carry no combinator, and R35 is scoped to inner steps.
@@ -1267,29 +1271,45 @@ prob AS (
   -- whenever the step HAS one, so a printed step with clauses and no combinator word always
   -- carries its own parentheses and this rule requires their absence.
   --
-  -- AND R42 AGAIN: a step text carrying a RAW body is not judged parenless either. The chain
-  -- reader splits on the same quote parity, so a mis-split fragment of raw-bodied text can arrive
-  -- here looking parenless when the printed step had its parentheses.
+  -- THE R42 STAND-DOWN IS GONE FROM THIS ARM, and that is F2's fix. It read
+  -- `AND tree_treeql_no_raw_body(part)`, on the reasoning that the chain reader splits on quote
+  -- parity, so a mis-split fragment of raw-bodied text could arrive here looking parenless when
+  -- the printed step had its parentheses -- a refusal naming a cause the text does not have.
   --
-  -- WHAT THE STAND-DOWN COSTS, which this comment did not say until fix round 3: on raw-bodied
-  -- text this arm does not fire AND nothing downstream catches it, so a WHERE or ATTR body
-  -- SWALLOWS THE STEP THAT FOLLOWS IT and the parse is silently wrong. Measured:
+  -- WHAT THE STAND-DOWN COST, measured and recorded here before it was removed: on raw-bodied text
+  -- this arm did not fire AND nothing downstream caught it, so a WHERE or ATTR body SWALLOWED THE
+  -- STEP THAT FOLLOWED IT and the parse was silently wrong.
   --
-  --     (TYPE 'a', HAS ( WHERE a = 1 TYPE 'b' ))   ACCEPTED, where value = `a = 1 TYPE 'b'`
-  --     (TYPE 'a', HAS ( ATTR a = 1 TYPE 'b' ))    ACCEPTED, attr arg  = `1 TYPE 'b'`
-  --     (TYPE 'a', HAS ( TYPE 'b' TYPE 'c' ))      REFUSED -- the arm works where it can fire
+  --     (TYPE 'a', HAS ( WHERE a = 1 TYPE 'b' ))   was ACCEPTED, where value = `a = 1 TYPE 'b'`
+  --     (TYPE 'a', HAS ( ATTR a = 1 TYPE 'b' ))    was ACCEPTED, attr arg  = `1 TYPE 'b'`
+  --     (TYPE 'a', HAS ( TYPE 'b' TYPE 'c' ))      REFUSED -- the arm worked where it could fire
   --
-  -- I DID NOT MEASURE THAT THE STAND-DOWN CAUSES THIS, and the causal story is not mine to tell:
-  -- the coordinator measured f836e29, which has this arm but not the guard, accepting the same two
-  -- inputs, because the splitter had already mis-split the text so that no part ever looked
-  -- parenless. Same end state by a different route. BASE accepts them too. So the honest statement
-  -- is what this arm does NOT catch, not what the guard broke.
+  -- A CLEAN WRONG PARSE IS THE WORSE FAILURE, which this file says itself at R42's counterweight:
+  -- suppressing an arm "would turn a refusal into a clean WRONG PARSE ... which is the worse of the
+  -- two failures". The guard bought a true message on a shape nobody could show, and paid for it
+  -- with a wrong answer on a shape that is measured right here.
+  --
+  -- WHY REMOVING IT IS SAFE, and this is a MEASUREMENT rather than the argument the guard rested
+  -- on. The risk was a FALSE `parenless` on text the splitter mis-split. test/sweep_treeql.py
+  -- drives exactly those shapes -- five of them, printer output from the ordinary constructor,
+  -- carrying one or two odd-quoted raw bodies -- and with this guard removed NONE of them reaches
+  -- this arm: every one keeps the answer it had, which the sweep reports as its DIVERGENT entries
+  -- being unchanged. The three R42 wording records in test/sql/48_treeql_parse.test are
+  -- `unterminated`, `groupparen` and `unbalanced`; none was ever this arm, and all three stay
+  -- green. So the guard was protecting against a shape no case could produce.
+  --
+  -- WHAT IT DOES COST, stated rather than discovered later: a HAND-WRITTEN parenless group whose
+  -- part carries a raw body now gets THIS message instead of the generic one, because the
+  -- `groupparen` arm above still stands down on raw bodies and this arm now fires first in that
+  -- situation. Measured: `(TYPE 'a', HAS WHERE a = 1)` moves from `cannot read HAS WHERE a = 1` to
+  -- this sentence. Both refuse and both point at missing parentheses; this one names the inner
+  -- step where the group's own parentheses are what is missing, so it is less precise and not
+  -- false. It is NOT printer output, so R42's rule about never rejecting printer output is
+  -- untouched. test/sweep_treeql.py carries it as a declared divergence.
   UNION ALL SELECT 'parenless', part FROM stp1
         WHERE op IS NULL AND uw IS NULL AND part NOT LIKE '(%'
-          AND tree_treeql_no_raw_body(part)
   UNION ALL SELECT 'parenless', part FROM stp2
         WHERE op IS NULL AND uw IS NULL AND part NOT LIKE '(%'
-          AND tree_treeql_no_raw_body(part)
   -- AN UNKNOWN COMBINATOR, and AN UNKNOWN CLAUSE KEYWORD: R37's second and third rules. The
   -- message names the OFFENDING WORD. At BASE it named the remainder -- `FROBNICATE 'x'` refused
   -- with `cannot read 'x'`, pointing at the operand.
@@ -1340,14 +1360,15 @@ prob AS (
   --     the part reaches `cl IS NULL AND gkind IS NULL`. The round-3 brief said nothing covers
   --     this arm. The code says otherwise, and BASE 3384ede ACCEPTED that same input as a type
   --     clause whose value was `'a, WHERE x = 1`, so this row is an improvement on BASE.
-  --   NOT COVERED AT ALL: the two `parenless` arms below. Nothing catches their stand-down.
-  --     Measured, `(TYPE 'a', HAS ( WHERE a = 1 TYPE 'b' ))` is ACCEPTED and the WHERE body
-  --     swallows the next step, giving a where value of `a = 1 TYPE 'b'`.
+  --   WAS NOT COVERED AT ALL: the two `parenless` arms below. Nothing caught their stand-down.
+  --     Measured then, `(TYPE 'a', HAS ( WHERE a = 1 TYPE 'b' ))` was ACCEPTED and the WHERE body
+  --     swallowed the next step, giving a where value of `a = 1 TYPE 'b'`.
   --
-  -- THE GAP IS NOT FIXED HERE, by ruling: a counterweight row for the parenless arms is a
-  -- behaviour change, and the same input is accepted identically on BASE, so it is not a
-  -- regression this task introduced. It is pinned as a record in the FIX ROUND 3 block of
-  -- test/sql/48_treeql_parse.test, and Task 7's differential generator owns it.
+  -- THAT GAP IS CLOSED IN TASK 7, and it did NOT need a counterweight row: the stand-down itself
+  -- was removed from those two arms, so the fault is refused by its own name rather than caught
+  -- generically. The reasoning, the measurement that made it safe, and the one wording it costs
+  -- are at the arms themselves below. Nothing here needs a counterweight for them any more, and
+  -- the rows above still cover what they always covered.
   UNION ALL SELECT 'generic', part FROM uwk
         WHERE NOT tree_treeql_no_raw_body(part)
   UNION ALL SELECT 'generic', part FROM cps
