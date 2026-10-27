@@ -342,8 +342,8 @@
   #   :51  the '' escape inside 'it''s, ok'
   #   :284 R22's correlated multi-row form, where `ord` must restart per row
   # The remaining four are parser-level: :1158 (EXACT on a literal carrying a comma, a quote and a
-  # newline -- REFUSES, `unterminated quoted value`), :2250 (NORMALISING on two odd bodies plus an
-  # unmatched close paren -- REFUSES, `cannot read ...`), :2415 and :2425 (the unpaired-`"`
+  # newline -- REFUSES, `unterminated quoted value`), :2285 (NORMALISING on two odd bodies plus an
+  # unmatched close paren -- REFUSES, `cannot read ...`), :2450 and :2460 (the unpaired-`"`
   # collision pair, whose two preimages stop printing the same bytes).
   also_kills: nothing -- MEASURED by running the WHOLE suite under this mutant, not inferred from
     which files name the macro. 28 files, 1832 assertions, 9 failures, and all nine are in
@@ -364,8 +364,8 @@
   # node-id-sensitive comparisons and not an incidental breakage. Classified by the shape of each
   # failing record's SQL:
   #   22  EXACT, parse(print(ir)) = ir     952 959 1001 1015 1029 1036 1081 1088 1095 1102 1110
-  #                                        1166 1173 1496 1872 2039 2053 2061 2290 2314 2335 2525
-  #    5  NORMALISING, print(parse(print(ir)))                 1378 2214 2223 2234 2250
+  #                                        1166 1173 1496 1872 2039 2053 2061 2325 2349 2370 2560
+  #    5  NORMALISING, print(parse(print(ir)))                 1378 2249 2258 2269 2285
   #    1  NORMALISING, print(parse(text)) = text               1890
   #    5  other node-id-sensitive comparisons                  1189 1255 1473 1842 1929
   # -- 1189 lists node_id/parent_id/kind/value/op row by row, 1255 is the two-reading differential
