@@ -18,6 +18,28 @@ EXEC_VERBS = ("tree_ddl_create", "tree_ddl_drop", "tree_ddl_alter",
               "tree_insert", "tree_replace", "tree_delete", "tree_check")
 CALL_RE = re.compile(r"^\s*CALL\s+(" + "|".join(EXEC_VERBS) + r")\s*\((.*)\)\s*;?\s*$", re.S | re.I)
 
+# HOW THE RUNNER DRIVES EACH REGISTERED PARSER, keyed on the PARSER's name and not the
+# language's -- because the registry's answer to "which front-end reads this text" is a parser
+# name, and two languages may name one parser. tree_catalog.selector_languages decides WHICH;
+# this table is only HOW to call the one it named. Each entry takes the selector argument's
+# original SQL literal and its decoded text, and returns the argument that replaces it.
+#
+# `tree_css_lower` maps to test/css_parser.py and NOT to the macro of that name, and that is
+# deliberate rather than an oversight: the C++ extension sends css text to tree_css_lower while
+# this runner sends it to the Python parser, so the two repos exercise DIFFERENT artifacts bound
+# only by test/sql/44_parsers.test's differential. Mutant MN08 is planted in the Python parser
+# and is killed through this arm, so pointing css at the macro would quietly retire it.
+#
+# `tree_parse_treeql` maps to the MACRO ITSELF, inlined where the IR literal would go. There is
+# no second TREEQL parser for it to differ from, so pointing the runner at the macro means the
+# plan repo's tests exercise the artifact the extension actually ships. The ORIGINAL literal is
+# reused rather than re-quoted from the decoded text: decoding '' escapes and re-encoding them is
+# a round trip with nothing to gain and a quoting bug to lose.
+PARSER_DRIVERS = {
+    "tree_css_lower": lambda lit, text: " " + css_parser.to_sql(css_parser.parse(text)),
+    "tree_parse_treeql": lambda lit, text: " tree_parse_treeql(" + lit.strip() + ")",
+}
+
 
 def compile_macro_name(verb):
     """Map a CALL verb to its compile macro name by stripping the
@@ -165,6 +187,38 @@ class Session:
         argument if it carries one, else the catalog's default."""
         return self.written_language(args) or self.default_language()
 
+    def parse_selector(self, fname, lang, literal, text):
+        """A text selector's IR, from the front-end the REGISTRY names for its language.
+
+        THE LOOKUP IS THE POINT, not a tidier spelling of a branch. `parser IS NULL` is how core
+        refuses a language it cannot read: sql/01_catalog.sql registers treeql with no parser and
+        each front-end's own file names its own, so a build that does not embed a front-end's sql
+        file refuses that language's text through the SAME lookup that accepts it here. This
+        function used to read `if lang != "css"` and raise a message naming a milestone; the
+        registry row says it now, and test/sql/48_treeql_parse.test blanks the column to measure
+        that the refusal really comes from the lookup.
+
+        The three refusals are three different mistakes and say so. An unregistered language is
+        fixed by registering it; a registered one with no parser is fixed by embedding the file
+        that supplies one, or by handing the selector over as IR; a parser this runner has no
+        entry for is a gap in PARSER_DRIVERS and in nothing else. One message for all three
+        would send every reader to the wrong fix two times out of three."""
+        row = self.con.execute(
+            "SELECT parser FROM tree_catalog.selector_languages WHERE language = ?",
+            [lang]).fetchone()
+        if row is None:
+            raise RuntimeError(f"{fname}: no selector language '{lang}' in "
+                               f"tree_catalog.selector_languages")
+        parser = row[0]
+        if parser is None:
+            raise RuntimeError(f"{fname}: selector language '{lang}' has no parser: "
+                               f"tree_catalog.selector_languages.parser IS NULL for that row; "
+                               f"hand the selector over as IR instead -- tree_steps(...)")
+        if parser not in PARSER_DRIVERS:
+            raise RuntimeError(f"{fname}: the test runner cannot drive the parser '{parser}' that "
+                               f"tree_catalog.selector_languages names for '{lang}'")
+        return PARSER_DRIVERS[parser](literal, text)
+
     def rewrite_selectors(self, sql):
         """Replace a *text* selector in tree_match/tree_explain with the IR its language parses
         it to, leaving every other argument alone. A selector already handed over as IR is not
@@ -173,7 +227,9 @@ class Session:
         When the call names no language, the default from `tree_catalog.settings` decides which
         front-end parses the text -- and nothing is written back. ONE MECHANISM carries the
         provenance: the parser that parsed the text stamps its name on the IR's root row
-        (`value: 'css'`, see css_parser.to_sql), tree_selector_language reads it back, and
+        (`value: 'css'` from css_parser.to_sql, `value: 'treeql'` from tree_parse_treeql --
+        every front-end does it, which is what makes it one mechanism and not css's),
+        tree_selector_language reads it back, and
         `_match_language` is `COALESCE(language, <that stamp>)`. This used to append
         `language := '<default>'` as a second, parallel record of the same decision, which was
         redundant once the stamp existed and had to be suppressed whenever the caller named a
@@ -193,9 +249,7 @@ class Session:
                 named, lang = self.language_arg(args)
                 if lang is None:
                     lang = self.default_language()
-                if lang != "css":
-                    raise RuntimeError("tree_match: TREEQL text parsing arrives with M-LANG; pass tree_steps(...)")
-                args[2] = " " + css_parser.to_sql(css_parser.parse(text))
+                args[2] = self.parse_selector(fname, lang, args[2], text)
                 call = sql[start:sql.index("(", start) + 1] + ",".join(args) + ")"
                 sql = sql[:start] + call + sql[end:]
                 pos = start + len(call)

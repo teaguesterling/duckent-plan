@@ -1348,3 +1348,10 @@ SELECT CASE
     THEN tree_err('tree_parse_treeql: cannot read '
                   || COALESCE((SELECT frag FROM pb WHERE code = 'generic'), '<NULL>'))
   ELSE (SELECT v FROM asm) END);
+
+-- The registry's parser column for treeql stops being NULL, and this is the line that does it.
+-- It lives HERE, not in sql/01_catalog.sql, for the same reason 09_css.sql registers css: the
+-- extension's difference is WHICH FILES it embeds, not what they say. A core-only build that does
+-- not embed this file still finds parser IS NULL and still refuses text -- by a registry lookup
+-- rather than a hardcoded branch, which is what sql/01_catalog.sql asks for in as many words.
+UPDATE tree_catalog.selector_languages SET parser = 'tree_parse_treeql' WHERE language = 'treeql';
