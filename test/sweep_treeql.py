@@ -506,6 +506,19 @@ KNOWN_EXACT_FAILURES = {
            "ONE-part preimage survives (measured EXACT true) and this MULTI-part one fails. Not "
            "fixable by the slot order k01-k07 want, because the separator is not visible to the "
            "merge at all -- the mask removed it before the merge ran",
+
+    # the 14th member of the k01-k07 class, and the one the EXACT line used to score as a PASS.
+    "k13": "NOT A COLLISION, and the four documents that called it one are corrected in this "
+           "round. `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` has exactly ONE constructor-accepted "
+           "preimage -- this case -- because `pseudo` is slot 5 and `where` slot 6, so the "
+           "three-clause IR prints `(TYPE 'x', PSEUDO 'p', WHERE a = 1)`, DIFFERENT BYTES, "
+           "measured. The parse cuts the raw body at `, PSEUDO` and returns a `pseudo` node the "
+           "original never had, so a reader CAN choose here and this one chooses wrong -- a "
+           "SILENT WRONG PARSE and not one horn of an ambiguity. Blocked on exactly what k01-k07 "
+           "are blocked on: the merge would need the clause kinds' SLOT ORDER to know that "
+           "nothing but a group can follow a WHERE clause in printer output, and the registry has "
+           "NO ORDER COLUMN. Fixing one member of the class while its siblings stay parked would "
+           "make their entries wrong about why they are parked, so this is declared with them",
 }
 
 
