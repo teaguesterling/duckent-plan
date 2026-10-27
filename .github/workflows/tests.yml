@@ -53,6 +53,18 @@ jobs:
         run: python test/run.py test/sql
       - name: css parser unit tests
         run: python test/test_css_parser.py
+      # The TREEQL pair's binding. The css pair's differential lives inside the suites
+      # (test/sql/44_parsers.test), so the Suites step already covers it; the TREEQL one is a
+      # standalone script because it GENERATES its inputs -- it prints IR through
+      # tree_selector_to_treeql and reads the result back through both front-ends -- and a
+      # generated case list cannot be written out as records.
+      #
+      # IT RUNS HERE BECAUSE A DIFFERENTIAL THAT IS NEVER RUN IS NOT A GATE. It fails three ways,
+      # which is what makes it one: on a NEW divergence; on a DECLARED divergence that started
+      # agreeing, because its DIVERGENT table names each shape where the two readings part today
+      # and a fix has to remove the entry; and with exit 4 if it ever compares nothing.
+      - name: The two TREEQL readings still agree everywhere they are not declared to differ
+        run: python test/sweep_treeql.py
       - name: Runner and mutant harness unit tests
         run: python test/test_harness.py
       - name: Copy-and-edit mutants match the macros they copy

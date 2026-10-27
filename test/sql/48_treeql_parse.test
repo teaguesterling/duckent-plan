@@ -2106,23 +2106,31 @@ true
 #
 # "UNREACHABLE" WAS MEASURED FALSE IN FIX ROUND 3, and the claim is withdrawn here rather than
 # a thousand lines away. The old claim was: no valid DuckDB boolean predicate carries a bare
-# top-level comma, so no WHERE body the host door can accept is affected. The hole is that the
-# splitter counts ONLY parentheses -- it is blind to `[` `]` and to `{` `}` -- so a comma at paren
-# depth zero INSIDE A BRACKET OR BRACE PAIR is read as a clause separator. Measured, and it is
-# printer output from the ordinary constructor:
+# top-level comma, so no WHERE body the host door can accept is affected. The hole was that the
+# splitter counted ONLY parentheses -- it was blind to `[` `]` and to `{` `}` -- so a comma at
+# paren depth zero INSIDE A BRACKET OR BRACE PAIR was read as a clause separator. Measured, and it
+# was printer output from the ordinary constructor:
 #
 #     tree_steps([{"where": '[1, 2] = [1, 2]'}])  prints  (WHERE [1, 2] = [1, 2])
-#       -> REFUSED `cannot read 2]`
-#     tree_steps([{"where": '{a: 1, b: 2} = {a: 1, b: 2}'}])  -> REFUSED `cannot read b: 2}`
+#       -> was REFUSED `cannot read 2]`
+#     tree_steps([{"where": '{a: 1, b: 2} = {a: 1, b: 2}'}])  -> was REFUSED `cannot read b: 2}`
 #
-# So the limit IS REACHABLE, from an ordinary legal predicate. The record below that drives
-# `CASE WHEN a = 1, PSEUDO 'p'` is still true about a BARE comma and is NOT the gate for this --
-# it stays green through the whole of F1, because its comma is not inside a bracket or a brace.
-# The gate is the FIX ROUND 3 block's F1 records.
+# THAT HALF IS FIXED IN TASK 7 and the two records below F1 now assert the round trip instead of
+# the refusal: tree_treeql_split_parts counts all three enclosure pairs. The PAST TENSE above is
+# the point -- the measurement happened and is kept, because this block is the history of a claim
+# that was argued and then measured, and a reader who meets only the fixed code learns nothing
+# from a sentence that says it was always fine.
 #
-# NOT FIXED HERE, BY RULING: teaching the splitter brackets is a behaviour change and reopens
-# Task 1 from inside Task 5. It is identical on BASE 3384ede, so it is not a regression this task
-# introduced. Task 7's differential generator owns it.
+# WHAT REMAINS A LIMIT, and it is the narrow thing the record below actually drives: a top-level
+# comma enclosed by NOTHING. `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` still reads as THREE clauses
+# rather than a WHERE body of `a = 1, PSEUDO 'p'`, because the separator and the body's own comma
+# are genuinely indistinguishable there and the printer emits this same text for both IRs. The
+# parser takes the three-clause reading and it reprints byte-identically. The record below that
+# drives `CASE WHEN a = 1, PSEUDO 'p'` is true about a BARE comma and is the gate for exactly
+# this -- it was never the gate for the bracket half, and it stayed green through the whole of F1.
+#
+# test/treeql_parser.py, the second reading, takes the SAME three-clause reading here, so the two
+# front-ends agree on the limit rather than one of them resolving the ambiguity privately.
 # ----------------------------------------------------------------------------------------------
 query I
 SELECT tree_selector_to_treeql(tree_parse_treeql('(TYPE ''x'', WHERE a = 1, PSEUDO ''p'')'))
@@ -2274,10 +2282,16 @@ tree_parse_treeql: cannot read
 # ==============================================================================================
 # FIX ROUND 3 -- THE RECORDS FOR F1, F2 AND F3, AND THE BOUNDARY RECORD BESIDE F1
 #
-# SIX RECORDS SIT HERE, in THREE classes, and fix round 5's own report forced the split.
+# SEVEN RECORDS SIT HERE, and TASK 7 MOVED TWO OF THEM BETWEEN CLASSES. The classification below
+# is fix round 5's, updated where the fix changed what a record pins; the original counts are kept
+# in the sentences that name them, because this block is a record of how the classes were argued.
 #
-# THREE PIN BEHAVIOUR THAT IS KNOWN WRONG and is not intent: F1's two refusals of printer output,
-# and F2's wrong parse value.
+# ONE PINS BEHAVIOUR THAT IS KNOWN WRONG and is not intent: F2's wrong parse value.
+#
+# TWO USED TO PIN KNOWN-WRONG BEHAVIOUR AND NOW ASSERT THE FIX: F1's pair. They were two of the
+# "THREE ... KNOWN WRONG" this header counted, as refusals of printer output; Task 7 made the
+# splitter count brackets and braces, and they are EXACT assertions now. A third record was added
+# beside them for the residue the fix does not reach.
 #
 # TWO PIN BEHAVIOUR THAT IS CORRECT and guard it. The boundary record below F1 -- a bracket or a
 # brace on its own round-trips EXACTLY, so a "fix" that refuses brackets outright turns it red.
@@ -2289,8 +2303,11 @@ tree_parse_treeql: cannot read
 #
 # WHY A RECORD AND NOT A THEOREM IS THE GATE -- a different answer per hole, and not the same
 # question as the cause below. Measured in fix round 5, on this worktree:
-#   F1, both records  THE THEOREMS RAISE. parse(print(ir)) errors `cannot read 2]` and `cannot
-#                     read b: 2}`: the parser refuses its own printer's output, loudly.
+#   F1, both records  THE THEOREMS RAISED. parse(print(ir)) errored `cannot read 2]` and `cannot
+#                     read b: 2}`: the parser refused its own printer's output, loudly. That is
+#                     why a record was the right gate THEN -- a theorem that raises tells you
+#                     something is wrong without telling you what. Task 7 fixed the cause, and the
+#                     two records now assert the round trip the theorems always wanted.
 #   F2                NO THEOREM QUANTIFIES OVER IT. The theorems start from an IR, and this
 #                     text is not a fixed point of the printer: print(parse(text)) != text.
 #   F3                THE THEOREMS PASS, AND EXACT REQUIRES THIS READING. The text IS printer
@@ -2317,8 +2334,26 @@ tree_parse_treeql: cannot read
 # reading would turn EXACT red on a constructible IR and turn the FIX ROUND 4 record red with it.
 # There is nothing here for a later task to repair -- only a limit to document.
 #
-# ONE CAUSE BEHIND F1 AND F2: the clause-list splitter is not a tokeniser. It counts `(` and `)`,
-# it reads every `'` as a delimiter, and it is blind to `[` `]` and `{` `}`.
+# ONE CAUSE BEHIND F1 AND F2: the clause-list splitter is not a tokeniser. It counted `(` and `)`,
+# it read every `'` as a delimiter, and it was blind to `[` `]` and `{` `}`.
+#
+# TASK 7 CLOSED ONE OF THOSE THREE and the other two are open, which is why F1's records moved and
+# F2's did not:
+#   * BLIND TO BRACKETS AND BRACES -- CLOSED. tree_treeql_split_parts counts all three enclosure
+#     pairs, so F1's two inputs round-trip. The reasoning is at that macro.
+#   * EVERY `'` IS A DELIMITER -- OPEN. That is R41. A raw body may hold a double-quoted
+#     IDENTIFIER whose content has an apostrophe, and the parity scan loses its place on it. The
+#     scan is a WINDOW SUM over one delimiter; two delimiters that can nest need sequential state,
+#     which is a different piece of work with R22's binder wall in front of it.
+#   * NOT A TOKENISER AT ALL -- OPEN, and it is what F2 rests on. The splitter does not know which
+#     clause kind it is inside, so it cannot tell a raw body's own comma from a separator, and the
+#     refusal arms that would catch the consequence stand down on raw-bodied text.
+#
+# WHERE THE OPEN TWO ARE NOW MEASURED RATHER THAN REMEMBERED: test/sweep_treeql.py reads printed IR
+# back through BOTH front-ends and carries them as DECLARED DIVERGENCES, each naming the record
+# here that pins the macros' answer. Its EXACT column is the adjudicator -- 44 of 44 for the second
+# reading against 40 of 44 for the macros, measured in Task 7 -- so the open shapes are not a
+# difference of opinion between two parsers.
 #
 # F3'S CAUSE IS NOT THE SPLITTER, and saying it was is a claim fix round 5 measured false and left
 # for this ruling. MEASURED, with a control: on F3's text, tree_treeql_step_parse returns the
@@ -2333,23 +2368,46 @@ tree_parse_treeql: cannot read
 # owns the splitter.
 # ==============================================================================================
 
-# F1. A REFUSAL OF PRINTER OUTPUT THAT THIS TASK DOES NOT FIX. The constructor is ordinary, the
-# text is what the printer wrote, and the parser refuses it: the body's comma sits at paren depth
-# zero inside a bracket pair, so the splitter reads it as a clause separator. This record exists to
-# make that visible, NOT to say it is correct. Task 7 owns the fix.
-statement error
-SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": '[1, 2] = [1, 2]'}])));
+# F1. FIXED IN TASK 7, and these two records now assert the fix rather than pin the defect.
+#
+# WHAT THEY SAID BEFORE, so the change is legible and not silent: both were `statement error`
+# records expecting `cannot read 2]` and `cannot read b: 2}`. The constructor is ordinary and the
+# text is what the printer wrote, so the parser was refusing its OWN PRINTER'S OUTPUT -- and those
+# records existed "to make that visible, NOT to say it is correct", with "Task 7 owns the fix".
+#
+# THE FIX: tree_treeql_split_parts' depth scan counts `[ ]` and `{ }` as well as `( )`, so a comma
+# at paren depth zero but inside a list or struct literal is no longer read as a clause separator.
+# The reasoning sits at that macro in sql/10_treeql.sql, with the measured before and after.
+#
+# THESE ARE EXACT ASSERTIONS AND NOT MERELY "no error", for the reason F2's record gives for being
+# a value and not an acceptance: a record that only asserted acceptance would stay green if the
+# accepted IR were the wrong IR. parse(print(ir)) = ir is the whole claim.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": '[1, 2] = [1, 2]'}])))
+     = tree_steps([{"where": '[1, 2] = [1, 2]'}]);
 ----
-tree_parse_treeql: cannot read 2]
+true
 
-# BEYOND THE ROUND-3 BRIEF, and the reason it is here: the brief's cause was "a comma at paren
-# depth zero inside a BRACKET pair". Measured, a BRACE pair does the same, so the brief's class was
-# too narrow and a record is how that stops being a matter of memory. Same ruling, same owner.
-statement error
+# THE BRACE HALF. Beyond the round-3 brief, whose cause was "a comma at paren depth zero inside a
+# BRACKET pair": measured, a BRACE pair did the same, so the brief's class was too narrow and this
+# record is how that stopped being a matter of memory. One scan now answers both.
+query I
 SELECT tree_parse_treeql(tree_selector_to_treeql(
-  tree_steps([{"where": '{a: 1, b: 2} = {a: 1, b: 2}'}])));
+         tree_steps([{"where": '{a: 1, b: 2} = {a: 1, b: 2}'}])))
+     = tree_steps([{"where": '{a: 1, b: 2} = {a: 1, b: 2}'}]);
 ----
-tree_parse_treeql: cannot read b: 2}
+true
+
+# THE RESIDUE, recorded rather than left to be rediscovered: a raw body's top-level comma enclosed
+# by NOTHING still splits, because the fix counts enclosures and this comma has none. It is NOT
+# reachable from a legal predicate -- the record below the documented comma limit measures that a
+# bare top-level comma is a DuckDB syntax error -- so the printer cannot emit it from a WHERE body
+# the host door accepted, and no theorem over printer output quantifies over it. This record pins
+# the refusal so that a later widening of the scan has to decide about it on purpose.
+statement error
+SELECT tree_parse_treeql('(WHERE a = 1, b = 2)');
+----
+tree_parse_treeql: cannot read b = 2
 
 # THE REAL BOUNDARY OF THE LIMIT, recorded instead of guessed. A bracket or a brace is NOT by
 # itself a problem -- only a COMMA inside one is. Both of these are printer output and both
@@ -2588,6 +2646,54 @@ SELECT (x).value FROM (SELECT unnest(tree_parse_treeql('(TYPE ''function_definit
 WHERE (x).kind = 'selector';
 ----
 treeql
+
+# ==============================================================================================
+# F7 -- THE NO-DRIVER REFUSAL, which nothing tested until now
+#
+# WHAT IT GUARDS, and it is a DIFFERENT fault from the `parser IS NULL` one below. test/run.py's
+# PARSER_DRIVERS is keyed on the PARSER's NAME, not on the language's, so the registry's answer to
+# "which front-end reads this text" and the runner's answer to "how do I call it" are two
+# independent pieces of text that must spell one name alike. Nothing joined them: a registry row
+# renamed without the dict key, or the reverse, left the two silently out of step.
+#
+# WHY THIS IS THE ONLY THING THAT REPORTS THE DRIFT AS ITSELF. The three refusals in
+# parse_selector are deliberately distinct -- no such language, a language with no parser, and a
+# parser the runner cannot drive -- because, as its own comment says, one message for all three
+# would send every reader to the wrong fix two times out of three. This record is the third one,
+# and without it a name drift surfaces as whichever downstream error the un-rewritten selector
+# text happens to cause, which names neither the registry nor the dict.
+#
+# THE REFUSAL IS THE RUNNER'S, NOT THE REGISTRY'S, and that is the point of setting a name rather
+# than blanking the column: the row still HAS a parser, so the `parser IS NULL` arm cannot fire
+# and the message below can only have come from the PARSER_DRIVERS lookup. The expected text is
+# matched as a substring; the runner's full sentence goes on to name the language.
+#
+# THE ROW IS PUT BACK IMMEDIATELY, following the precedent of the two settings records above: the
+# UPDATE is session state, and every later record would otherwise run under a registry this one
+# changed. That is also why this block sits BEFORE the `parser IS NULL` banner and not after it --
+# that block is last in the file on purpose, because its own UPDATE is never undone.
+# ==============================================================================================
+
+statement ok
+UPDATE tree_catalog.selector_languages SET parser = 'nope' WHERE language = 'treeql';
+
+statement error
+FROM tree_match('main', 'app', '(TYPE ''function_definition'')', language := 'treeql');
+----
+the test runner cannot drive the parser 'nope'
+
+statement ok
+UPDATE tree_catalog.selector_languages SET parser = 'tree_parse_treeql' WHERE language = 'treeql';
+
+# THE CONTROL, and what it is a control FOR: that the restore above actually restored. Without it
+# a typo in the UPDATE would leave every later record running under a registry this block broke,
+# and the two records in the banner below would still pass -- the first because it blanks the
+# column anyway, the second because it calls the macro directly and never consults the registry.
+# So a silent failure here would be invisible for the rest of the file.
+query I
+SELECT parser FROM tree_catalog.selector_languages WHERE language = 'treeql';
+----
+tree_parse_treeql
 
 # ==============================================================================================
 # THE parser IS NULL PATH -- the refusal is the REGISTRY'S, not a branch's

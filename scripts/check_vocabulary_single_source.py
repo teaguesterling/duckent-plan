@@ -75,6 +75,38 @@ EXEMPT_CONSTRUCTS = {
          "there is nothing here to read it from; test/sql/38_css_lower.test binds this copy to "
          "the two SQL copies by node_id-inclusive struct comparison on a MULTI-clause step"),
     ),
+    # The TREEQL pair's second reading, in the same position test/css_parser.py is in and exempt
+    # for the same reason: it is database-free BY DESIGN. A differential whose two readings both
+    # consulted the registry would be one reading asked twice, which is what sql/09_css.sql means
+    # by "agreeing by construction would prove nothing" -- so this module may not read the
+    # registry, and there is nothing here for it to read it FROM.
+    #
+    # WHAT BINDS THESE COPIES, since this lint does not: test/sweep_treeql.py prints IR through
+    # tree_selector_to_treeql and reads it back through BOTH front-ends, comparing every field of
+    # every row. The macros DO read the registry, so a copy here that drifted from it stops
+    # agreeing with them. THAT IS WEAKER THAN READING THE REGISTRY and the gap is named rather
+    # than glossed: the sweep binds a keyword only if some case exercises it, so
+    # test/sql/46_slot_registry.test and 47_new_combinators.test remain what gate the registry
+    # against growing a member no copy knows about.
+    "test/treeql_parser.py": (
+        ('CLAUSE_KEYWORDS = {',
+         "the printer's clause KEYWORD spellings mapped to the IR kinds they introduce -- the "
+         "lexical table this reading needs to recognise a clause at all. Bound by "
+         "test/sweep_treeql.py's row-for-row differential against the macros, which read "
+         "tree_catalog.clause_kinds, and not by this lint"),
+        ('# CLAUSE_KEYWORDS, continued',
+         "the continuation line of the declaration above. Exempt separately because this lint "
+         "matches a substring of the offending LINE, and anchored on a marker comment rather than "
+         "on a run of members so that a reformat cannot silently void the exemption"),
+        ('COMBINATORS = {',
+         "the printer's combinator KEYWORD spellings mapped to ops. NOT derivable from the op: "
+         "DESCENDANT is desc, SIBLING is next, FOLLOWING is after and PRECEDING is prev, so four "
+         "of the eight have to be written. Same binding as above -- the differential, not this "
+         "lint"),
+        ('# COMBINATORS, continued',
+         "the continuation line of the declaration above, for the reason given for "
+         "CLAUSE_KEYWORDS' continuation"),
+    ),
     "test/test_css_parser.py": (
         ('["selector", "step", "type", "id", "class", "has", "step", "type"]',
          "one assertEqual's expected VALUE -- the kind names appear together because that is what "

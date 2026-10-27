@@ -41,12 +41,51 @@
 -- sampled.
 CREATE OR REPLACE MACRO tree_treeql_ws() AS ' ' || chr(9) || chr(10) || chr(12) || chr(13);
 
--- A clause list split on `sep` at paren depth 0 and outside single quotes.
+-- A clause list split on `sep` at BRACKET depth 0 and outside single quotes, where "bracket"
+-- means `( )`, `[ ]` and `{ }` alike -- see THE DEPTH COUNTS THREE PAIRS below.
 --
 -- THE SEPARATORS OCCUR INSIDE THE BODIES. The printer emits ATTR and WHERE bodies unquoted and
 -- unescaped, so `(TYPE 'x', WHERE name IN ('a', 'b'))` contains a ", " that is not a separator
 -- and a ")" that is not the step's. A split on ', ' mis-parses it, and so do the other cases in
 -- 48_treeql_parse.test.
+--
+-- THE DEPTH COUNTS THREE PAIRS, not one, and this is F1's fix. The scan counted `(` and `)` only,
+-- so a comma at PAREN depth zero but inside a list or struct literal was read as a clause
+-- separator. A WHERE body is raw host SQL and DuckDB spells both of those with brackets and
+-- braces, so the shape is reachable from an ordinary legal predicate -- MEASURED, and it is
+-- printer output from the ordinary constructor:
+--
+--     tree_steps([{"where": '[1, 2] = [1, 2]'}])          printed  (WHERE [1, 2] = [1, 2])
+--       -> was REFUSED `cannot read 2]`;          now parses back to that IR, EXACT true
+--     tree_steps([{"where": '{a: 1, b: 2} = {a: 1, b: 2}'}])
+--       -> was REFUSED `cannot read b: 2}`;       now parses back to that IR, EXACT true
+--
+-- A PARSER THAT REFUSES ITS OWN PRINTER'S OUTPUT is what the Global Constraint forbids, which is
+-- why this is a fix and not a widening. Both inputs were pinned as `statement error` records in
+-- the FIX ROUND 3 block of test/sql/48_treeql_parse.test, labelled there as behaviour that is
+-- known wrong with "Task 7 owns the fix"; those two records are now EXACT assertions.
+--
+-- WHAT IS DELIBERATELY NOT CHANGED, because a record measures the boundary: brackets and braces
+-- are counted for SEPARATOR SUPPRESSION ONLY and are NOT required to BALANCE. An unmatched one is
+-- host SQL's business, and refusing it here would reject text the parser accepts today. The
+-- boundary record beside F1 pins that a bracket or a brace ALONE was never the problem -- only a
+-- comma inside one was -- so `x[1] = 1` and `{a: 1} = {a: 1}` round-trip exactly, before and
+-- after.
+--
+-- WHAT THIS DOES NOT REACH, stated so the fix is not read as wider than it is: a raw body whose
+-- top-level comma is enclosed by NOTHING. `(WHERE a = 1, b = 2)` still splits into two parts and
+-- still refuses. That shape is NOT reachable from a legal predicate -- the record below the
+-- documented comma limit measures that a bare top-level comma is a DuckDB syntax error -- so the
+-- printer cannot emit it from a WHERE body the host door accepted. test/sweep_treeql.py carries it
+-- as a declared divergence rather than leaving it to memory.
+--
+-- THE OTHER HALF OF THE SPLITTER'S BLIND SPOT IS STILL OPEN, and naming it here is the honest
+-- statement of what this fix is not: the quote scan below reads EVERY `'` as a delimiter and knows
+-- nothing of `"..."`, so a raw body holding a double-quoted identifier with an apostrophe --
+-- `WHERE "o'k" = 1`, printer output, legal DuckDB SQL -- still mis-splits. That is R41. It is not
+-- fixed here because the scan is a WINDOW SUM over one delimiter, which has a closed form, while
+-- two delimiters that can nest need sequential state. test/sweep_treeql.py's CLASS 1 entries are
+-- the five shapes that prove it, and they turn into agreements the day it is fixed.
 --
 -- "Inside a quote" is the PARITY of quote characters strictly before a position, which is what
 -- makes the '' escape free: two quotes restore the parity. Paren depth is a second window over
@@ -106,7 +145,9 @@ CREATE OR REPLACE MACRO tree_treeql_split_parts(s, sep) AS (
     FROM chars),
   depthed AS (
     SELECT i, c, inq,
-           sum(CASE WHEN inq THEN 0 WHEN c = '(' THEN 1 WHEN c = ')' THEN -1 ELSE 0 END)
+           sum(CASE WHEN inq THEN 0
+                    WHEN c IN ('(', '[', '{') THEN 1
+                    WHEN c IN (')', ']', '}') THEN -1 ELSE 0 END)
              OVER (ORDER BY i) AS depth
     FROM quoted),
   bounds AS (SELECT 0 AS p

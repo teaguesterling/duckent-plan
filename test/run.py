@@ -30,11 +30,22 @@ CALL_RE = re.compile(r"^\s*CALL\s+(" + "|".join(EXEC_VERBS) + r")\s*\((.*)\)\s*;
 # only by test/sql/44_parsers.test's differential. Mutant MN08 is planted in the Python parser
 # and is killed through this arm, so pointing css at the macro would quietly retire it.
 #
-# `tree_parse_treeql` maps to the MACRO ITSELF, inlined where the IR literal would go. There is
-# no second TREEQL parser for it to differ from, so pointing the runner at the macro means the
+# `tree_parse_treeql` maps to the MACRO ITSELF, inlined where the IR literal would go, so the
 # plan repo's tests exercise the artifact the extension actually ships. The ORIGINAL literal is
 # reused rather than re-quoted from the decoded text: decoding '' escapes and re-encoding them is
 # a round trip with nothing to gain and a quoting bug to lose.
+#
+# THERE IS A SECOND TREEQL PARSER NOW -- test/treeql_parser.py, added in Task 7 -- and this entry
+# deliberately does NOT point at it, which is the opposite of the css arm above. The two pairs are
+# bound in different places, and that is the whole reason. The css pair has no standalone
+# differential, so the binding has to happen inside the suite, which is why `tree_css_lower` maps
+# to the Python and test/sql/44_parsers.test compares the two. The TREEQL pair's binding is
+# test/sweep_treeql.py, which drives BOTH front-ends itself; pointing this entry at the Python
+# would make the suite measure the second reading INSTEAD OF the macro -- losing the shipped
+# artifact's coverage and gaining nothing the sweep does not already assert.
+#
+# This paragraph replaced "There is no second TREEQL parser for it to differ from", which Task 7
+# made false. The MAPPING is unchanged; only the reason for it is.
 PARSER_DRIVERS = {
     "tree_css_lower": lambda lit, text: " " + css_parser.to_sql(css_parser.parse(text)),
     "tree_parse_treeql": lambda lit, text: " tree_parse_treeql(" + lit.strip() + ")",
