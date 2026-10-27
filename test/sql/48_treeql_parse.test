@@ -2546,10 +2546,12 @@ treeql	tree_parse_treeql
 # selector that stamped nothing at all would satisfy it. MEASURED in fix round 1: with the stamp
 # blanked, this record still passes.
 #
-# WHERE THE STAMP *IS* COVERED, since it is not here and it is not only in the record below.
-# MEASURED, same run: blanking the stamp turns 68 of this file's 218 assertions red. The record
-# below is the directly-addressed one, and it is here because it sits next to the comment that
-# used to make the false claim. But the coverage already existed before fix round 1 added it --
+# WHERE THE STAMP *IS* COVERED, since it is not here and it is not only in the ROOT-VALUE RECORD
+# at the end of this block -- the last record before the `parser IS NULL` banner, not either of the
+# two records immediately below, which move the setting and read _match_language.
+# MEASURED, same run: blanking the stamp turns 68 of this file's 218 assertions red. That
+# root-value record is the directly-addressed one, and it is here because it sits next to the
+# comment that used to make the false claim. But the coverage already existed before fix round 1 added it --
 # :1189's node-by-node projection wants `selector treeql` explicitly, the two string_agg records
 # near the end carry `selector:treeql`, and every `parse(print(ir)) == ir` theorem compares a
 # parsed selector against `tree_steps` IR whose root value IS `treeql`. So the gap this record
@@ -2635,7 +2637,7 @@ tree_match: selector language 'treeql' has no parser: tree_catalog.selector_lang
 # row, so this record is now sensitive to the PROVENANCE STAMP as well. MEASURED in fix round 1 --
 # blanking the stamp in sql/10_treeql.sql turns this record red along with 67 others. That is extra
 # sensitivity and not a defect, but it does mean a red here is not by itself evidence that the
-# parser is dead. Read it with the stamp record earlier in this block.
+# parser is dead. Read it with the root-value stamp record in the block ABOVE this banner.
 query I
 SELECT tree_parse_treeql('(TYPE ''function_definition'')')
      = tree_steps([{type: 'function_definition'}]);
