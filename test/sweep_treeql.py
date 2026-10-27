@@ -988,12 +988,26 @@ def main():
           "and not a confirmation: sql %d/%d, py %d/%d (forced)"
           % (adm_n, adm_sql, adm_n, adm_n, adm_n))
     if exact_fail:
-        print("  %d printer-output case(s) FAIL EXact, all declared in KNOWN_EXACT_FAILURES: %s"
+        # "ALL DECLARED" IS CONDITIONED ON THE CHECK BESIDE IT. These two lines printed that claim
+        # unconditionally, over every exact_fail key, so a run that had just printed an UNDECLARED
+        # EXACT FAILURE block said "all declared ... enumerated rather than excluded" three lines
+        # later. MEASURED by planting, with three undriven cases added in a scratch copy: the old
+        # text printed "14 printer-output case(s) FAIL EXACT, all declared ... k13, z01, z02, z03"
+        # in the same output that named z01-z03 as undeclared. The run exits 1 either way, so the
+        # effect was cosmetic -- and a cosmetic sentence that contradicts the gate beside it is how
+        # a reader learns to trust the wrong half of the output.
+        print("  %d printer-output case(s) FAIL EXact, %s: %s"
               .replace("EXact", "EXACT")
-              % (len(exact_fail), ", ".join(sorted(k for k, _l, _t, _a, _b in exact_fail))))
+              % (len(exact_fail),
+                 "all declared in KNOWN_EXACT_FAILURES" if not ef_undeclared
+                 else "%d declared in KNOWN_EXACT_FAILURES and %d UNDECLARED (named above)"
+                      % (len(exact_fail) - len(ef_undeclared), len(ef_undeclared)),
+                 ", ".join(sorted(k for k, _l, _t, _a, _b in exact_fail))))
         print("  so EXACT does NOT hold over the printer's image. It holds on the %d that pass, "
-              "and the %d failures are enumerated rather than excluded."
-              % (exact_checked - len(exact_fail), len(exact_fail)))
+              "and the %d failures are %s."
+              % (exact_checked - len(exact_fail), len(exact_fail),
+                 "enumerated rather than excluded" if not ef_undeclared
+                 else "NOT all enumerated -- see the UNDECLARED EXACT FAILURE block above"))
     if excluded:
         print("  %d family-B case(s) are NOT in this denominator (listed by --both-refuse-audit): "
               "%s" % (len(excluded), ", ".join(l.split()[0] for l, _t, _w in excluded)))
