@@ -832,8 +832,10 @@ class Parser:
         # stands rather than over the smaller one the guard landed against -- the earlier note said
         # "only a52, a53 and their two neighbours move", which was true of that corpus and is not a
         # property of the guard. NO COUNT IS GIVEN HERE for the same reason; what follows is the
-        # measured SET, and re-measuring it is a script rather than a reread -- the pre-guard copy
-        # of this file against this one, over test/sweep_treeql.py's own case lists, duckdb 1.5.5:
+        # measured SET AT `0aa5f43`, and an ENUMERATION GOES STALE THE SAME WAY A COUNT DOES when
+        # the corpus grows -- it did, at `bf6f66a`, and this block had to be re-run to add k21.
+        # Re-measuring is a script rather than a reread: the pre-guard copy of this file against
+        # this one, over test/sweep_treeql.py's own case lists, duckdb 1.5.5.
         #
         #   a52 a53 k14 k15 k16 k17 k18   move to the MACROS' EXACT ANSWER     -- toward
         #   b59 b60                       move to the macros' refusal CLASS, differing only by
@@ -841,12 +843,13 @@ class Parser:
         #                                 sweep compares refusals
         #   k19 k20                       LATERAL: still refused, now by the `groupparen` arm
         #                                 instead, while the macros ACCEPT
+        #   k21                           LATERAL the same way, and the macros REFUSE it too
         #
-        # SO THE FIRST CLAUSE FAILS ON k19/k20, and saying so is the point of re-measuring. The
+        # SO THE FIRST CLAUSE FAILS ON k19/k20/k21, and saying so is the point of re-measuring. The
         # guard did not move them toward anything; it UNMASKED a refusal that `unbalanced` was
-        # hiding. That refusal is R2 -- the `groupparen` arm rejecting printer output -- it is
-        # PRE-EXISTING, and it is parked by ruling. Both shapes are declared in DIVERGENT, so the
-        # unmasking is recorded rather than lost.
+        # hiding. That refusal is R2 -- the `groupparen` arm rejecting printer output -- present at
+        # `3bc6fe0` and parked by ruling, though NOT inherited: this file is absent at `f137ae4`.
+        # Each is declared in DIVERGENT, so the unmasking is recorded rather than lost.
         #
         # NOTHING IN THAT SET MOVES AWAY FROM THE MACROS' ANSWER. Stated about the set and not about
         # the world: it is what the run above found, over the corpus the run was given, and a larger

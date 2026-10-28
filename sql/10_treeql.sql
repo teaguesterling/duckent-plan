@@ -1543,7 +1543,7 @@ prob AS (
   --
   -- AND R42 HERE TOO, which is the arm's SECOND correction. Fixing tree_treeql_wrapped was not
   -- enough: on raw-bodied text the splitters hand this arm a FRAGMENT, and a fragment's tail can
-  -- genuinely lack its closing parenthesis because the split cut it off, not because the author
+  -- genuinely lack its closing parenthesis because the split fell wrong, not because the author
   -- omitted it. Measured, `has+not+nested` and two more printer-output shapes were refused here
   -- with their parentheses present. The group keyword is still not trustworthy evidence of a
   -- missing parenthesis unless the text around it could be read at all.
@@ -1619,8 +1619,8 @@ prob AS (
   --
   -- WHY REMOVING IT IS SAFE, and this is a MEASUREMENT rather than the argument the guard rested
   -- on. The risk was a FALSE `parenless` on text the splitter mis-split. test/sweep_treeql.py
-  -- drives exactly those shapes -- five of them, printer output from the ordinary constructor,
-  -- carrying one or two odd-quoted raw bodies -- and with this guard removed NONE of them reaches
+  -- drives exactly those shapes -- printer output from the ordinary constructor, carrying one or
+  -- two odd-quoted raw bodies -- and with this guard removed NONE of them reaches
   -- this arm: every one keeps the answer it had, which the sweep reports as its DIVERGENT entries
   -- being unchanged. The three R42 wording records in test/sql/48_treeql_parse.test are
   -- `unterminated`, `groupparen` and `unbalanced`; none was ever this arm, and all three stay
@@ -1662,8 +1662,8 @@ prob AS (
   -- balanced.
   --
   -- THIS ARM DOES REJECT PRINTER OUTPUT, and the sentence here said it cannot. `k08` and `k21`
-  -- both show it, and only `k21` is new. `k08` has been in test/sweep_treeql.py since before the
-  -- round that corrected this sentence: `tree_steps([{"where": 'a = 1, b = 2, TYPE c'}])` prints
+  -- both show it. `k08` has been in test/sweep_treeql.py since before the round that corrected
+  -- this sentence: `tree_steps([{"where": 'a = 1, b = 2, TYPE c'}])` prints
   -- `(WHERE a = 1, b = 2, TYPE c)` and this arm refuses it `cannot read b = 2`. So the sentence
   -- was already false against the sweep's own corpus, and what was missing was reading the two
   -- together rather than a case nobody had written.
@@ -1684,7 +1684,7 @@ prob AS (
   -- selectors do round-trip through it untouched. What was wrong was reading that as a guarantee
   -- over the printer's whole image -- A CORPUS IS NOT A QUANTIFIER. (The old sentence gave the
   -- corpus a COUNT. It is not restated here: this comment cannot check that figure, and a count of
-  -- something in another file is the defect this round found six times.)
+  -- something in another file is the defect this correction exists to stop.)
   --
   -- NOT FIXED HERE. The refusal is the symptom; the cause is that the printed text does not say
   -- where a raw body ends, which is sql/06_selector.sql and frozen for this task. `k21` is a

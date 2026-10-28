@@ -38,8 +38,8 @@ task a fix gave them one:
     below is this one rule being wrong in BOTH readings at once -- the `k` labels less `k12`, whose
     cause is the mask instead. `k13` is the clearest of them: the text has exactly ONE constructible
     preimage, so a reader CAN choose, and both readings choose the same wrong one. (A COUNT of that
-    table stood here. It said "ten shapes", was corrected to 14, and k14-k20 made it wrong again in
-    the next round -- so the table is where to read it, not this sentence.)
+    table stood here. It said "ten shapes", was corrected to 14, and `26444e1` made it wrong again
+    -- so the table is where to read it, not this sentence.)
   * the REFUSAL PRIORITY ORDER and the `min(fragment)` tie-break, transcribed rather than derived
     -- which this file has always said, and which is the same cost in a smaller place.
   * THE `unbalanced` STAND-DOWN, shared as of this round and listed here because the sharing is
@@ -54,8 +54,9 @@ task a fix gave them one:
     stand-down is what removed the divergence that would have shown the failure -- that is the
     blindness this bullet is about. `k19`/`k20` are the same class INSIDE A GROUP and they still
     DIVERGE: the second reading refuses them through a different arm, so the blindness does not
-    reach them and they are declared in DIVERGENT instead. Until all seven were cases the gate was
-    green over every one of them. The two predicates are NOT the same rule (`_no_raw_body` against
+    reach them and they are declared in DIVERGENT instead. The gate was green over every member of
+    this class until it became a case. The two predicates are NOT the same rule (`_no_raw_body`
+    against
     `tree_treeql_quotes_trusted`, which disagree on EXACTLY TWO corpus texts, `b33` and `b34`, and
     neither is observable at the check);
     the measurement and why that is the right trade are in test/treeql_parser.py beside the check.
@@ -214,15 +215,14 @@ IR_CASES = [
     #     tree_steps([{attr:  'a = 1)'}])    prints  (ATTR a = 1))
     #
     # The macros accept both, EXACT true, because tree_treeql_balanced stands down when a raw body
-    # is present. NOTHING DROVE THESE TWO SHAPES until this round, which is why a refusal of
+    # is present. NOTHING DROVE THESE TWO SHAPES before `162248c`, which is why a refusal of
     # printer output could sit in the second reading and the gate stay green -- see b59/b60 for the
     # neighbours that must still refuse, and the `unbalanced` check in test/treeql_parser.py for
     # the guard.
     #
     # THESE TWO ARE NOT THE CLASS, and the sentence here said "the class was UNDRIVEN until now",
     # which read as though driving them closed it. They are its SINGLE-STEP members, where nothing
-    # follows the broken body. k14-k20 are the rest, and they were still undriven after these two
-    # landed -- see KNOWN_EXACT_FAILURES.
+    # follows the broken body; KNOWN_EXACT_FAILURES carries the shapes that have something after it.
     ("a52 unmatched close paren in a WHERE body", "[{\"where\": 'a = 1)'}]"),
     ("a53 unmatched close paren in an ATTR body", "[{attr: 'a = 1)'}]"),
     # ---- THE KEYWORD-CONTINUATION CLASS. Printer output whose raw body continues after a comma
@@ -523,8 +523,8 @@ TEXT_CASES = [
 #
 # WHAT THAT FIX DID NOT DO, and this is the correction the entries below record: it closed the
 # SINGLE-STEP shapes it was measured on. Past one step the same class is EXACT-FALSE IN BOTH
-# READINGS (`k14`-`k18`, which agree) and DIVERGENT inside a group (`k19`/`k20`). An empty table
-# row is not the same as an empty world; neither is a driven row the same as a driven class.
+# READINGS, and inside a group it DIVERGES. An empty table row is not the same as an empty world;
+# neither is a driven row the same as a driven class.
 # ----------------------------------------------------------------------------------------------
 DIVERGENT = {
     # ---- CLASS 1: R41, the splitter knowing nothing of `"..."` regions ---- CLOSED.
@@ -721,13 +721,13 @@ DIVERGENT = {
 #
 # k08 IS HERE, at its own entry, and the sentence that said "k08 IS NOT HERE and that is
 # deliberate" contradicted its own last clause three lines later. What is true of k08 is the rest
-# of what that sentence said: it is the one shape in the class that REFUSES rather than returning a
-# wrong IR, restored in fix round 3 because a silent wrong parse replacing a loud refusal is the
-# worse of the two failures. It still fails EXACT, so it is declared, and its entry says refusal.
+# of what that sentence said: it REFUSES rather than returning a wrong IR, restored in fix round 3
+# because a silent wrong parse replacing a loud refusal is the worse of the two failures. It still
+# fails EXACT, so it is declared, and its entry says refusal.
 #
 # WHICH PREIMAGE SURVIVES A COLLISION, AND WHY IT GOES BOTH WAYS. Several entries below sit on
 # texts with more than one constructible preimage, and EXACT can hold for at most one of them. (A
-# count stood here too, and `k14`-`k20` falsified it.) For the two classes BELOW, which preimage
+# count stood here too, and `26444e1` falsified it.) For the two classes BELOW, which preimage
 # survives depends on whether the clause SEPARATOR survives the quote mask, and they come out
 # opposite ways -- same mechanism, two outcomes:
 #
@@ -805,7 +805,7 @@ KNOWN_EXACT_FAILURES = {
 
     # ---- THE RAW BODY'S UNMATCHED PAREN, PAST THE ONE STEP. a52/a53 are this class's single-step
     # shapes and they PASS: the guard in test/treeql_parser.py made both readings stand down, and
-    # with nothing after the body there is nothing to swallow. k14-k20 are the same class with a
+    # with nothing after the body there is nothing to swallow. These are the same class with a
     # step or a group following, where the printer's own separator falls inside what any reader
     # must take as the body. Each one is a COLLISION: the second preimage below is constructor-
     # accepted and prints the SAME BYTES, measured under duckdb 1.5.5, and it is the IR the macros
@@ -830,7 +830,7 @@ KNOWN_EXACT_FAILURES = {
     "k18": "COLLISION with three unmatched opens rather than one -- the depth is not what decides "
            "it, the stand-down is. The second preimage is "
            "`[{\"where\": 'f((()' || chr(10) || 'CHILD (TYPE ''b'''}]`",
-    "k19": "COLLISION INSIDE A GROUP, and the one shape in this class where the two readings part: "
+    "k19": "COLLISION INSIDE A GROUP, where the two readings part: "
            "the macros take the collision and the Python REFUSES the text through its `groupparen` "
            "arm. The refusal is a defect of its own -- the text is printer output -- and it is "
            "DECLARED in DIVERGENT above, parked by ruling as a parser change in its own right. The "
