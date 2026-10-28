@@ -529,13 +529,16 @@ prob AS (
   -- with a wrong answer on a shape that is measured right here.
   --
   -- WHY REMOVING IT IS SAFE, and this is a MEASUREMENT rather than the argument the guard rested
-  -- on. The risk was a FALSE `parenless` on text the splitter mis-split. test/sweep_treeql.py
-  -- drives exactly those shapes -- printer output from the ordinary constructor, carrying one or
-  -- two odd-quoted raw bodies -- and with this guard removed NONE of them reaches
-  -- this arm: every one keeps the answer it had, which the sweep reports as its DIVERGENT entries
-  -- being unchanged. The three R42 wording records in test/sql/48_treeql_parse.test are
-  -- `unterminated`, `groupparen` and `unbalanced`; none was ever this arm, and all three stay
-  -- green. So the guard was protecting against a shape no case could produce.
+  -- on. The risk was a FALSE `parenless` on text the splitter mis-split -- printer output from the
+  -- ordinary constructor carrying odd-quoted raw bodies, which test/sweep_treeql.py drives.
+  -- MEASURED AT `02931a3`, duckdb 1.5.5: with this guard removed, none of the shapes driven THEN
+  -- reached this arm and each kept the answer it had. A DATE, NOT A GUARANTEE: which arm a case
+  -- reaches is not gate-checked -- measuring it needs a probe that reads `pb` directly -- so this
+  -- sentence is what was true at that commit and nothing re-checks it as cases are added.
+  --
+  -- WHAT IS RE-CHECKED, and the half to rely on: the sweep reports its DIVERGENT entries every
+  -- run and FAILS when one moves. The R42 wording records in test/sql/48_treeql_parse.test name
+  -- `unterminated`, `groupparen` and `unbalanced`, and the suite asserts them every run.
   --
   -- WHAT IT DOES COST, stated rather than discovered later: a HAND-WRITTEN parenless group whose
   -- part carries a raw body now gets THIS message instead of the generic one, because the
