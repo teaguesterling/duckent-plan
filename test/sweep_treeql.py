@@ -189,6 +189,21 @@ IR_CASES = [
      "[{type: 'a', has: [{\"where\": '\"a CHILD b\" = 1'}]}]"),
     ("a49 region holding a paren, inside a group",
      "[{type: 'a', has: [{\"where\": '\"a ) b\" = 1'}]}]"),
+    # ---- AN UNMATCHED PARENTHESIS IN A RAW BODY, which is NOT the same shape as a18/a43. There
+    # the paren sits inside a LITERAL body, where tree_sql_lit quotes it and the mask hides it.
+    # Here the body is RAW: it reaches the text unquoted, so the printed text's parentheses do not
+    # balance, and the text is printer output all the same -- a raw body is host SQL passed through
+    # verbatim and may legitimately carry an unmatched paren. MEASURED, duckdb 1.5.5:
+    #
+    #     tree_steps([{"where": 'a = 1)'}])  prints  (WHERE a = 1))
+    #     tree_steps([{attr:  'a = 1)'}])    prints  (ATTR a = 1))
+    #
+    # The macros accept both, EXACT true, because tree_treeql_balanced stands down when a raw body
+    # is present. The class was UNDRIVEN until now, which is why a refusal of printer output could
+    # sit in the second reading and the gate stay green -- see b59/b60 for the neighbours that
+    # must still refuse, and the `unbalanced` check in test/treeql_parser.py for the guard.
+    ("a52 unmatched close paren in a WHERE body", "[{\"where\": 'a = 1)'}]"),
+    ("a53 unmatched close paren in an ATTR body", "[{attr: 'a = 1)'}]"),
     # ---- THE KEYWORD-CONTINUATION CLASS. Printer output whose raw body continues after a comma
     # with text that OPENS a clause or group. These are KNOWN EXACT FAILURES, declared below in
     # KNOWN_EXACT_FAILURES, and they are cases rather than prose so the EXACT line counts them.
@@ -343,6 +358,18 @@ TEXT_CASES = [
     # parentheses. The macros' groupparen arm stands down on raw-bodied text and the generic
     # counterweight row catches it instead.
     ("b57 parenless group whose part carries a raw body", "(TYPE 'a', HAS WHERE a = 1)"),
+    # b59/b60: THE NEIGHBOURS of a52/a53, and the reason the fix there is a GUARD and not a
+    # removal. These two carry a raw body and genuinely unbalanced parentheses, and unlike a52/a53
+    # they are NOT printer output -- no IR prints a paren the printer did not open. They must still
+    # REFUSE, and in the same class in both readings, or a fix for a52/a53 trades a refusal of
+    # printer output for a silent acceptance of malformed text. MEASURED, duckdb 1.5.5: the macros
+    # refuse both through the GENERIC arm, because tree_treeql_balanced stands down on raw-bodied
+    # text and the per-part reader then cannot read the fragment.
+    #
+    # (b58 is not reused: it was this file's old label for what is now `a45`, and the CLASS 1 note
+    # in DIVERGENT still cites it by that name.)
+    ("b59 extra open paren before a WHERE body", "((WHERE a = 1)"),
+    ("b60 reversed parens around a WHERE body", ")WHERE a = 1("),
 ]
 
 # ----------------------------------------------------------------------------------------------
