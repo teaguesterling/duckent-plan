@@ -47,8 +47,10 @@ task a fix gave them one:
     accept -- until the guard landed. Now both stand down, so neither reading will refuse a raw
     body's unmatched parenthesis and the differential cannot see it if that is ever wrong. The two
     predicates are NOT the same rule (`_no_raw_body` against `tree_treeql_quotes_trusted`, which
-    agree on 121 of 123 corpus texts); the measurement and why that is the right trade are in
-    test/treeql_parser.py beside the check. `a52`, `a53`, `b59` and `b60` drive the class.
+    disagree on EXACTLY TWO corpus texts, `b33` and `b34`, and neither is observable at the check);
+    the measurement and why that is the right trade are in test/treeql_parser.py beside the check.
+    This bullet used to carry an agreement COUNT here. It was wrong when written and went stale
+    twice after that, so the two labels stand in its place.
 
 So the honest reading of a green run is: the two readings agree, AND where they share a rule that
 agreement is not independent evidence. What still carries weight is EXACT, because it compares a
@@ -1063,7 +1065,9 @@ def main():
             # CONSTRUCTION-TRUE, NOT A CONFIRMATION. The admission rule admits this text only
             # because the Python already reprinted it, so the Python's IR IS the preimage and
             # `py == want` cannot fail here. It is counted so the denominator is whole, and
-            # reported separately so it is never read as 13 more confirmations of the Python.
+            # reported separately so it is never read as that many more confirmations of the
+            # Python. (A COUNT stood here, naming the admitted cases; the run PRINTS that figure
+            # and the comment had it wrong.)
             exact_py += 1
         if verdict == "both-refuse":
             both_refuse_cases.append((label, text, refusal_class(sql[1]), refusal_class(py[1])))

@@ -791,24 +791,31 @@ class Parser:
         #
         # WHAT IS GIVEN UP, a disclosure rather than a defect: `_no_raw_body` is NOT the macro's
         # `tree_treeql_quotes_trusted`, so the two stand-downs are two rules and not one. MEASURED
-        # over the sweep corpus plus this class's four texts: 121 of 123 agree, and the two that do
-        # not are `TYPE 'a` (b33) and `TYPE 'it''s` (b34). quotes_trusted is `quotes_even AND
-        # no_raw_body`, so ANY no-raw-body text with an odd `'` count MUST disagree -- the
-        # predicates cannot be made identical without importing the parity rule. Neither
-        # disagreement is observable here: both texts have an all-zero paren depth, so this test
-        # cannot fire on either under any guard, and both readings answer `unterminated quoted
-        # value` on them.
+        # over the whole sweep corpus, recomputed: EXACTLY TWO texts disagree, `TYPE 'a` (b33) and
+        # `TYPE 'it''s` (b34), and no others.
+        #
+        # NO AGREEMENT COUNT IS WRITTEN HERE, and that is the correction rather than the style. The
+        # sentence used to say "121 of 123 agree". The figure was wrong the day it was written --
+        # computed on a corpus that predated a case this same round had already added -- and a
+        # later commit then copied it into two more places. The pair of labels is the substance and
+        # it survives the corpus growing; a count does not, and the corpus grows every round.
+        #
+        # quotes_trusted is `quotes_even AND no_raw_body`, so ANY no-raw-body text with an odd `'`
+        # count MUST disagree -- the predicates cannot be made identical without importing the
+        # parity rule. Neither disagreement is observable here: both texts have an all-zero paren
+        # depth, so this test cannot fire on either under any guard, and both readings answer
+        # `unterminated quoted value` on them.
         #
         # WHY THIS PREDICATE AND NOT THE ONE THAT AGREES EVERYWHERE, which is the ruling's reason
-        # and not the 121/123 arithmetic: the guard must add no divergence and refuse no printer
+        # and not any agreement count: the guard must add no divergence and refuse no printer
         # output, so the test is whether it changes any answer except TOWARD the macros' answer.
         # This one does not -- MEASURED, only a52, a53 and their two neighbours move, and each
         # lands on the macros' answer. `_no_raw_body(text) and text.count("'") % 2 == 0` is
-        # quotes_trusted transcribed and agrees 124/124 by construction, and it FAILS that test: it
-        # moves `(TYPE "o'k"` from one divergence to a different one and newly ACCEPTS
-        # `TYPE "o'k")`, which is INFERRED not to be printer output. Buying predicate identity by
-        # accepting text the printer cannot emit inverts the rule that the printer is the
-        # specification.
+        # quotes_trusted transcribed, so it agrees with it on every text by construction -- and it
+        # FAILS that test: it moves `(TYPE "o'k"` from one divergence to a different one and newly
+        # ACCEPTS `TYPE "o'k")`, which is INFERRED not to be printer output. Buying predicate
+        # identity by accepting text the printer cannot emit inverts the rule that the printer is
+        # the specification.
         if self._no_raw_body(text) and pdepth and (min(pdepth) < 0 or pdepth[-1] != 0):
             self.fault("unbalanced", text)
 
