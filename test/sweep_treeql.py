@@ -222,7 +222,7 @@ IR_CASES = [
     #
     # THESE TWO ARE NOT THE CLASS, and the sentence here said "the class was UNDRIVEN until now",
     # which read as though driving them closed it. They are its SINGLE-STEP members, where nothing
-    # follows the broken body; KNOWN_EXACT_FAILURES carries the shapes that have something after it.
+    # follows the broken body; see KNOWN_EXACT_FAILURES.
     ("a52 unmatched close paren in a WHERE body", "[{\"where\": 'a = 1)'}]"),
     ("a53 unmatched close paren in an ATTR body", "[{attr: 'a = 1)'}]"),
     # ---- THE KEYWORD-CONTINUATION CLASS. Printer output whose raw body continues after a comma
@@ -806,9 +806,9 @@ KNOWN_EXACT_FAILURES = {
     # shapes and they PASS: the guard in test/treeql_parser.py made both readings stand down, and
     # with nothing after the body there is nothing to swallow. These are the same class with a
     # step or a group following, where the printer's own separator falls inside what any reader
-    # must take as the body. Each one is a COLLISION: the second preimage below is constructor-
-    # accepted and prints the SAME BYTES, measured under duckdb 1.5.5, and it is the IR the macros
-    # return. So EXACT can hold for at most one of the two and no reader can choose.
+    # must take as the body. Each entry below states for itself whether its text is a COLLISION and
+    # names the second preimage when it is -- `k21` sits under this heading with no such preimage
+    # measured, and its entry says so.
     #
     # BLOCKED ON THE PRINTER, not on the readers -- a different blocker from k01-k07's missing slot
     # order. The text would have to carry where the raw body ends, which means quoting or escaping

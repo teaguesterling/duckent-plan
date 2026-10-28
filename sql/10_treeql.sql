@@ -1579,7 +1579,7 @@ prob AS (
   -- absence." True of that shape. It says nothing about a step whose RAW BODY swallowed the
   -- group that follows it, which is how printer output reaches this arm.
   --
-  -- MEASURED, duckdb 1.5.5, and driven in test/sweep_treeql.py since before the round that found
+  -- MEASURED, duckdb 1.5.5, and driven in test/sweep_treeql.py since before `19097d6` found
   -- this -- `k09` and `k10`, which are family-A cases and so printer output BY CONSTRUCTION:
   --
   --     tree_steps([{"where": 'a = 1, HAS ( TYPE ''b'' )'}])
@@ -1662,13 +1662,13 @@ prob AS (
   -- balanced.
   --
   -- THIS ARM DOES REJECT PRINTER OUTPUT, and the sentence here said it cannot. `k08` and `k21`
-  -- both show it. `k08` has been in test/sweep_treeql.py since before the round that corrected
+  -- both show it. `k08` has been in test/sweep_treeql.py since before `53cd01b` first corrected
   -- this sentence: `tree_steps([{"where": 'a = 1, b = 2, TYPE c'}])` prints
   -- `(WHERE a = 1, b = 2, TYPE c)` and this arm refuses it `cannot read b = 2`. So the sentence
   -- was already false against the sweep's own corpus, and what was missing was reading the two
   -- together rather than a case nobody had written.
   --
-  -- The second is `k21`, added by the round that found this. MEASURED, duckdb 1.5.5:
+  -- The second is `k21`, added by `681c2c3`. MEASURED, duckdb 1.5.5:
   --
   --     tree_steps([{type: 'a', has: [{"where": 'c = 1)'}]}, {type: 'e', comb: 'child'}])
   --       prints   (TYPE 'a', HAS ( DESCENDANT (WHERE c = 1)) ))<newline>CHILD (TYPE 'e')
