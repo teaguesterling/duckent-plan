@@ -371,6 +371,12 @@ IR_CASES = [
     # arm's own comment in sql/10_treeql.sql said it CANNOT reject printer output. That comment is
     # corrected beside the arm, with this case as the measurement.
     #
+    # BOTH REFUSALS ARE PRESENT AT `3bc6fe0`, measured there with that commit's own sql/ and
+    # test/*.py; the guard in `9958577` removed no signal on this text, which diverged before it and
+    # after it with only this reading's SENTENCE moving. That is NOT the same as "inherited": this
+    # file and test/treeql_parser.py are BRANCH-CREATED -- both are absent at `f137ae4`, the merge
+    # base with origin/main -- so the defect ships with the branch either way.
+    #
     # AND IT IS NOT THE WORST THING THIS TABLE DECLARES, which is worth saying because a loud
     # refusal reads worse than it is. k01-k07 return a WRONG IR silently. This one refuses, so a
     # caller is told. Its fault is that nothing declared it, not that it is severe.
@@ -656,8 +662,9 @@ DIVERGENT = {
     #     only under `code = 'generic'`, so the arm is identified rather than guessed. WHICH of
     #     that arm's rows fires is NOT isolated here;
     #   * this reading refuses through its `groupparen` arm;
-    #   * both refusals predate this round. The guard landed in the previous round removed no
-    #     signal on this text: it diverged before and after, and only this reading's SENTENCE moved.
+    #   * both refusals are present at `3bc6fe0` and the guard in `9958577` removed no signal on
+    #     this text -- it diverged before that commit and after it, and only this reading's
+    #     SENTENCE moved. Measured with each commit's own sql/ and test/*.py.
     #
     # THE COLLISION QUESTION IS OPEN, not answered. Three candidate second preimages were built and
     # printed; none matched these bytes. A search of three is a search of three, so this is NOT
@@ -694,7 +701,9 @@ DIVERGENT = {
 # instrument cannot evaluate is an escape hatch, not a qualification. `b55` was first declared
 # under exactly that defence and then fixed, which rejected it in practice; this states it.
 #
-# THE CAUSE OF TWELVE OF THE FOURTEEN ENTRIES below is one thing -- k01-k11 and k13:
+# THE CAUSE OF THE k01-k11 AND k13 ENTRIES below is one thing. This sentence used to give a COUNT
+# of the table -- "twelve of the fourteen" -- and the table grew past it without it being touched.
+# The labels are what the sentence is about and they do not go stale. The cause:
 # tree_treeql_clause_parts decides a part is a new clause-list item by `tree_treeql_opener_re()`,
 # so a raw body's continuation that BEGINS with a clause or group keyword is read as a new item and
 # the body is cut. Fixing it needs the merge to know the SLOT ORDER of the clause kinds -- `where`
@@ -702,11 +711,13 @@ DIVERGENT = {
 # registry has NO ORDER COLUMN, which test/css_parser.py's own CLAUSE_SLOT exemption records from
 # the other side.
 #
-# THE OTHER TWO HAVE THEIR OWN CAUSES, and each entry says so: `a50` is the EMPTY SELECTOR, already
-# ruled IRREDUCIBLE -- no parser can recover a step from no characters -- and `k12` is the
-# unpaired-`"` collision, which the slot order CANNOT fix because the mask removes the separator
-# before the merge ever sees it. This sentence used to read "THE CAUSE of every entry below is one
-# thing", which its own table contradicted in two rows.
+# THE OTHER ENTRIES HAVE THEIR OWN CAUSES, and each one says so at its own entry. `a50` is the
+# EMPTY SELECTOR, already ruled IRREDUCIBLE -- no parser can recover a step from no characters.
+# `k12` is the unpaired-`"` collision, which the slot order CANNOT fix because the mask removes the
+# separator before the merge ever sees it. `k14`-`k21` are the raw body whose unmatched parenthesis
+# hides where it ends, which is the PRINTER rather than the merge. This sentence used to read "THE
+# CAUSE of every entry below is one thing", which its own table contradicted; then it read "the
+# other TWO", which `26444e1` made wrong by adding seven more. Entries get causes, not arithmetic.
 #
 # k08 IS HERE, at its own entry, and the sentence that said "k08 IS NOT HERE and that is
 # deliberate" contradicted its own last clause three lines later. What is true of k08 is the rest
@@ -714,9 +725,10 @@ DIVERGENT = {
 # wrong IR, restored in fix round 3 because a silent wrong parse replacing a loud refusal is the
 # worse of the two failures. It still fails EXACT, so it is declared, and its entry says refusal.
 #
-# WHICH PREIMAGE SURVIVES A COLLISION, AND WHY IT GOES BOTH WAYS. Two entries below sit on texts
-# with TWO constructible preimages, and EXACT can hold for at most one. Which one survives depends
-# on whether the clause SEPARATOR survives the quote mask, and the two known classes come out
+# WHICH PREIMAGE SURVIVES A COLLISION, AND WHY IT GOES BOTH WAYS. Several entries below sit on
+# texts with more than one constructible preimage, and EXACT can hold for at most one of them. (A
+# count stood here too, and `k14`-`k20` falsified it.) For the two classes BELOW, which preimage
+# survives depends on whether the clause SEPARATOR survives the quote mask, and they come out
 # opposite ways -- same mechanism, two outcomes:
 #
 #   the UNPAIRED-QUOTE class (`k12` here since 9ff1e82, and in file 48 -- this line said "not a
@@ -832,12 +844,13 @@ KNOWN_EXACT_FAILURES = {
     "k21": "BOTH READINGS REFUSE PRINTER OUTPUT, so EXACT cannot hold: a refusal is not the IR. "
            "The macros refuse through their GENERIC arm and this reading through `groupparen`, and "
            "the macro side is the front-end the extension ships -- which is why this is declared "
-           "here rather than left to the open groupparen finding, which is about this file only. "
+           "here rather than left to the open groupparen finding, which is about "
+           "test/treeql_parser.py only. "
            "WHETHER THE TEXT IS A COLLISION IS OPEN: three candidate second preimages were built "
            "and printed and none matched, which is three misses and not a proof, so no collision "
            "claim is made either way. Unlike k01-k07 this one is LOUD -- a caller is told -- and "
-           "unlike k13 it carries no argument that the preimage is unique. Both refusals predate "
-           "this round; the previous round's guard removed no signal here",
+           "unlike k13 it carries no argument that the preimage is unique. Both refusals are "
+           "present at `3bc6fe0` and the guard in `9958577` removed no signal here",
 }
 
 
