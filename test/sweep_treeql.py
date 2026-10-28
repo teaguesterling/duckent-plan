@@ -50,10 +50,14 @@ task a fix gave them one:
     it as "if that is ever wrong". BE PRECISE ABOUT WHAT IS WRONG: the stand-down itself is RIGHT
     -- those texts are printer output and refusing them is the defect it fixed. What is wrong is
     DOWNSTREAM of it. Where the raw body's unmatched paren swallows the rest of the selector, EXACT
-    fails in BOTH readings, and the stand-down is what removed the divergence that would have shown
-    it. MEASURED: `k14`-`k20` are those texts, and until they were cases the gate was green over
-    them. The two predicates are NOT the same rule (`_no_raw_body` against `tree_treeql_quotes_trusted`, which
-    disagree on EXACTLY TWO corpus texts, `b33` and `b34`, and neither is observable at the check);
+    fails in BOTH readings. MEASURED: on `k14`-`k18` the two readings then AGREE, and the
+    stand-down is what removed the divergence that would have shown the failure -- that is the
+    blindness this bullet is about. `k19`/`k20` are the same class INSIDE A GROUP and they still
+    DIVERGE: the second reading refuses them through a different arm, so the blindness does not
+    reach them and they are declared in DIVERGENT instead. Until all seven were cases the gate was
+    green over every one of them. The two predicates are NOT the same rule (`_no_raw_body` against
+    `tree_treeql_quotes_trusted`, which disagree on EXACTLY TWO corpus texts, `b33` and `b34`, and
+    neither is observable at the check);
     the measurement and why that is the right trade are in test/treeql_parser.py beside the check.
     This bullet used to carry an agreement COUNT here. It was wrong when written and went stale
     twice after that, so the two labels stand in its place.

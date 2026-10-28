@@ -592,8 +592,14 @@ CREATE OR REPLACE MACRO tree_treeql_wrapped(s) AS
 -- WHAT THE STAND-DOWN COSTS, now that both readings share it: on a raw body neither reading can see
 -- an unmatched parenthesis, so where the body swallows the rest of the selector both take the same
 -- reading and the differential cannot tell. That is not hypothetical -- test/sweep_treeql.py's
--- `k14`-`k20` are those texts, declared EXACT failures because the printer does not say where a raw
+-- `k14`-`k18` are those texts, declared EXACT failures because the printer does not say where a raw
 -- body ends. The stand-down is still right; what it costs is the signal, not the answer.
+--
+-- `k19`/`k20` ARE THE SAME CLASS AND NOT THE SAME COST, and the sentence above said `k14`-`k20`
+-- before this was measured. Inside a group the second reading still REFUSES the text, through its
+-- `groupparen` arm rather than this one, so those two DIVERGE and the differential does see them.
+-- They are declared divergences for a separate reason -- that refusal is a defect of its own, and
+-- a parked one.
 --
 -- COALESCE to TRUE: empty and NULL text have no parentheses to balance, and the no-steps arm --
 -- which runs first -- is the refusal that owns them.

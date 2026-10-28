@@ -785,10 +785,11 @@ class Parser:
         # THAT SENTENCE SAID "so the class cannot go undriven again". MEASURED FALSE in the very
         # next round. `a52` and `a53` are SINGLE-STEP texts with nothing after the broken body; the
         # same class with a step or a group following was still undriven, and the gate was green
-        # over it because this guard made both readings stand down and they then agreed on the same
-        # wrong reading. test/sweep_treeql.py's `k14`-`k20` are those shapes. TWO SHAPES WERE
-        # CLOSED, and the sentence claimed a class -- which is the one thing a disclosure beside a
-        # fix must not do.
+        # over it. On `k14`-`k18` that is because this guard made both readings stand down and they
+        # then agreed on the same wrong reading; on `k19`/`k20` the second reading still refuses,
+        # through the `groupparen` arm, so those two DIVERGE and are declared for that reason
+        # instead. Either way nothing drove them. TWO SHAPES WERE CLOSED, and the sentence claimed
+        # a class -- which is the one thing a disclosure beside a fix must not do.
         #
         # THE REASON GIVEN HERE FOR NOT GUARDING WAS FALSE IN BOTH HALVES, and acting on it is what
         # produced the defect. It said tree_treeql_balanced stands down "because its scan reads
@@ -821,16 +822,18 @@ class Parser:
         #
         # THE SECOND CLAUSE WAS NOT IN THE RULING WHEN THIS GUARD LANDED, and it is the half that
         # matters here. Moving toward the macros' answer does not make a reading right when the
-        # macros are wrong too; it removes the one divergence the sweep could see. That is exactly
-        # what happened past the single-step shapes, and test/sweep_treeql.py's `k14`-`k20` are the
-        # declarations that pay for it. The guard STANDS -- refusing printer output is the defect --
-        # and the cases are the other half of the same fix.
+        # macros are wrong too; it removes the one divergence the sweep could see. That is what
+        # happened on `k14`-`k18`, and their declarations in test/sweep_treeql.py are what pays for
+        # it. On `k19`/`k20` nothing was removed -- see the measurement below, where those two come
+        # out LATERAL rather than toward. The guard STANDS -- refusing printer output is the defect
+        # -- and the cases are the other half of the same fix.
         #
         # HOW THIS PREDICATE SCORES ON THE FIRST CLAUSE, RE-MEASURED over the sweep corpus as it
         # stands rather than over the smaller one the guard landed against -- the earlier note said
         # "only a52, a53 and their two neighbours move", which was true of that corpus and is not a
-        # property of the guard. Eleven answers move (test/sweep_treeql.py's own case lists, this
-        # file against its pre-guard copy, duckdb 1.5.5):
+        # property of the guard. NO COUNT IS GIVEN HERE for the same reason; what follows is the
+        # measured SET, and re-measuring it is a script rather than a reread -- the pre-guard copy
+        # of this file against this one, over test/sweep_treeql.py's own case lists, duckdb 1.5.5:
         #
         #   a52 a53 k14 k15 k16 k17 k18   move to the MACROS' EXACT ANSWER     -- toward
         #   b59 b60                       move to the macros' refusal CLASS, differing only by
@@ -843,7 +846,11 @@ class Parser:
         # guard did not move them toward anything; it UNMASKED a refusal that `unbalanced` was
         # hiding. That refusal is R2 -- the `groupparen` arm rejecting printer output -- it is
         # PRE-EXISTING, and it is parked by ruling. Both shapes are declared in DIVERGENT, so the
-        # unmasking is recorded rather than lost. No shape moves AWAY from the macros' answer.
+        # unmasking is recorded rather than lost.
+        #
+        # NOTHING IN THAT SET MOVES AWAY FROM THE MACROS' ANSWER. Stated about the set and not about
+        # the world: it is what the run above found, over the corpus the run was given, and a larger
+        # corpus can only be answered by running it again.
         #
         # The alternative,
         # `_no_raw_body(text) and text.count("'") % 2 == 0`, is quotes_trusted transcribed, so it
