@@ -350,6 +350,30 @@ IR_CASES = [
      "[{type: 'a', has: [{attr: 'c = f(x'}, {type: 'd', comb: 'child'}]}]"),
     ("k20 the same inside a group with a WHERE body",
      "[{type: 'a', has: [{\"where\": 'f(x'}, {type: 'd', comb: 'child'}]}]"),
+    # ---- THE SHAPE BOTH READINGS REFUSE, and the only one in this file where the MACROS reject
+    # printer output. k19/k20 above have the macros ACCEPTING a collision; here the group's raw
+    # body is followed by a step at the OUTER level, and the macros refuse through their generic
+    # catch-all. MEASURED, duckdb 1.5.5:
+    #
+    #     tree_steps([{type: 'a', has: [{"where": 'c = 1)'}]}, {type: 'e', comb: 'child'}])
+    #       prints   (TYPE 'a', HAS ( DESCENDANT (WHERE c = 1)) ))\nCHILD (TYPE 'e')
+    #       sql      REFUSED: cannot read ( DESCENDANT (WHERE c = 1)) ))<newline>CHILD (TYPE 'e'
+    #       py       REFUSED: HAS/NOT needs parentheses around its chain
+    #
+    # (The sql fragment CONTAINS THE NEWLINE. A probe that took `str(e).splitlines()[0]` reported
+    # it as ending at `))`, and that truncation is what this line said at first. The run's own
+    # output is the one to read -- it shows the newline as ` | `.)
+    #
+    # WHY THAT MATTERS MORE THAN THE OTHER REFUSAL IN THIS CLASS. The macros are the front-end the
+    # extension SHIPS. A refusal of printer output by this reading is a defect of a test oracle;
+    # the same refusal by the macros is a defect in what is delivered, and no other record in this
+    # repository names it -- the open `groupparen` finding is about test/treeql_parser.py only.
+    #
+    # AND IT IS NOT THE WORST THING THIS TABLE DECLARES, which is worth saying because a loud
+    # refusal reads worse than it is. k01-k07 return a WRONG IR silently. This one refuses, so a
+    # caller is told. Its fault is that nothing declared it, not that it is severe.
+    ("k21 a group with a raw body, then a step at the outer level -- BOTH readings refuse",
+     "[{type: 'a', has: [{\"where\": 'c = 1)'}]}, {type: 'e', comb: 'child'}]"),
 ]
 
 # ----------------------------------------------------------------------------------------------
