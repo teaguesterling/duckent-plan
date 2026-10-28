@@ -549,8 +549,29 @@ prob AS (
   -- but whose chain is unreadable, and a clause whose literal is malformed with its quotes
   -- balanced.
   --
-  -- CANNOT REJECT PRINTER OUTPUT: this is the arm Task 4 shipped and the 18 corpus selectors
-  -- round-trip through it untouched; every row here is a shape the assembly cannot build.
+  -- THIS ARM DOES REJECT PRINTER OUTPUT, and the sentence here said it cannot. MEASURED, duckdb
+  -- 1.5.5, driven as `k21` in test/sweep_treeql.py:
+  --
+  --     tree_steps([{type: 'a', has: [{"where": 'c = 1)'}]}, {type: 'e', comb: 'child'}])
+  --       prints   (TYPE 'a', HAS ( DESCENDANT (WHERE c = 1)) ))<newline>CHILD (TYPE 'e')
+  --       parses   REFUSED: cannot read ( DESCENDANT (WHERE c = 1)) ))<newline>CHILD (TYPE 'e'
+  --
+  -- The text is printer output by construction and this arm refuses it, so "every row here is a
+  -- shape the assembly cannot build" is false for whichever row fires. `cannot read` is emitted
+  -- only under `code = 'generic'`, so the ARM is identified rather than guessed; WHICH of its rows
+  -- fires is NOT isolated, and this comment does not guess. The group's raw body carries an
+  -- unmatched parenthesis, so the splitters cannot find the step boundary that follows the group.
+  --
+  -- WHAT IS STILL TRUE of the old sentence: this is the arm Task 4 shipped, and the corpus
+  -- selectors do round-trip through it untouched. What was wrong was reading that as a guarantee
+  -- over the printer's whole image -- A CORPUS IS NOT A QUANTIFIER. (The old sentence gave the
+  -- corpus a COUNT. It is not restated here: this comment cannot check that figure, and a count of
+  -- something in another file is the defect this round found six times.)
+  --
+  -- NOT FIXED HERE. The refusal is the symptom; the cause is that the printed text does not say
+  -- where a raw body ends, which is sql/06_selector.sql and frozen for this task. `k21` is a
+  -- declared EXACT failure with the measurement beside it, and whether the text has a second
+  -- preimage at all is recorded there as OPEN rather than answered.
   UNION ALL SELECT 'generic', part FROM cps WHERE cl IS NULL AND gkind IS NULL
   UNION ALL SELECT 'generic', part FROM cps WHERE cl IS NOT NULL AND NOT (cl).lit_ok
   UNION ALL SELECT 'generic', part FROM cps

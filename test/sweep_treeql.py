@@ -366,8 +366,10 @@ IR_CASES = [
     #
     # WHY THAT MATTERS MORE THAN THE OTHER REFUSAL IN THIS CLASS. The macros are the front-end the
     # extension SHIPS. A refusal of printer output by this reading is a defect of a test oracle;
-    # the same refusal by the macros is a defect in what is delivered, and no other record in this
-    # repository names it -- the open `groupparen` finding is about test/treeql_parser.py only.
+    # the same refusal by the macros is a defect in what is delivered. Nothing named it until this
+    # case: the open `groupparen` finding is about test/treeql_parser.py only, and the generic
+    # arm's own comment in sql/10_treeql.sql said it CANNOT reject printer output. That comment is
+    # corrected beside the arm, with this case as the measurement.
     #
     # AND IT IS NOT THE WORST THING THIS TABLE DECLARES, which is worth saying because a loud
     # refusal reads worse than it is. k01-k07 return a WRONG IR silently. This one refuses, so a
