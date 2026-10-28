@@ -298,6 +298,7 @@ IR_CASES = [
     # So EXACT can hold for at most one preimage of each text, exactly as in k11/a51, and no reader
     # can choose between them. Fixing that needs the printer to quote or escape a raw body, which
     # is sql/06_selector.sql and frozen here; these are declared rather than fixed, with k11/k12.
+    # The entries are in KNOWN_EXACT_FAILURES below, one per case, each naming its own preimage.
     ("k14 raw body with an unmatched OPEN paren, then a CHILD step",
      "[{\"where\": 'f(x'}, {type: 'b', comb: 'child'}]"),
     ("k15 raw body with an unmatched close paren, then a CHILD step",
@@ -325,7 +326,8 @@ IR_CASES = [
     #
     # The second reading's refusal is a different matter: the text is printer output, so refusing
     # it is a defect under the Global Constraint -- the same class as the `unbalanced` refusal the
-    # guard in test/treeql_parser.py removed, on the arm NEXT DOOR. That arm is not touched here.
+    # guard in test/treeql_parser.py removed, on the arm NEXT DOOR. That arm is not touched here;
+    # the divergence is declared in DIVERGENT's CLASS 4 below, which says why it is parked.
     ("k19 raw body with an unmatched OPEN paren INSIDE a group, then a second inner step",
      "[{type: 'a', has: [{attr: 'c = f(x'}, {type: 'd', comb: 'child'}]}]"),
     ("k20 the same inside a group with a WHERE body",
@@ -443,22 +445,30 @@ TEXT_CASES = [
 # exceptions are a wildcard is worthless. Each entry names ONE case label, the record in
 # test/sql/48_treeql_parse.test that pins the SQL side's answer, and WHICH reading is right.
 #
-# "sql" means the macros are right and this script's Python is wrong -- there are no ENTRIES of
-# that kind, and the entry shape allows one so that a future divergence cannot be recorded without
-# saying so. "py" means test/treeql_parser.py returns the answer the printer's own output requires
-# and the macros do not.
+# "sql" means the macros are right and this script's Python is wrong. "py" means
+# test/treeql_parser.py returns the answer the printer's own output requires and the macros do not.
 #
-# THAT DIRECTION WAS NOT HYPOTHETICAL, AND THE TABLE SAID NONE BECAUSE THE CLASS WAS UNDRIVEN.
-# MEASURED, duckdb 1.5.5, before this round's guard: `tree_steps([{"where": 'a = 1)'}])` prints
-# `(WHERE a = 1))`, the macros parse it with EXACT true, and this script's Python REFUSED it as
-# `unbalanced parentheses` -- a refusal of printer output, which the Global Constraint makes a
-# defect. The same for `(ATTR a = 1))`. No case drove either, so nothing here was wrong about the
-# table and everything here was wrong about the world.
+# THE TABLE SAID "there are no ENTRIES of that kind" ABOUT THE "sql" DIRECTION. There are two now,
+# `k19` and `k20`, and WHAT "right" MEANS THERE IS NARROW: the Python REFUSES printer output, which
+# the Global Constraint makes a defect, and the macros return a constructor-accepted preimage of
+# the same bytes. The macros do NOT return the IR the case was built from -- no reader can, because
+# the text has two preimages -- so each of those two labels ALSO carries a KNOWN_EXACT_FAILURES
+# entry. "Right" here means "not the defect", not "returns the case's own IR".
 #
-# BOTH ARE CASES NOW -- `a52` and `a53` -- and the Python was FIXED rather than declared, by a
-# stand-down in its `unbalanced` check. So the table still holds no "sql" entry, and this time
-# that is a measurement rather than a gap: the class is driven and it agrees. An empty table row
-# is not the same as an empty world, which is what this note is for.
+# THE SHAPE EARNED ITS KEEP, which is the only reason to allow a direction no entry uses. The
+# sentence that claimed no entry of that kind existed was true about the table and, for the
+# `groupparen` arm, false about the world for as long as nothing drove it.
+#
+# THE `unbalanced` HALF OF THAT CLASS IS A DIFFERENT STORY AND IS FIXED. MEASURED, duckdb 1.5.5,
+# before this round's guard: `tree_steps([{"where": 'a = 1)'}])` prints `(WHERE a = 1))`, the
+# macros parse it with EXACT true, and this script's Python REFUSED it as `unbalanced parentheses`.
+# The same for `(ATTR a = 1))`. Both are cases now -- `a52` and `a53` -- and the Python was FIXED
+# rather than declared, by a stand-down in its `unbalanced` check, so neither needs an entry here.
+#
+# WHAT THAT FIX DID NOT DO, and this is the correction the entries below record: it closed the
+# SINGLE-STEP shapes it was measured on. Past one step the same class is EXACT-FALSE IN BOTH
+# READINGS (`k14`-`k18`, which agree) and DIVERGENT inside a group (`k19`/`k20`). An empty table
+# row is not the same as an empty world; neither is a driven row the same as a driven class.
 # ----------------------------------------------------------------------------------------------
 DIVERGENT = {
     # ---- CLASS 1: R41, the splitter knowing nothing of `"..."` regions ---- CLOSED.
@@ -524,11 +534,54 @@ DIVERGENT = {
     # RAW-bodied group leaves all four of those refusals byte-identical. MEASURED, and recorded in
     # test/sql/48_treeql_parse.test beside the fix.
     #
-    # ONE ENTRY IS LEFT IN THE WHOLE TABLE, b57, and it is NOT an EXACT failure -- it is a refusal
-    # WORDING that the two readings name differently on HAND-WRITTEN text. So `sql == py` holds on
-    # every one of the 75 printer-output cases this run admits -- MEASURED at this commit, and the
-    # figure the run PRINTS is the one to read; the number here said 62 and had gone stale. What
-    # remains is a difference about how to describe a text neither reading accepts.
+    # WHAT THIS TABLE HELD AFTER CLASS 3 CLOSED was one entry, b57, and the sentence here said
+    # `sql == py` holds on every printer-output case the run admits -- with a count in it, which
+    # went stale twice. CLASS 4 below is why that sentence is now wrong in substance as well:
+    # `k19` and `k20` are PRINTER OUTPUT and the two readings do NOT agree on them. The figure the
+    # run PRINTS is the one to read, here as everywhere; no count is restated in this file.
+
+    # ---- CLASS 4: the `groupparen` arm, DRIVEN ----
+    # CLASS 2 above says of this reading "THIS READING NEEDS NO STAND-DOWN -- its scan does not lose
+    # its place on a raw body". MEASURED FALSE for the `groupparen` arm: on the two texts below the
+    # scan keeps its place and the arm refuses anyway, and the texts are PRINTER OUTPUT. That is the
+    # same defect class as the `unbalanced` refusal the guard removed, on the arm next door, and
+    # b57 held it as a remembered fact rather than a driven one. These two drive it.
+    #
+    # AND THE DIRECTIONS HERE AND ON b57 ARE OPPOSITE ON PURPOSE, same arm and same refusal. b57's
+    # text is HAND-WRITTEN and is not printer output, so the arm is doing its job there and the
+    # Python's more precise sentence is the right one -- "py". k19/k20's texts ARE printer output,
+    # so the same refusal is a defect -- "sql". The Global Constraint is what separates them, and
+    # it is a property of the TEXT rather than of the check, which is why one arm can be right
+    # and wrong about the same message.
+    #
+    # THE DIRECTION IS "sql" AND IT IS NARROW, as the header says: the Python's refusal is the
+    # defect; the macros return a SECOND constructor-accepted preimage of the same bytes, measured
+    # under duckdb 1.5.5 --
+    #
+    #     k19  [{type: 'a', has: [{attr: 'c = f(x) CHILD (TYPE ''d'''}]}]
+    #     k20  [{type: 'a', has: [{"where": 'f(x) CHILD (TYPE ''d'''}]}]
+    #
+    # -- so neither reading returns the IR the case was built from, and both labels are declared
+    # EXACT failures too.
+    #
+    # WHY THIS IS DECLARED AND NOT FIXED. The fix is a stand-down in the `groupparen` arm, which is
+    # a parser change in its own right: the arm's refusal is load-bearing for the texts that are
+    # NOT printer output, it has its own R42 reason, and no measurement here covers the shapes it
+    # would stop refusing. The controller parked it on that ground. These entries are what keeps it
+    # from going quiet again -- TWO SHAPES, measured, not a claim about the class: the shapes that
+    # sit inside a group with the macros EXACT-TRUE are undriven here by the same ruling.
+    #
+    # NO RECORD IN test/sql/48_treeql_parse.test, deliberately. A record would pin the macro side's
+    # current rows as expected output, and on these two texts those rows are one horn of a
+    # collision rather than the answer the IR asked for. b57 carries "no record" for its own reason;
+    # this is a second, different one.
+    "k19": ("sql",
+            "no record: the Python REFUSES printer output through the groupparen arm, parked by "
+            "ruling as a parser change of its own; the macros' rows are the OTHER preimage",
+            "sql-accepts:6 rows | py-refuses:HAS/NOT needs parentheses around its chain"),
+    "k20": ("sql",
+            "no record: the same arm with a WHERE body instead of an ATTR body",
+            "sql-accepts:6 rows | py-refuses:HAS/NOT needs parentheses around its chain"),
 }
 
 
@@ -649,6 +702,42 @@ KNOWN_EXACT_FAILURES = {
            "`b09` is the same TEXT, written by hand, and is no longer admitted to the EXACT "
            "denominator: the witness that admitted it is this text's NON-CANONICAL reading -- see "
            "is_printer_output",
+
+    # ---- THE RAW BODY'S UNMATCHED PAREN, PAST THE ONE STEP. a52/a53 are this class's single-step
+    # shapes and they PASS: the guard in test/treeql_parser.py made both readings stand down, and
+    # with nothing after the body there is nothing to swallow. k14-k20 are the same class with a
+    # step or a group following, where the printer's own separator falls inside what any reader
+    # must take as the body. Each one is a COLLISION: the second preimage below is constructor-
+    # accepted and prints the SAME BYTES, measured under duckdb 1.5.5, and it is the IR the macros
+    # return. So EXACT can hold for at most one of the two and no reader can choose.
+    #
+    # BLOCKED ON THE PRINTER, not on the readers -- a different blocker from k01-k07's missing slot
+    # order. The text would have to carry where the raw body ends, which means quoting or escaping
+    # a raw body in tree_selector_to_treeql. That is sql/06_selector.sql, frozen for this task, and
+    # changing it would change every printed selector rather than this class.
+    "k14": "COLLISION. `(WHERE f(x)\\nCHILD (TYPE 'b')` is printed by BOTH this case and "
+           "`[{\"where\": 'f(x)' || chr(10) || 'CHILD (TYPE ''b'''}]` -- same bytes, measured. "
+           "Both readings return the second one",
+    "k15": "COLLISION, the close-paren form. The second preimage is "
+           "`[{\"where\": 'a = 1))' || chr(10) || 'CHILD (TYPE ''b'''}]`",
+    "k16": "COLLISION where a GROUP follows instead of a step, so the group's own text is what the "
+           "body swallows. The second preimage is "
+           "`[{\"where\": 'f(x, HAS ( DESCENDANT (TYPE ''b'') )'}]`",
+    "k17": "COLLISION with a clause BEFORE the raw body and a group after the second step, which "
+           "is the shape that shows the swallow is not limited to the step it starts in. The "
+           "second preimage is `[{type: 'a', \"where\": '(b)' || chr(10) || 'CHILD (TYPE ''c'', "
+           "HAS ( DESCENDANT (TYPE ''d'') )'}]`",
+    "k18": "COLLISION with three unmatched opens rather than one -- the depth is not what decides "
+           "it, the stand-down is. The second preimage is "
+           "`[{\"where\": 'f((()' || chr(10) || 'CHILD (TYPE ''b'''}]`",
+    "k19": "COLLISION INSIDE A GROUP, and the one shape in this class where the two readings part: "
+           "the macros take the collision and the Python REFUSES the text through its `groupparen` "
+           "arm. The refusal is a defect of its own -- the text is printer output -- and it is "
+           "DECLARED in DIVERGENT above, parked by ruling as a parser change in its own right. The "
+           "EXACT failure declared here is the collision, which the refusal does not cause: the "
+           "second preimage is `[{type: 'a', has: [{attr: 'c = f(x) CHILD (TYPE ''d'''}]}]`",
+    "k20": "THE SAME, with a WHERE body. The second preimage is "
+           "`[{type: 'a', has: [{\"where\": 'f(x) CHILD (TYPE ''d'''}]}]`",
 }
 
 
