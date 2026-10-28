@@ -515,9 +515,32 @@ prob AS (
   -- text starts with '(' but does not WRAP is a different fault and goes to the generic arm, where
   -- the message names the fragment instead of asking for parentheses it has.
   --
-  -- CANNOT REJECT PRINTER OUTPUT: tree_treeql_step wraps a step's clause list in parentheses
-  -- whenever the step HAS one, so a printed step with clauses and no combinator word always
-  -- carries its own parentheses and this rule requires their absence.
+  -- THIS ARM DOES REJECT PRINTER OUTPUT, and the sentence here said it cannot. The reasoning it
+  -- gave was about ONE shape and was read as a guarantee over all of them: "tree_treeql_step wraps
+  -- a step's clause list in parentheses whenever the step HAS one, so a printed step with clauses
+  -- and no combinator word always carries its own parentheses and this rule requires their
+  -- absence." True of that shape. It says nothing about a step whose RAW BODY swallowed the
+  -- group that follows it, which is how printer output reaches this arm.
+  --
+  -- MEASURED, duckdb 1.5.5, and driven in test/sweep_treeql.py since before the round that found
+  -- this -- `k09` and `k10`, which are family-A cases and so printer output BY CONSTRUCTION:
+  --
+  --     tree_steps([{"where": 'a = 1, HAS ( TYPE ''b'' )'}])
+  --       prints   (WHERE a = 1, HAS ( TYPE 'b' ))
+  --       parses   REFUSED: a step inside HAS/NOT needs a combinator or parentheses, ...
+  --     the same for the NOT form, `k10`.
+  --
+  -- That message is emitted only under `code = 'parenless'`, so the arm is identified rather than
+  -- guessed; which of its two rows fires is NOT isolated here.
+  --
+  -- NOBODY HAD TO DRIVE A NEW CASE TO SEE THIS. The cases were already in the corpus and the
+  -- sentence was already here; what was missing was reading the two together. A per-arm "cannot
+  -- reject printer output" claim is only as good as the last time someone checked it against the
+  -- cases that reach the arm, and nothing re-checks it.
+  --
+  -- NOT FIXED HERE. `k09`/`k10` are declared EXACT failures: the raw body is cut at `, HAS`, the
+  -- remainder reads as nothing, and the merge would need the clause kinds' slot order to know
+  -- better. The refusal is the symptom of that cut, not a defect of this arm's condition.
   --
   -- THE R42 STAND-DOWN IS GONE FROM THIS ARM, and that is F2's fix. It read
   -- `AND tree_treeql_no_raw_body(part)`, on the reasoning that the chain reader splits on quote
@@ -581,8 +604,14 @@ prob AS (
   -- but whose chain is unreadable, and a clause whose literal is malformed with its quotes
   -- balanced.
   --
-  -- THIS ARM DOES REJECT PRINTER OUTPUT, and the sentence here said it cannot. MEASURED, duckdb
-  -- 1.5.5, driven as `k21` in test/sweep_treeql.py:
+  -- THIS ARM DOES REJECT PRINTER OUTPUT, and the sentence here said it cannot. `k08` and `k21`
+  -- both show it, and only `k21` is new. `k08` has been in test/sweep_treeql.py since before the
+  -- round that corrected this sentence: `tree_steps([{"where": 'a = 1, b = 2, TYPE c'}])` prints
+  -- `(WHERE a = 1, b = 2, TYPE c)` and this arm refuses it `cannot read b = 2`. So the sentence
+  -- was already false against the sweep's own corpus, and what was missing was reading the two
+  -- together rather than a case nobody had written.
+  --
+  -- The second is `k21`, added by the round that found this. MEASURED, duckdb 1.5.5:
   --
   --     tree_steps([{type: 'a', has: [{"where": 'c = 1)'}]}, {type: 'e', comb: 'child'}])
   --       prints   (TYPE 'a', HAS ( DESCENDANT (WHERE c = 1)) ))<newline>CHILD (TYPE 'e')
