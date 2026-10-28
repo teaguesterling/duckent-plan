@@ -267,6 +267,69 @@ IR_CASES = [
     # never had is a WRONG parse rather than one horn of an ambiguity.
     ("k13 where, continuation opens PSEUDO after a TYPE clause -- b09's one constructible preimage",
      "[{type: 'x', \"where\": 'a = 1, PSEUDO ''p'''}]"),
+    # ---- THE UNMATCHED PAREN IN A RAW BODY, PAST THE ONE STEP. a52/a53 above are the whole class
+    # as this sweep drove it: a single step, nothing after the broken body. These are the SAME
+    # class with something following -- another step, a group, or both -- and they are a DIFFERENT
+    # outcome, which is why they are k-labelled and not a54/a55.
+    #
+    # WHAT THE PRINTER EMITS AND WHAT COMES BACK. MEASURED, duckdb 1.5.5:
+    #
+    #     tree_steps([{"where": 'f(x'}, {type: 'b', comb: 'child'}])
+    #       prints   (WHERE f(x)\nCHILD (TYPE 'b')
+    #       want     2 steps: where 'f(x'  +  a child step, type 'b'
+    #       read as  ONE step, where = "f(x)\nCHILD (TYPE 'b'"        EXACT false, BOTH readings
+    #
+    # The raw body's unmatched `(` makes the printer's own step separator fall inside what a reader
+    # must take as the body, and nothing in the text says where the body ends. Both readings merge
+    # the rest of the selector into the body and agree on doing it, so the differential is GREEN
+    # and EXACT is false on both sides -- the shape the SHARED RULES note at the head of this file
+    # warns about, with the `unbalanced` stand-down as the shared rule.
+    #
+    # THESE ARE GENUINE COLLISIONS, like k11/k12 and unlike k13. For each one a SECOND
+    # constructor-accepted IR prints the same bytes, and it is the IR both readings return --
+    # MEASURED, each pair built with tree_steps and printed:
+    #
+    #     k14  [{"where": 'f(x)' || chr(10) || 'CHILD (TYPE ''b'''}]
+    #     k15  [{"where": 'a = 1))' || chr(10) || 'CHILD (TYPE ''b'''}]
+    #     k16  [{"where": 'f(x, HAS ( DESCENDANT (TYPE ''b'') )'}]
+    #     k17  [{type: 'a', "where": '(b)' || chr(10) || 'CHILD (TYPE ''c'', HAS ( DESCENDANT (TYPE ''d'') )'}]
+    #     k18  [{"where": 'f((()' || chr(10) || 'CHILD (TYPE ''b'''}]
+    #
+    # So EXACT can hold for at most one preimage of each text, exactly as in k11/a51, and no reader
+    # can choose between them. Fixing that needs the printer to quote or escape a raw body, which
+    # is sql/06_selector.sql and frozen here; these are declared rather than fixed, with k11/k12.
+    ("k14 raw body with an unmatched OPEN paren, then a CHILD step",
+     "[{\"where\": 'f(x'}, {type: 'b', comb: 'child'}]"),
+    ("k15 raw body with an unmatched close paren, then a CHILD step",
+     "[{\"where\": 'a = 1)'}, {type: 'b', comb: 'child'}]"),
+    ("k16 raw body with an unmatched OPEN paren, then a HAS group",
+     "[{\"where\": 'f(x', has: [{type: 'b'}]}]"),
+    ("k17 raw body with an unmatched OPEN paren, a second step and a group",
+     "[{type: 'a', \"where\": '(b'}, {type: 'c', comb: 'child', has: [{type: 'd'}]}]"),
+    ("k18 raw body with three unmatched OPEN parens, then a CHILD step",
+     "[{\"where\": 'f((('}, {type: 'b', comb: 'child'}]"),
+    # ---- THE SAME SHAPE INSIDE A GROUP, where the two readings do NOT agree. The group's chain
+    # swallows the second inner step into the raw body on the macro side; the second reading
+    # refuses the text outright, through the `groupparen` arm. MEASURED, duckdb 1.5.5:
+    #
+    #     tree_steps([{type: 'a', has: [{attr: 'c = f(x'}, {type: 'd', comb: 'child'}]}])
+    #       prints   (TYPE 'a', HAS ( DESCENDANT (ATTR c = f(x) CHILD (TYPE 'd') ))
+    #       sql      one inner step, attr body = "f(x) CHILD (TYPE 'd'"
+    #       py       REFUSED: HAS/NOT needs parentheses around its chain
+    #
+    # The macros' answer is a COLLISION and not a wrong parse -- MEASURED, the second preimage
+    # prints the same bytes:
+    #
+    #     k19  [{type: 'a', has: [{attr: 'c = f(x) CHILD (TYPE ''d'''}]}]
+    #     k20  [{type: 'a', has: [{"where": 'f(x) CHILD (TYPE ''d'''}]}]
+    #
+    # The second reading's refusal is a different matter: the text is printer output, so refusing
+    # it is a defect under the Global Constraint -- the same class as the `unbalanced` refusal the
+    # guard in test/treeql_parser.py removed, on the arm NEXT DOOR. That arm is not touched here.
+    ("k19 raw body with an unmatched OPEN paren INSIDE a group, then a second inner step",
+     "[{type: 'a', has: [{attr: 'c = f(x'}, {type: 'd', comb: 'child'}]}]"),
+    ("k20 the same inside a group with a WHERE body",
+     "[{type: 'a', has: [{\"where\": 'f(x'}, {type: 'd', comb: 'child'}]}]"),
 ]
 
 # ----------------------------------------------------------------------------------------------
