@@ -37,7 +37,7 @@
 -- The VERTICAL TAB chr(11) is deliberately absent: it is whitespace to a C programmer and is NOT
 -- in RE2's `\s` -- measured, not assumed. Adding it would recreate the gap in the other
 -- direction. test/sql/48_treeql_parse.test asserts the agreement over every ASCII character
--- rather than pinning the one character this round found, so the invariant is stated and not
+-- rather than pinning the one character that was found, so the invariant is stated and not
 -- sampled.
 CREATE OR REPLACE MACRO tree_treeql_ws() AS ' ' || chr(9) || chr(10) || chr(12) || chr(13);
 

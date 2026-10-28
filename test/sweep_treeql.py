@@ -54,8 +54,8 @@ task a fix gave them one:
     stand-down is what removed the divergence that would have shown the failure -- that is the
     blindness this bullet is about. `k19`/`k20` are the same class INSIDE A GROUP and they still
     DIVERGE: the second reading refuses them through a different arm, so the blindness does not
-    reach them and they are declared in DIVERGENT instead. The gate was green over every member of
-    this class until it became a case. The two predicates are NOT the same rule (`_no_raw_body`
+    reach them and they are declared in DIVERGENT instead. A member of this class is invisible to
+    the gate until it is a case. The two predicates are NOT the same rule (`_no_raw_body`
     against
     `tree_treeql_quotes_trusted`, which disagree on EXACTLY TWO corpus texts, `b33` and `b34`, and
     neither is observable at the check);
@@ -350,10 +350,9 @@ IR_CASES = [
      "[{type: 'a', has: [{attr: 'c = f(x'}, {type: 'd', comb: 'child'}]}]"),
     ("k20 the same inside a group with a WHERE body",
      "[{type: 'a', has: [{\"where\": 'f(x'}, {type: 'd', comb: 'child'}]}]"),
-    # ---- THE SHAPE BOTH READINGS REFUSE, and the only one in this file where the MACROS reject
-    # printer output. k19/k20 above have the macros ACCEPTING a collision; here the group's raw
-    # body is followed by a step at the OUTER level, and the macros refuse through their generic
-    # catch-all. MEASURED, duckdb 1.5.5:
+    # ---- THE SHAPE BOTH READINGS REFUSE. k19/k20 above have the macros ACCEPTING a collision;
+    # here the group's raw body is followed by a step at the OUTER level, and the macros refuse
+    # through their generic catch-all. MEASURED, duckdb 1.5.5:
     #
     #     tree_steps([{type: 'a', has: [{"where": 'c = 1)'}]}, {type: 'e', comb: 'child'}])
     #       prints   (TYPE 'a', HAS ( DESCENDANT (WHERE c = 1)) ))\nCHILD (TYPE 'e')
@@ -516,7 +515,7 @@ TEXT_CASES = [
 # `groupparen` arm, false about the world for as long as nothing drove it.
 #
 # THE `unbalanced` HALF OF THAT CLASS IS A DIFFERENT STORY AND IS FIXED. MEASURED, duckdb 1.5.5,
-# before this round's guard: `tree_steps([{"where": 'a = 1)'}])` prints `(WHERE a = 1))`, the
+# before the guard in `9958577`: `tree_steps([{"where": 'a = 1)'}])` prints `(WHERE a = 1))`, the
 # macros parse it with EXACT true, and this script's Python REFUSED it as `unbalanced parentheses`.
 # The same for `(ATTR a = 1))`. Both are cases now -- `a52` and `a53` -- and the Python was FIXED
 # rather than declared, by a stand-down in its `unbalanced` check, so neither needs an entry here.
@@ -558,7 +557,7 @@ DIVERGENT = {
     # `b57`. THE UNQUALIFIED CLAIM WAS MEASURED FALSE ON PRINTER OUTPUT: `k19`/`k20` carry a raw
     # body, the scan keeps its place, and the arm refuses text the printer emits. CLASS 4 below has
     # the measurement. The correction is stated HERE as well as there, because a false sentence
-    # with its correction forty lines away is the defect this round was sent to fix.
+    # with its correction forty lines away is the defect, not the fix for it.
     #
     # THE `parenless` HALF OF THIS CLASS WAS F2 AND IS FIXED, which is why b24/b25 are gone from
     # here. The `groupparen` arm was NOT touched: a different arm, its own R42 reason, and no
@@ -777,7 +776,7 @@ KNOWN_EXACT_FAILURES = {
            "for at most one preimage; the MULTI-part one survives (a51 passes) and this one fails. "
            "`(ATTR a = 1, PSEUDO 'p')` is the same collision and is not a separate case",
 
-    # the UNPAIRED-QUOTE class, which the note above describes and which no case drove until now.
+    # the UNPAIRED-QUOTE class, which the note above describes and which this entry first drove.
     "k12": "THE UNPAIRED-`\"` COLLISION, and the opposite resolution to k11. `(ATTR a = \"b, WHERE "
            "c = \"d)` is printed by BOTH `[{attr: 'a = \"b', \"where\": 'c = \"d'}]` (this case) and "
            "`[{attr: 'a = \"b, WHERE c = \"d'}]` -- same bytes, measured. The mask pairs the two "
