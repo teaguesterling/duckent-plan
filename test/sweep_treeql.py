@@ -34,19 +34,25 @@ task a fix gave them one:
     BOTH. MEASURED: before that fix the macros and this reading DISAGREED on five such shapes, and
     the differential caught them; after it they AGREE, and it cannot.
   * the RAW-BODY MERGE. Both put a raw body's own separators back by span, and both cut the body
-    when the continuation opens a clause keyword. MEASURED: the KNOWN_EXACT_FAILURES table below
-    now holds 14 entries, and 12 of them are this rule being wrong in BOTH readings at once --
-    k01-k13 less k12, whose cause is the mask instead. `k13` is the newest and the clearest: the
-    text has exactly ONE constructible preimage, so a reader CAN choose, and both readings choose
-    the same wrong one. The count said "ten shapes" here and in the EXACT paragraph below.
+    when the continuation opens a clause keyword. MEASURED: most of the KNOWN_EXACT_FAILURES table
+    below is this one rule being wrong in BOTH readings at once -- the `k` labels less `k12`, whose
+    cause is the mask instead. `k13` is the clearest of them: the text has exactly ONE constructible
+    preimage, so a reader CAN choose, and both readings choose the same wrong one. (A COUNT of that
+    table stood here. It said "ten shapes", was corrected to 14, and k14-k20 made it wrong again in
+    the next round -- so the table is where to read it, not this sentence.)
   * the REFUSAL PRIORITY ORDER and the `min(fragment)` tie-break, transcribed rather than derived
     -- which this file has always said, and which is the same cost in a smaller place.
   * THE `unbalanced` STAND-DOWN, shared as of this round and listed here because the sharing is
     what it cost. tree_treeql_balanced has always stood down on raw-bodied text;
     test/treeql_parser.py did not, so it REFUSED `(WHERE a = 1))` -- printer output the macros
     accept -- until the guard landed. Now both stand down, so neither reading will refuse a raw
-    body's unmatched parenthesis and the differential cannot see it if that is ever wrong. The two
-    predicates are NOT the same rule (`_no_raw_body` against `tree_treeql_quotes_trusted`, which
+    body's unmatched parenthesis. THE COST IS REALISED AND NOT RESIDUAL, and this bullet hedged
+    it as "if that is ever wrong". BE PRECISE ABOUT WHAT IS WRONG: the stand-down itself is RIGHT
+    -- those texts are printer output and refusing them is the defect it fixed. What is wrong is
+    DOWNSTREAM of it. Where the raw body's unmatched paren swallows the rest of the selector, EXACT
+    fails in BOTH readings, and the stand-down is what removed the divergence that would have shown
+    it. MEASURED: `k14`-`k20` are those texts, and until they were cases the gate was green over
+    them. The two predicates are NOT the same rule (`_no_raw_body` against `tree_treeql_quotes_trusted`, which
     disagree on EXACTLY TWO corpus texts, `b33` and `b34`, and neither is observable at the check);
     the measurement and why that is the right trade are in test/treeql_parser.py beside the check.
     This bullet used to carry an agreement COUNT here. It was wrong when written and went stale
@@ -204,9 +210,15 @@ IR_CASES = [
     #     tree_steps([{attr:  'a = 1)'}])    prints  (ATTR a = 1))
     #
     # The macros accept both, EXACT true, because tree_treeql_balanced stands down when a raw body
-    # is present. The class was UNDRIVEN until now, which is why a refusal of printer output could
-    # sit in the second reading and the gate stay green -- see b59/b60 for the neighbours that
-    # must still refuse, and the `unbalanced` check in test/treeql_parser.py for the guard.
+    # is present. NOTHING DROVE THESE TWO SHAPES until this round, which is why a refusal of
+    # printer output could sit in the second reading and the gate stay green -- see b59/b60 for the
+    # neighbours that must still refuse, and the `unbalanced` check in test/treeql_parser.py for
+    # the guard.
+    #
+    # THESE TWO ARE NOT THE CLASS, and the sentence here said "the class was UNDRIVEN until now",
+    # which read as though driving them closed it. They are its SINGLE-STEP members, where nothing
+    # follows the broken body. k14-k20 are the rest, and they were still undriven after these two
+    # landed -- see KNOWN_EXACT_FAILURES.
     ("a52 unmatched close paren in a WHERE body", "[{\"where\": 'a = 1)'}]"),
     ("a53 unmatched close paren in an ATTR body", "[{attr: 'a = 1)'}]"),
     # ---- THE KEYWORD-CONTINUATION CLASS. Printer output whose raw body continues after a comma

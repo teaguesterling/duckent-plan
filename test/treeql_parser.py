@@ -779,8 +779,16 @@ class Parser:
         # parenthesis, and then the printer emits text whose parentheses do not balance. "The
         # printer is the specification. A refusal that rejects printer output is a defect" -- the
         # Global Constraint, and `5cb9618` is this file's own precedent for the same shape. Both
-        # texts are sweep cases now, `a52` and `a53`, so the class cannot go undriven again, and
-        # `b59`/`b60` pin the neighbours that must still refuse.
+        # texts are sweep cases now, `a52` and `a53`, and `b59`/`b60` pin the neighbours that must
+        # still refuse.
+        #
+        # THAT SENTENCE SAID "so the class cannot go undriven again". MEASURED FALSE in the very
+        # next round. `a52` and `a53` are SINGLE-STEP texts with nothing after the broken body; the
+        # same class with a step or a group following was still undriven, and the gate was green
+        # over it because this guard made both readings stand down and they then agreed on the same
+        # wrong reading. test/sweep_treeql.py's `k14`-`k20` are those shapes. TWO SHAPES WERE
+        # CLOSED, and the sentence claimed a class -- which is the one thing a disclosure beside a
+        # fix must not do.
         #
         # THE REASON GIVEN HERE FOR NOT GUARDING WAS FALSE IN BOTH HALVES, and acting on it is what
         # produced the defect. It said tree_treeql_balanced stands down "because its scan reads
@@ -808,10 +816,20 @@ class Parser:
         #
         # WHY THIS PREDICATE AND NOT THE ONE THAT AGREES EVERYWHERE, which is the ruling's reason
         # and not any agreement count: the guard must add no divergence and refuse no printer
-        # output, so the test is whether it changes any answer except TOWARD the macros' answer.
-        # This one does not -- MEASURED, only a52, a53 and their two neighbours move, and each
-        # lands on the macros' answer. `_no_raw_body(text) and text.count("'") % 2 == 0` is
-        # quotes_trusted transcribed, so it agrees with it on every text by construction -- and it
+        # output, so the test is whether it changes any answer except TOWARD the macros' answer --
+        # AND, where that answer is itself EXACT-FALSE, whether the case is DECLARED.
+        #
+        # THE SECOND CLAUSE WAS NOT IN THE RULING WHEN THIS GUARD LANDED, and it is the half that
+        # matters here. Moving toward the macros' answer does not make a reading right when the
+        # macros are wrong too; it removes the one divergence the sweep could see. That is exactly
+        # what happened past the single-step shapes, and test/sweep_treeql.py's `k14`-`k20` are the
+        # declarations that pay for it. The guard STANDS -- refusing printer output is the defect --
+        # and the cases are the other half of the same fix.
+        #
+        # This predicate passes the first clause -- MEASURED, only a52, a53 and their two
+        # neighbours move, and each lands on the macros' answer. The alternative,
+        # `_no_raw_body(text) and text.count("'") % 2 == 0`, is quotes_trusted transcribed, so it
+        # agrees with it on every text by construction -- and it
         # FAILS that test: it moves `(TYPE "o'k"` from one divergence to a different one and newly
         # ACCEPTS `TYPE "o'k")`, which is INFERRED not to be printer output. Buying predicate
         # identity by accepting text the printer cannot emit inverts the rule that the printer is
