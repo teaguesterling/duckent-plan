@@ -489,6 +489,12 @@ TEXT_CASES = [
 #
 # "sql" means the macros are right and this script's Python is wrong. "py" means
 # test/treeql_parser.py returns the answer the printer's own output requires and the macros do not.
+# "neither" means what it says, and it exists because `k21` could not be declared without it: BOTH
+# readings refuse printer output there, so "sql" and "py" are each FALSE and the line this script
+# prints for a declared divergence -- `(... is right)` -- would have stated a falsehood every run.
+# A two-valued field forced a choice between two wrong answers, which is the shape of defect this
+# whole table exists to prevent. The value is read only by that printed line; nothing else branches
+# on it.
 #
 # THE TABLE SAID "there are no ENTRIES of that kind" ABOUT THE "sql" DIRECTION. There are two now,
 # `k19` and `k20`, and WHAT "right" MEANS THERE IS NARROW: the Python REFUSES printer output, which
@@ -628,6 +634,40 @@ DIVERGENT = {
     "k20": ("sql",
             "no record: the same arm with a WHERE body instead of an ATTR body",
             "sql-accepts:6 rows | py-refuses:HAS/NOT needs parentheses around its chain"),
+
+    # ---- CLASS 5: printer output the MACROS refuse ----
+    # WHAT SEPARATES THIS FROM CLASS 4, which is the reason it is its own class: there the macros
+    # ACCEPT and only this reading refuses, so the defect is in a test oracle. Here the MACROS
+    # refuse -- the front-end the extension ships rejects text its own printer emitted. The shape
+    # is the same class with the following step at the OUTER level instead of inside the group, and
+    # the macros fall to their generic catch-all.
+    # MEASURED, duckdb 1.5.5, and the run above prints both messages in full.
+    #
+    # WHY IT IS "neither" AND NOT "py". Both readings refuse, so neither returns what the printer's
+    # output requires. The two existing values would each have made this line print a false
+    # sentence; see the header.
+    #
+    # WHAT IS MEASURED, and nothing beyond it:
+    #   * the text is printer output BY CONSTRUCTION -- this is a family-A case, built by tree_steps
+    #     and printed;
+    #   * the macros refuse through the GENERIC arm. In sql/10_treeql.sql `cannot read` is emitted
+    #     only under `code = 'generic'`, so the arm is identified rather than guessed. WHICH of
+    #     that arm's rows fires is NOT isolated here;
+    #   * this reading refuses through its `groupparen` arm;
+    #   * both refusals predate this round. The guard landed in the previous round removed no
+    #     signal on this text: it diverged before and after, and only this reading's SENTENCE moved.
+    #
+    # THE COLLISION QUESTION IS OPEN, not answered. Three candidate second preimages were built and
+    # printed; none matched these bytes. A search of three is a search of three, so this is NOT
+    # declared "not a collision" the way `k13` is -- `k13` has a slot-order argument that rules out
+    # every other preimage, and this has no argument at all, only three misses.
+    #
+    # AND IT IS NOT THE WORST ENTRY IN THIS TABLE. k01-k07 return a wrong IR SILENTLY; this refuses,
+    # so a caller is told. Being undeclared was the defect, not the severity.
+    "k21": ("neither",
+            "no record: printer output that BOTH readings refuse -- the macros generically, this "
+            "reading through groupparen; the macro side is the front-end that ships",
+            "both-refuse | sql:generic | py:HAS/NOT needs parentheses around its chain"),
 }
 
 
@@ -784,6 +824,18 @@ KNOWN_EXACT_FAILURES = {
            "second preimage is `[{type: 'a', has: [{attr: 'c = f(x) CHILD (TYPE ''d'''}]}]`",
     "k20": "THE SAME, with a WHERE body. The second preimage is "
            "`[{type: 'a', has: [{\"where\": 'f(x) CHILD (TYPE ''d'''}]}]`",
+
+    # the shape where the MACROS reject printer output, unlike the rest of this class. See
+    # DIVERGENT's CLASS 5 for the measurement and for what is left open.
+    "k21": "BOTH READINGS REFUSE PRINTER OUTPUT, so EXACT cannot hold: a refusal is not the IR. "
+           "The macros refuse through their GENERIC arm and this reading through `groupparen`, and "
+           "the macro side is the front-end the extension ships -- which is why this is declared "
+           "here rather than left to the open groupparen finding, which is about this file only. "
+           "WHETHER THE TEXT IS A COLLISION IS OPEN: three candidate second preimages were built "
+           "and printed and none matched, which is three misses and not a proof, so no collision "
+           "claim is made either way. Unlike k01-k07 this one is LOUD -- a caller is told -- and "
+           "unlike k13 it carries no argument that the preimage is unique. Both refusals predate "
+           "this round; the previous round's guard removed no signal here",
 }
 
 
