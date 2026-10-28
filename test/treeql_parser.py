@@ -782,8 +782,8 @@ class Parser:
         # texts are sweep cases now, `a52` and `a53`, and `b59`/`b60` pin the neighbours that must
         # still refuse.
         #
-        # THAT SENTENCE SAID "so the class cannot go undriven again". MEASURED FALSE in the very
-        # next round. `a52` and `a53` are SINGLE-STEP texts with nothing after the broken body; the
+        # THAT SENTENCE SAID "so the class cannot go undriven again". MEASURED FALSE by `26444e1`.
+        # `a52` and `a53` are SINGLE-STEP texts with nothing after the broken body; the
         # same class with a step or a group following was still undriven, and the gate was green
         # over it. On `k14`-`k18` that is because this guard made both readings stand down and they
         # then agreed on the same wrong reading; on `k19`/`k20` the second reading still refuses,
