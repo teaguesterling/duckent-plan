@@ -826,8 +826,26 @@ class Parser:
         # declarations that pay for it. The guard STANDS -- refusing printer output is the defect --
         # and the cases are the other half of the same fix.
         #
-        # This predicate passes the first clause -- MEASURED, only a52, a53 and their two
-        # neighbours move, and each lands on the macros' answer. The alternative,
+        # HOW THIS PREDICATE SCORES ON THE FIRST CLAUSE, RE-MEASURED over the sweep corpus as it
+        # stands rather than over the smaller one the guard landed against -- the earlier note said
+        # "only a52, a53 and their two neighbours move", which was true of that corpus and is not a
+        # property of the guard. Eleven answers move (test/sweep_treeql.py's own case lists, this
+        # file against its pre-guard copy, duckdb 1.5.5):
+        #
+        #   a52 a53 k14 k15 k16 k17 k18   move to the MACROS' EXACT ANSWER     -- toward
+        #   b59 b60                       move to the macros' refusal CLASS, differing only by
+        #                                 DuckDB's error prefix                -- toward, as the
+        #                                 sweep compares refusals
+        #   k19 k20                       LATERAL: still refused, now by the `groupparen` arm
+        #                                 instead, while the macros ACCEPT
+        #
+        # SO THE FIRST CLAUSE FAILS ON k19/k20, and saying so is the point of re-measuring. The
+        # guard did not move them toward anything; it UNMASKED a refusal that `unbalanced` was
+        # hiding. That refusal is R2 -- the `groupparen` arm rejecting printer output -- it is
+        # PRE-EXISTING, and it is parked by ruling. Both shapes are declared in DIVERGENT, so the
+        # unmasking is recorded rather than lost. No shape moves AWAY from the macros' answer.
+        #
+        # The alternative,
         # `_no_raw_body(text) and text.count("'") % 2 == 0`, is quotes_trusted transcribed, so it
         # agrees with it on every text by construction -- and it
         # FAILS that test: it moves `(TYPE "o'k"` from one divergence to a different one and newly

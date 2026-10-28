@@ -511,8 +511,12 @@ DIVERGENT = {
     # ---- CLASS 2: the `groupparen` arm's R42 stand-down ----
     # An arm that asks tree_treeql_no_raw_body first stands down when it is FALSE, on the reasoning
     # that on mis-split raw-bodied text the fragment it would name is not evidence of the fault it
-    # names. THIS READING NEEDS NO STAND-DOWN -- its scan does not lose its place on a raw body --
-    # so it names the real cause, and that is where the two part.
+    # names. THIS READING NEEDS NO STAND-DOWN ON HAND-WRITTEN TEXT -- its scan does not lose its
+    # place on a raw body -- so it names the real cause there, and that is where the two part on
+    # `b57`. THE UNQUALIFIED CLAIM WAS MEASURED FALSE ON PRINTER OUTPUT: `k19`/`k20` carry a raw
+    # body, the scan keeps its place, and the arm refuses text the printer emits. CLASS 4 below has
+    # the measurement. The correction is stated HERE as well as there, because a false sentence
+    # with its correction forty lines away is the defect this round was sent to fix.
     #
     # THE `parenless` HALF OF THIS CLASS WAS F2 AND IS FIXED, which is why b24/b25 are gone from
     # here. The `groupparen` arm was NOT touched: a different arm, its own R42 reason, and no
