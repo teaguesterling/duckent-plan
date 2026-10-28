@@ -41,11 +41,14 @@ task a fix gave them one:
     the same wrong one. The count said "ten shapes" here and in the EXACT paragraph below.
   * the REFUSAL PRIORITY ORDER and the `min(fragment)` tie-break, transcribed rather than derived
     -- which this file has always said, and which is the same cost in a smaller place.
-  * THE `unbalanced` STAND-DOWN -- added as a rule the two readings DO NOT yet share, so the note
-    is not silent about where the instrument is pointed next. tree_treeql_balanced stands down on
-    raw-bodied text and test/treeql_parser.py does not, so the macros ACCEPT `(WHERE a = 1))` --
-    printer output -- and the second reading refuses it. No case drives that class yet; the
-    measurement and why the guard is not landed are in test/treeql_parser.py beside the check.
+  * THE `unbalanced` STAND-DOWN, shared as of this round and listed here because the sharing is
+    what it cost. tree_treeql_balanced has always stood down on raw-bodied text;
+    test/treeql_parser.py did not, so it REFUSED `(WHERE a = 1))` -- printer output the macros
+    accept -- until the guard landed. Now both stand down, so neither reading will refuse a raw
+    body's unmatched parenthesis and the differential cannot see it if that is ever wrong. The two
+    predicates are NOT the same rule (`_no_raw_body` against `tree_treeql_quotes_trusted`, which
+    agree on 121 of 123 corpus texts); the measurement and why that is the right trade are in
+    test/treeql_parser.py beside the check. `a52`, `a53`, `b59` and `b60` drive the class.
 
 So the honest reading of a green run is: the two readings agree, AND where they share a rule that
 agreement is not independent evidence. What still carries weight is EXACT, because it compares a
@@ -382,14 +385,17 @@ TEXT_CASES = [
 # saying so. "py" means test/treeql_parser.py returns the answer the printer's own output requires
 # and the macros do not.
 #
-# THAT DIRECTION IS NOT HYPOTHETICAL ANY MORE, and the table says none only because the class is
-# UNDRIVEN. MEASURED, duckdb 1.5.5: `tree_steps([{"where": 'a = 1)'}])` prints `(WHERE a = 1))`,
-# the macros parse it with EXACT true, and this script's Python refuses it as `unbalanced
-# parentheses` -- a refusal of printer output, which the Global Constraint makes a defect. The same
-# for `(ATTR a = 1))`. No case drives either, so no entry is needed and none exists; the fix is one
-# guard in test/treeql_parser.py, held on a ruling, with the measurement beside the check there.
-# An empty table row is not the same as an empty world, and this is the place that could have said
-# so and did not.
+# THAT DIRECTION WAS NOT HYPOTHETICAL, AND THE TABLE SAID NONE BECAUSE THE CLASS WAS UNDRIVEN.
+# MEASURED, duckdb 1.5.5, before this round's guard: `tree_steps([{"where": 'a = 1)'}])` prints
+# `(WHERE a = 1))`, the macros parse it with EXACT true, and this script's Python REFUSED it as
+# `unbalanced parentheses` -- a refusal of printer output, which the Global Constraint makes a
+# defect. The same for `(ATTR a = 1))`. No case drove either, so nothing here was wrong about the
+# table and everything here was wrong about the world.
+#
+# BOTH ARE CASES NOW -- `a52` and `a53` -- and the Python was FIXED rather than declared, by a
+# stand-down in its `unbalanced` check. So the table still holds no "sql" entry, and this time
+# that is a measurement rather than a gap: the class is driven and it agrees. An empty table row
+# is not the same as an empty world, which is what this note is for.
 # ----------------------------------------------------------------------------------------------
 DIVERGENT = {
     # ---- CLASS 1: R41, the splitter knowing nothing of `"..."` regions ---- CLOSED.

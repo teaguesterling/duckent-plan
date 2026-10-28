@@ -767,39 +767,49 @@ class Parser:
         # (`(TYPE 'a'` leaves one open). A single `= 0` test at the end accepts `)TYPE 'a'(`.
         #
         # NO STAND-DOWN HERE, and THAT IS A DEFECT OF THIS FILE, not a difference worth having.
-        # It refuses PRINTER OUTPUT. MEASURED, duckdb 1.5.5:
+        # WITHOUT THE STAND-DOWN THIS CHECK REFUSED PRINTER OUTPUT. MEASURED, duckdb 1.5.5, before
+        # the guard:
         #
         #     tree_steps([{"where": 'a = 1)'}])  prints  (WHERE a = 1))
         #       macros: parsed, one `where` clause of `a = 1)`, EXACT true
-        #       here:   TreeqlError `unbalanced parentheses`
+        #       here:   TreeqlError `unbalanced parentheses`          <- the defect
         #     tree_steps([{attr: 'a = 1)'}])     prints  (ATTR a = 1))     the same, both ways
         #
         # A raw body is host SQL passed through verbatim, so it may legitimately carry an unmatched
         # parenthesis, and then the printer emits text whose parentheses do not balance. "The
         # printer is the specification. A refusal that rejects printer output is a defect" -- the
-        # Global Constraint. The macros honour it; this reading does not.
+        # Global Constraint, and `5cb9618` is this file's own precedent for the same shape. Both
+        # texts are sweep cases now, `a52` and `a53`, so the class cannot go undriven again, and
+        # `b59`/`b60` pin the neighbours that must still refuse.
         #
-        # THE REASON THAT STOOD HERE WAS FALSE IN BOTH HALVES, and acting on it is what produced
-        # the defect. It said tree_treeql_balanced stands down "because its scan reads every `'` as
-        # a delimiter", and that this scan "reads `"..."` as well ... and needs no exemption". The
-        # macro's scan has read tree_treeql_quote_mask since R41, so quoting is not the cause --
-        # and decisively, the stand-down is not about quoting AT ALL: a raw body can hold an
-        # unmatched parenthesis with no quote anywhere in the text. So this reading DOES need the
-        # exemption, and concluded otherwise from a cause that had already been superseded.
+        # THE REASON GIVEN HERE FOR NOT GUARDING WAS FALSE IN BOTH HALVES, and acting on it is what
+        # produced the defect. It said tree_treeql_balanced stands down "because its scan reads
+        # every `'` as a delimiter", and that this scan "reads `"..."` as well ... and needs no
+        # exemption". The macro's scan has read tree_treeql_quote_mask since R41, so quoting is not
+        # the cause -- and decisively, the stand-down is not about quoting AT ALL: a raw body can
+        # hold an unmatched parenthesis with no quote anywhere in the text.
         #
-        # WHY THE GUARD IS NOT HERE YET, because an unlanded fix with no reason is worse than a
-        # named one. The guard the fix wants is `self._no_raw_body(text) and ...`, borrowing the
-        # predicate that already guards the `unterminated` check below. The coordinator's condition
-        # for borrowing it was that it AGREE with tree_treeql_quotes_trusted across the sweep
-        # corpus, and MEASURED it does not: 121 of 123 texts agree, and `TYPE 'a` and `TYPE 'it''s`
-        # disagree, because quotes_trusted is `quotes_even AND no_raw_body` and those two texts
-        # have an ODD quote count with no raw body. The disagreement cannot be observed at THIS
-        # site -- both texts have an all-zero paren depth, so this test cannot fire on either, and
-        # both readings answer `unterminated quoted value` on them -- but the condition was a hard
-        # stop and the predicate really is not the same rule, so the ruling is the coordinator's.
-        # test/sweep_treeql.py drives no case in this class yet, by the same decision: a case with
-        # no fix behind it would leave the gate red.
-        if pdepth and (min(pdepth) < 0 or pdepth[-1] != 0):
+        # WHAT IS GIVEN UP, a disclosure rather than a defect: `_no_raw_body` is NOT the macro's
+        # `tree_treeql_quotes_trusted`, so the two stand-downs are two rules and not one. MEASURED
+        # over the sweep corpus plus this class's four texts: 121 of 123 agree, and the two that do
+        # not are `TYPE 'a` (b33) and `TYPE 'it''s` (b34). quotes_trusted is `quotes_even AND
+        # no_raw_body`, so ANY no-raw-body text with an odd `'` count MUST disagree -- the
+        # predicates cannot be made identical without importing the parity rule. Neither
+        # disagreement is observable here: both texts have an all-zero paren depth, so this test
+        # cannot fire on either under any guard, and both readings answer `unterminated quoted
+        # value` on them.
+        #
+        # WHY THIS PREDICATE AND NOT THE ONE THAT AGREES EVERYWHERE, which is the ruling's reason
+        # and not the 121/123 arithmetic: the guard must add no divergence and refuse no printer
+        # output, so the test is whether it changes any answer except TOWARD the macros' answer.
+        # This one does not -- MEASURED, only a52, a53 and their two neighbours move, and each
+        # lands on the macros' answer. `_no_raw_body(text) and text.count("'") % 2 == 0` is
+        # quotes_trusted transcribed and agrees 124/124 by construction, and it FAILS that test: it
+        # moves `(TYPE "o'k"` from one divergence to a different one and newly ACCEPTS
+        # `TYPE "o'k")`, which is INFERRED not to be printer output. Buying predicate identity by
+        # accepting text the printer cannot emit inverts the rule that the printer is the
+        # specification.
+        if self._no_raw_body(text) and pdepth and (min(pdepth) < 0 or pdepth[-1] != 0):
             self.fault("unbalanced", text)
 
         root = (0, 0, 0, 0, 0, 0)
