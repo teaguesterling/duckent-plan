@@ -170,8 +170,9 @@ CREATE OR REPLACE MACRO tree_treeql_quote_mask(s) AS
 -- THE SENTENCE THAT STOOD HERE SAID THE OPPOSITE, and both halves were false: "still splits into
 -- two parts and still refuses ... test/sweep_treeql.py carries it as a declared divergence". That
 -- shape is `b55`, CLOSED in fix round 2 by tree_treeql_clause_parts -- a fix that touched this
--- same file and left this header standing behind it -- and DIVERGENT now holds exactly one entry,
--- `b57`. The reachability argument it rested on ("not reachable from a legal predicate") is still
+-- same file and left this header standing behind it. This sentence then named a COUNT of DIVERGENT
+-- entries, which went stale the next time that table gained one; the table itself is the place to
+-- read it. The reachability argument it rested on ("not reachable from a legal predicate") is still
 -- true about SQL validity and was never the point: EXACT quantifies over the printer's image, not
 -- over bodies that are legal host SQL.
 --
@@ -581,9 +582,18 @@ CREATE OR REPLACE MACRO tree_treeql_wrapped(s) AS
 -- 'a = 1)'}])` PRINTS the first of them. Refusing printer output is what the Global Constraint
 -- forbids. Only the last two fall to the generic arm, and the old sentence was true of those.
 --
--- test/treeql_parser.py, the second reading, REFUSES the first two with the `unbalanced` message
--- as of this commit, and that is a defect of that file rather than of this macro -- its own
--- comment carries the measurement and why the guard is not landed yet.
+-- test/treeql_parser.py, the second reading, USED TO REFUSE the first two with the `unbalanced`
+-- message. That was a defect of that file rather than of this macro, and it is FIXED: the guard is
+-- in that file's `unbalanced` check and both readings now stand down on a raw body. These three
+-- lines said "as of this commit ... why the guard is not landed yet" and stayed behind the fix for
+-- three commits, which is the same class of defect as the sentence corrected above. A comment that
+-- dates itself to its own commit is a claim about a LATER commit's work.
+--
+-- WHAT THE STAND-DOWN COSTS, now that both readings share it: on a raw body neither reading can see
+-- an unmatched parenthesis, so where the body swallows the rest of the selector both take the same
+-- reading and the differential cannot tell. That is not hypothetical -- test/sweep_treeql.py's
+-- `k14`-`k20` are those texts, declared EXACT failures because the printer does not say where a raw
+-- body ends. The stand-down is still right; what it costs is the signal, not the answer.
 --
 -- COALESCE to TRUE: empty and NULL text have no parentheses to balance, and the no-steps arm --
 -- which runs first -- is the refusal that owns them.

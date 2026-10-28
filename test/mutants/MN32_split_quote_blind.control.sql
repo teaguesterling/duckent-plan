@@ -52,8 +52,9 @@
 -- THE SENTENCE THAT STOOD HERE SAID THE OPPOSITE, and both halves were false: "still splits into
 -- two parts and still refuses ... test/sweep_treeql.py carries it as a declared divergence". That
 -- shape is `b55`, CLOSED in fix round 2 by tree_treeql_clause_parts -- a fix that touched this
--- same file and left this header standing behind it -- and DIVERGENT now holds exactly one entry,
--- `b57`. The reachability argument it rested on ("not reachable from a legal predicate") is still
+-- same file and left this header standing behind it. This sentence then named a COUNT of DIVERGENT
+-- entries, which went stale the next time that table gained one; the table itself is the place to
+-- read it. The reachability argument it rested on ("not reachable from a legal predicate") is still
 -- true about SQL validity and was never the point: EXACT quantifies over the printer's image, not
 -- over bodies that are legal host SQL.
 --
