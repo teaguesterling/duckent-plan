@@ -1,6 +1,6 @@
 -- sql/10_treeql.sql
 --
--- M-LANG: the reader for TREEQL text. The printer (sql/06_selector.sql) is the specification --
+-- The TREEQL reader. Reads the text form of TREEQL. The printer (sql/06_selector.sql) is the specification --
 -- everything here accepts is defined by what tree_selector_to_treeql emits, and where the two
 -- could disagree the printer is right.
 --

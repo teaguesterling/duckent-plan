@@ -315,7 +315,7 @@
   # under this mutant a sibling-free tree stops refusing :prev -- compiling it against a _pre no
   # SIBLING_ORDER governs instead of raising. Verified individually against both suites.
 
-  # --- Task 8 (M-LANG): the first two mutants that point at sql/10_treeql.sql. At the task's BASE
+  # --- Task 8 (the TREEQL reader): the first two mutants that point at sql/10_treeql.sql. At the task's BASE
   # --- no mutant named that file -- MEASURED over the DECLARATIONS: `grep -c 10_treeql` answered 0
   # --- for regen.py's SPEC, 0 for this manifest, and 0 summed over all 49 .sql files here. (Not
   # --- over the GATE's output: run_mutants.py never prints a mutant's source file, so that figure

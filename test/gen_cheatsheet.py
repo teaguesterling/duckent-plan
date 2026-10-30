@@ -206,7 +206,7 @@ GLOSS_DOMAIN = {
 # handover.
 #
 # IT IS NO LONGER THE ONLY WAY IN FOR TREEQL, and the old wording here said it was: "TREEQL's
-# text form has no parser yet (that is M-LANG)". M-LANG arrived -- sql/10_treeql.sql names
+# text form has no parser yet (that is M-LANG)". The TREEQL reader arrived -- sql/10_treeql.sql names
 # tree_parse_treeql in tree_catalog.selector_languages -- so the door is now what it was always
 # for: a syntax THIS repo does not read, parsed in the host or in another extension.
 # ---------------------------------------------------------------------------

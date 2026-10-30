@@ -236,7 +236,7 @@ SPEC = {
          " lambda x: (x).prefix IS NULL), lambda x: (x).name)))"
          " <> len(list_filter(COALESCE((sem).predicate, []), lambda x: (x).prefix IS NULL))", 1)]),
 
-    # --- Task 8 (M-LANG): the first two mutants that point at sql/10_treeql.sql. Until this task
+    # --- Task 8 (the TREEQL reader): the first two mutants that point at sql/10_treeql.sql. Until this task
     # --- no mutant named that file at all -- MEASURED over the DECLARATIONS: this SPEC, the
     # --- manifest, and all 49 .sql files beside it each answered 0 for `grep -c 10_treeql`. Not
     # --- over the gate's OUTPUT, which cannot see the property either way. So the gate was mute

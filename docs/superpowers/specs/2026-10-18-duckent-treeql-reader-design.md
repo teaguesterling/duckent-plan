@@ -1,8 +1,11 @@
-# M-LANG: a reader for TREEQL text — design
+# The TREEQL reader — design
 
 *Status: designed 2026-10-18. Scope: the text parser for the `treeql` selector language — the
-first non-NULL value in `tree_catalog.selector_languages.parser` for that row. Baseline: main at
-`260d272`, after the slot engine (#66) and the grammar unification (#67).*
+first non-NULL value in `tree_catalog.selector_languages.parser` for that row. This is the
+first slice of the **M-LANG** milestone, not the whole of it: the milestone also carries the
+language-registration API (D-N10) and the front-ends behind it — xpath, tree-sitter-query, Cypher
+— and §10 leaves those out. Baseline: main at `260d272`, after the slot engine (#66) and the
+grammar unification (#67).*
 
 ## 1. The gap, stated exactly
 
@@ -327,7 +330,7 @@ embed step must learn it.
   only public extension point, `ParserExtension`, is a whole-statement fallback, not grammar
   composition — so doc 14 §2a's "each modifier a TableRef-suffix PEG rule (small extension
   surface)" is not supported by the API that exists today, and that claim needs correcting
-  separately. M-LANG is a prerequisite for that work, not part of it: the PEG rule for `MATCH`
+  separately. The TREEQL reader is a prerequisite for that work, not part of it: the PEG rule for `MATCH`
   hands its selector to a dialect parser, and the default dialect has none until this lands.
 - **Renaming `MATCH USING TREEQL`** in its six live sites — §2k's follow-up, code and tests.
 - **The clause slot order** as a registry column; recorded in the slot-engine spec §10.

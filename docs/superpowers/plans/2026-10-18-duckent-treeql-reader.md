@@ -1,4 +1,4 @@
-# M-LANG Implementation Plan
+# TREEQL Reader Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** DuckDB 1.5.5 SQL macros; `test/run.py` sqllogictest-style runner; `test/run_mutants.py`; Python 3 for the reference parser.
 
-**Spec:** `docs/superpowers/specs/2026-10-18-duckent-mlang-design.md`
+**Spec:** `docs/superpowers/specs/2026-10-18-duckent-treeql-reader-design.md`
 
 ## Global Constraints
 
@@ -43,7 +43,7 @@ Create `test/sql/48_treeql_parse.test`:
 
 ```
 # name: test/sql/48_treeql_parse.test
-# description: M-LANG -- the reader for TREEQL text. parse(print(ir)) == ir on canonical IR.
+# description: The TREEQL reader -- the text form of TREEQL, read back. parse(print(ir)) == ir on canonical IR.
 
 # THE SEPARATORS OCCUR INSIDE CLAUSE BODIES, which is why this needs a tokenizer and not a split.
 # ATTR and WHERE bodies are emitted unquoted and unescaped by the printer, so a clause list can
@@ -91,7 +91,7 @@ Expected: FAIL — `Catalog Error: Table Function with name tree_treeql_split do
 ```sql
 -- sql/10_treeql.sql
 --
--- M-LANG: the reader for TREEQL text. The printer (sql/06_selector.sql) is the specification --
+-- The TREEQL reader. Reads the text form of TREEQL. The printer (sql/06_selector.sql) is the specification --
 -- everything here accepts is defined by what tree_selector_to_treeql emits, and where the two
 -- could disagree the printer is right.
 --
