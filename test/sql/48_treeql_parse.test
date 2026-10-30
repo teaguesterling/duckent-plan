@@ -1,0 +1,3234 @@
+# name: test/sql/48_treeql_parse.test
+# description: The TREEQL reader -- the text form of TREEQL, read back. parse(print(ir)) == ir on canonical IR, EXCEPT on the shapes test/sweep_treeql.py's KNOWN_EXACT_FAILURES enumerates -- see THE ONE DOCUMENTED LIMIT below.
+
+# THE SEPARATORS OCCUR INSIDE CLAUSE BODIES, which is why this needs a tokenizer and not a split.
+# ATTR and WHERE bodies are emitted unquoted and unescaped by the printer, so a clause list can
+# contain ", " and ")" that are not structure. Each case below is one a naive split gets wrong.
+query II
+SELECT ord, part FROM tree_treeql_split('TYPE ''x'', WHERE name IN (''a'', ''b'')', ',') ORDER BY ord;
+----
+1	TYPE 'x'
+2	WHERE name IN ('a', 'b')
+
+# WHICH NAIVE READER EACH CASE DEFEATS, because they are not all the same one. A split on ', '
+# gets this case RIGHT -- there is no comma in it. What it defeats is a reader that trusts ')' as
+# structure: `split on ')'` yields ["ATTR lang = 'p", "y'"]. That is the reader the optional
+# step-parentheses tolerance (spec §4) will be, so this case is load-bearing for a later task and
+# must not be removed by anyone re-running a comma-only discrimination probe and finding it
+# "passes both".
+query II
+SELECT ord, part FROM tree_treeql_split('ATTR lang = ''p)y''', ',') ORDER BY ord;
+----
+1	ATTR lang = 'p)y'
+
+# R4: THE QUOTED PAREN NEXT TO A REAL SEPARATOR, which is what makes the quote guard in the depth
+# CASE load-bearing. The `ATTR lang = 'p)y'` case above is a single part, so no separator depends
+# on its depth and the guard could be deleted without that case noticing. These two add the
+# separator. Without `WHEN inq THEN 0`, the quoted paren moves the running depth and the comma is
+# no longer at depth 0, so the input does not split at all and BOTH parts come back as one.
+# The pair is not a duplicate: ')' drives depth to -1 and '(' drives it to +1, and the test is
+# `depth = 0`, not `depth <= 0`, so each sign fails it for a different reason.
+query II
+SELECT ord, part FROM tree_treeql_split('ATTR a = ''p)y'', TYPE ''x''', ',') ORDER BY ord;
+----
+1	ATTR a = 'p)y'
+2	TYPE 'x'
+
+query II
+SELECT ord, part FROM tree_treeql_split('ATTR a = ''(y'', TYPE ''x''', ',') ORDER BY ord;
+----
+1	ATTR a = '(y'
+2	TYPE 'x'
+
+# a comma-SPACE inside a quoted literal: the case that discriminates against a split on ', '
+query II
+SELECT ord, part FROM tree_treeql_split('TYPE ''a, b'', PSEUDO ''p''', ',') ORDER BY ord;
+----
+1	TYPE 'a, b'
+2	PSEUDO 'p'
+
+# the doubled-quote escape, which parity handles for free
+query II
+SELECT ord, part FROM tree_treeql_split('TYPE ''it''''s, ok'', PSEUDO ''p''', ',') ORDER BY ord;
+----
+1	TYPE 'it''s, ok'
+2	PSEUDO 'p'
+
+# a group is ONE part, however many commas it contains
+query II
+SELECT ord, part FROM tree_treeql_split('TYPE ''f'', HAS ( (TYPE ''b'', PSEUDO ''q'') )', ',') ORDER BY ord;
+----
+1	TYPE 'f'
+2	HAS ( (TYPE 'b', PSEUDO 'q') )
+
+# One clause's text to its IR fields. The KEYWORD is matched from tree_catalog.clause_kinds, so
+# this reader learns a new clause kind the day one is registered -- there is no list of kinds here.
+query I
+SELECT tree_treeql_clause_parse('TYPE ''fn''').kind;
+----
+type
+
+query I
+SELECT tree_treeql_clause_parse('TYPE ''fn''').value;
+----
+fn
+
+# TOLERANT INPUT: keyword case is free and a bare identifier is accepted (D-N15), while the
+# printer goes on emitting the quoted form.
+query I
+SELECT tree_treeql_clause_parse('type fn').value;
+----
+fn
+
+# the printer's doubled-quote escape, undone
+query I
+SELECT tree_treeql_clause_parse('TYPE ''it''''s''').value;
+----
+it's
+
+# ATTR is the one clause with three fields, and its body is emitted UNQUOTED
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR lang = ''py''') AS c);
+----
+lang	=	'py'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name LIKE ''a%''') AS c);
+----
+name	LIKE	'a%'
+
+# R12: EVERY ENTRY OF THE ATTR OPERATOR ALTERNATION, because three of them are reachable only by
+# their position in it. `<=`, `>=` and `<>` are each tried BEFORE the one-character prefix that
+# would otherwise swallow them: put `<` first and `ATTR size <= '10'` yields op '<' with the rest
+# of the operator stranded in arg. `!=`, `ILIKE` and `NOT LIKE` are NOT order-dependent -- at
+# their position the body starts with '!', 'I' or 'N', which no other entry can match -- but
+# nothing covered them either.
+#
+# The alternation used to be written TWICE, in the op regexp_extract and in the arg one, each
+# copy carrying its own order. R19 merged them into ONE regexp_extract with named groups, because
+# two copies that re-tokenised the body independently were free to disagree about where the
+# identifier ended -- which is the defect the R19 block at the end of this file records. A wrong
+# op and a wrong arg now have ONE possible source. (The eight were first proved in two separate
+# runs -- `<` first in op alone gives op '<'; `<` first in arg alone gives arg "= '10'" -- which
+# cost an extra run and proved nothing one run would not have. Recorded so the next person does
+# not repeat it.)
+#
+# These eight assertions plus the two above are the whole alternation, and the ORDER inside the
+# symbol group is still load-bearing: these eight are still what gate it.
+#
+# OPERATOR CASE IS NOW FREE, and the canonical output is upper case -- see the R19 block at the
+# end of this file, which pins both that tolerance and the defect it would otherwise have
+# widened. The operator spelling is still the one duckent vocabulary with no registry behind it --
+# `sql/06_selector.sql` writes it out at four more sites -- so until there is an operator table,
+# these are what stop a silent edit.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size != ''10''') AS c);
+----
+size	!=	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size <> ''10''') AS c);
+----
+size	<>	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size <= ''10''') AS c);
+----
+size	<=	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size >= ''10''') AS c);
+----
+size	>=	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size < ''10''') AS c);
+----
+size	<	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size > ''10''') AS c);
+----
+size	>	'10'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name ILIKE ''a%''') AS c);
+----
+name	ILIKE	'a%'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name NOT LIKE ''a%''') AS c);
+----
+name	NOT LIKE	'a%'
+
+# WHERE is the host door: its body is raw SQL and is carried verbatim
+query I
+SELECT tree_treeql_clause_parse('WHERE length(name) > 3').value;
+----
+length(name) > 3
+
+# an unregistered keyword yields NULL, which the refusal arm in Task 5 turns into a message
+query I
+SELECT tree_treeql_clause_parse('FROBNICATE ''x''') IS NULL;
+----
+true
+
+# ==============================================================================================
+# R11: ALL WHITESPACE IS FREE AT CLAUSE LEVEL -- space, TAB, LF and CR alike.
+#
+# The parser family treated the ASCII space as the only whitespace, and the failure was SILENT
+# rather than loud. Measured before the fix: `TYPE<TAB>'fn'` returned NULL, and `TYPE <TAB>'fn'`
+# returned the VALUE "<TAB>'fn'" -- a wrong answer dressed as a right one. CRLF is the same
+# defect, not a second one.
+#
+# WHY THE CONTRACT IS "ALL WHITESPACE". Only a depth-0 newline in the FULL selector is
+# structural, and Task 4 splits those upstream, so a newline that reaches a clause list is
+# whitespace and carries no meaning at all. Treating it as free here cannot swallow a step
+# boundary, because the step boundaries were already decided before this macro ran.
+#
+# THE WHITESPACE IS WRITTEN AS chr() CALLS, never as a literal tab or newline: the expected rows
+# of a sqllogictest record are TAB-SEPARATED columns and the record itself ends at a blank line,
+# so a literal tab or newline in a value would be read as structure. Where a value could still
+# carry whitespace after the fix, it is bracketed so a leftover is visible rather than invisible.
+
+# the keyword separated from its body by a TAB: NULL before the fix
+query I
+SELECT tree_treeql_clause_parse('TYPE' || chr(9) || '''fn''').value;
+----
+fn
+
+# a space AND a tab: the silent wrong value, which is the worse half of this defect
+query I
+SELECT tree_treeql_clause_parse('TYPE ' || chr(9) || '''fn''').value;
+----
+fn
+
+# LF before, CR after, and a doubled tab inside: one assertion for the whole character set
+query I
+SELECT tree_treeql_clause_parse(chr(10) || 'TYPE ' || chr(9) || chr(9) || '''fn''' || chr(13)).value;
+----
+fn
+
+# THE NO-BODY GUARD MUST SURVIVE THE WIDENING. A keyword with no operand falls through to NULL
+# (refused by name in Task 5) rather than parsing to a clause with no value. Widening the
+# keyword match from a literal space to any whitespace is exactly the edit that could drop this,
+# so both the bare keyword and the keyword-plus-whitespace case are pinned.
+query I
+SELECT tree_treeql_clause_parse('TYPE') IS NULL;
+----
+true
+
+query I
+SELECT tree_treeql_clause_parse('TYPE' || chr(9)) IS NULL;
+----
+true
+
+# ATTR's own body, tab-separated at both operator sides. This one PASSED before the fix -- the
+# op and arg regexes already wrote `\s*` -- and is pinned because the new single tokenisation
+# could lose it.
+query III
+SELECT (c).value, (c).op, (c).arg
+FROM (SELECT tree_treeql_clause_parse('ATTR lang' || chr(9) || '=' || chr(9) || '''py''') AS c);
+----
+lang	=	'py'
+
+# THE SPLITTER'S TWO SITES: the part text, and the part boundaries. The boundaries are decided by
+# separator position alone -- whitespace moves neither the quote parity nor the paren depth -- so
+# these four cases put whitespace after a separator, before a separator, at both ends of the
+# whole input, and alone in a trailing part. Measured: the part-text trim covers all four, and no
+# boundary-level defect remained once it took the full character set.
+query II
+SELECT ord, '[' || part || ']' FROM tree_treeql_split('TYPE ''x'',' || chr(9) || 'PSEUDO ''p''', ',') ORDER BY ord;
+----
+1	[TYPE 'x']
+2	[PSEUDO 'p']
+
+query II
+SELECT ord, '[' || part || ']' FROM tree_treeql_split('TYPE ''x''' || chr(10) || ', PSEUDO ''p''', ',') ORDER BY ord;
+----
+1	[TYPE 'x']
+2	[PSEUDO 'p']
+
+# CRLF at both ends of the whole input, which is the form a hand-written selector arrives in from
+# a Windows editor
+query II
+SELECT ord, '[' || part || ']'
+FROM tree_treeql_split(chr(13) || chr(10) || 'TYPE ''x'', PSEUDO ''p''' || chr(13) || chr(10), ',') ORDER BY ord;
+----
+1	[TYPE 'x']
+2	[PSEUDO 'p']
+
+# a trailing part that is whitespace ONLY: it must come back empty, not as the whitespace itself
+query II
+SELECT ord, '[' || part || ']' FROM tree_treeql_split('TYPE ''x'',' || chr(9) || chr(10), ',') ORDER BY ord;
+----
+1	[TYPE 'x']
+2	[]
+
+# R22: THE SPLITTER ON A COLUMN, over three rows. Every case above hands it a LITERAL, and the
+# splitter worked on a literal and died on a correlated reference -- INTERNAL Error: Failed to
+# bind column reference "" : inequal types (BIGINT != VARCHAR), raised by the binder before the
+# query ran. Nothing here called it that way, so nothing caught it, and Task 6's registry
+# dispatch has to call the parser family on a column.
+#
+# THE CAUSE WAS THE SPLITTER'S OWN INNER CORRELATED SUBQUERY, not the correlation as such:
+# `COALESCE((SELECT min(i) FROM seps WHERE i > b.lo), length(s) + 1)` derived each part's end by
+# looking the next separator up per row. Measured, generate_series, string_split and a correlated
+# `range(1, length(s) + 1)` all work, so the part boundaries now come from a `lead()` window over
+# the separator positions and there is no inner subquery left to decorrelate.
+#
+# THREE ROWS, not two, and each a different shape: a two-part row, a one-part row, and a row whose
+# own quoted paren must not move the depth. A one-row LATERAL would still bind by accident if the
+# planner read the argument as a constant, and per-row state leaking across rows -- quote parity,
+# paren depth, or `ord` failing to restart -- only shows with a second and a third row.
+query III
+SELECT s.id, x.ord, x.part
+FROM (VALUES (1, 'TYPE ''a'', CLASS ''b'''),
+             (2, 'TYPE ''c'''),
+             (3, 'ATTR a = ''p)y'', TYPE ''x''')) s(id, t),
+     LATERAL tree_treeql_split(s.t, ',') x
+ORDER BY s.id, x.ord;
+----
+1	1	TYPE 'a'
+1	2	CLASS 'b'
+2	1	TYPE 'c'
+3	1	ATTR a = 'p)y'
+3	2	TYPE 'x'
+
+# R22, THE OTHER WAY THE SCAN CAN BE CALLED: its argument is the OUTPUT OF ANOTHER MACRO. The
+# assertion above hands it a column; this one hands it an expression, and the two fail for
+# different reasons in different places.
+#
+# `generate_series` is a TABLE FUNCTION, and a table function's argument may not contain a
+# subquery. Every scalar macro in this codebase IS a subquery once it is inlined, so splitting
+# the PRINTER's own output -- which is the first thing the assembly has to do -- did not bind:
+#
+#     Binder Error: Table function cannot contain subqueries
+#
+# `range(1, n)` is a SCALAR returning BIGINT[], so unnesting it in the select list binds with a
+# subquery bound and the scan has no table function left in it.
+#
+# WHY A MACRO ARGUMENT AND NOT `(SELECT ...)`. Measured: a bare scalar subquery argument binds
+# EITHER WAY -- `tree_treeql_split((SELECT 'TYPE ''a''), ',')` works with generate_series too,
+# because the binder folds it first. Only an INLINED MACRO body reaches the table function
+# unfolded, so a `(SELECT ...)` here would have been a gate that passes before the fix. That is
+# the same shape of non-gate as the eleven literal-only assertions this file had before R22.
+query II
+SELECT ord, part
+FROM tree_treeql_split(tree_selector_to_treeql(
+       tree_steps([{type: 'a'}, {comb: 'child', type: 'b'}])), chr(10))
+ORDER BY ord;
+----
+1	(TYPE 'a')
+2	CHILD (TYPE 'b')
+
+# ==============================================================================================
+# R19: THE ATTR PARSER INVENTED AN OPERATOR, and keyword-case tolerance would have widened it.
+#
+# Measured before the fix: `ATTR ALIKE 'x'` returned op LIKE and arg 'x'. There is no operator in
+# that text at all. `value`, `op` and `arg` were three independent regexp_extract calls over the
+# same body, and nothing made them agree where the identifier ended: the op regex BACKTRACKED the
+# greedy identifier and found LIKE inside the name that `value` reported whole. Lowercase `alike`
+# escaped only because the alternation was case-sensitive -- so making operator case free, which
+# this commit does, would have widened the defect to every identifier containing `like`.
+#
+# THE FIX IS ONE TOKENISATION. op and arg now come from a SINGLE regexp_extract with named
+# groups, so the two cannot disagree by construction rather than by inspection. A WORD operator
+# requires whitespace separation from the identifier and a word boundary after itself; a SYMBOL
+# operator requires neither, because `ATTR size<='10'` worked and must keep working. `value` keeps
+# its own extract of the maximal leading identifier: it is still reported for a body with no
+# operator at all, and it cannot disagree with the single tokenisation, because the only character
+# that could extend the identifier further is itself an identifier character -- which is neither
+# whitespace nor the start of any symbol operator.
+#
+# The reported op is CANONICAL -- upper-cased and internal whitespace collapsed -- which is the
+# plan's standing "tolerant input, canonical output".
+#
+# An EMPTY op is the correct answer for a body with no operator, not a NULL: R13 makes Task 5
+# refuse it by name.
+
+# the three cases that invented an operator. ALIKE and aLIKE returned LIKE; `alike` escaped by
+# case alone, and is the one that the case-insensitivity would otherwise have broken.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR ALIKE ''x''') AS c);
+----
+ALIKE	(empty)	(empty)
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR aLIKE ''x''') AS c);
+----
+aLIKE	(empty)	(empty)
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR alike ''x''') AS c);
+----
+alike	(empty)	(empty)
+
+# the SAME defect on the right-hand side of the word: `LIKEx` is not an operator either, and
+# without the word boundary the op regex reported LIKE with "x 'a'" stranded in arg
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name LIKEx ''a''') AS c);
+----
+name	(empty)	(empty)
+
+# OPERATOR CASE IS NOW FREE, and the canonical output is upper case -- the same tolerance the
+# clause KEYWORD already had, whose absence here was the inconsistency Task 2 recorded and left.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name like ''a%''') AS c);
+----
+name	LIKE	'a%'
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name ilike ''a%''') AS c);
+----
+name	ILIKE	'a%'
+
+# CANONICAL means internal whitespace collapsed as well as upper-cased, so the two-word operator
+# has exactly one printed form however it was spaced on input
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name not   like ''a%''') AS c);
+----
+name	NOT LIKE	'a%'
+
+query III
+SELECT (c).value, (c).op, (c).arg
+FROM (SELECT tree_treeql_clause_parse('ATTR name not' || chr(9) || 'like ''a%''') AS c);
+----
+name	NOT LIKE	'a%'
+
+# A SYMBOL OPERATOR NEEDS NO SEPARATION. This passed before the fix and is pinned because the
+# obvious way to require separation for the word operators is to require it for all of them.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR size<=''10''') AS c);
+----
+size	<=	'10'
+
+# ==============================================================================================
+# THE STEP READER. The printer is the specification: tree_treeql_step emits
+# `rtrim(comb? '(' clauses ')'? (' AS ' alias)?)`, so all three parts are optional, a combinator
+# can appear with no clause list at all (`CHILD` prints bare), and the alias is last.
+#
+# THE STRUCT IS FOUR FIELDS, {op, body, alias, unknown_word} (R17). The brief said three, and
+# three cannot carry the grammar:
+#   * `body` is NULL ONLY when there is no clause list at all. A PARENLESS clause list returns
+#     its text exactly as a parenthesised one does, because requirement 6 makes `CLASS fn` legal
+#     -- with `body` NULL for a parenless step the clause list would simply vanish.
+#   * `unknown_word` holds the leading word that is in NEITHER registry, and is NULL when the
+#     leading word is a registered combinator, is a clause keyword, or is absent. Without it,
+#     `KID (TYPE 'b')` and `KID TYPE 'b'` would both arrive as op NULL with a body, which is
+#     indistinguishable from a step that has no combinator -- and Task 5 could not refuse an
+#     unknown combinator BY NAME. HAS and NOT land here too, which is what lets Task 5 refuse a
+#     parenless group. This reader adds no group logic and no refusal: both are Task 4's and
+#     Task 5's.
+#
+# THAT RULE IS WELL FORMED ONLY BECAUSE THE TWO KEYWORD SETS ARE DISJOINT, which requirement 2
+# depends on silently, so it is asserted here rather than assumed.
+query I
+SELECT count(*) FROM (SELECT keyword FROM tree_catalog.clause_kinds
+                      INTERSECT SELECT keyword FROM tree_catalog.combinators);
+----
+0
+
+# a bare clause list, parenthesised and not: the same body either way
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('TYPE ''fn''') AS s);
+----
+NULL	TYPE 'fn'	NULL	NULL
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('(TYPE ''fn'')') AS s);
+----
+NULL	TYPE 'fn'	NULL	NULL
+
+# a combinator plus a clause list
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD (TYPE ''b'')') AS s);
+----
+child	TYPE 'b'	NULL	NULL
+
+# A COMBINATOR ALONE, which is a form the printer EMITS -- `CHILD` with no clause list. This is
+# the one case where body is NULL, and it is what makes `body IS NULL` mean "no clause list"
+# rather than "no parentheses".
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD') AS s);
+----
+child	NULL	NULL	NULL
+
+# an alias, and a combinator with alias and clauses together
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('(TYPE ''b'') AS a') AS s);
+----
+NULL	TYPE 'b'	a	NULL
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD (TYPE ''b'') AS x') AS s);
+----
+child	TYPE 'b'	x	NULL
+
+# a combinator with an alias and NO clause list: the alias is split off before the parentheses are
+# read, which is the whole reason requirement 3 orders it that way
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD AS x') AS s);
+----
+child	NULL	x	NULL
+
+# TOLERANT INPUT: keyword case is free, the AS is case-insensitive, and the whitespace between the
+# parts is any whitespace in any quantity. The body's own case is NOT normalised -- it is the
+# clause reader's input, and that reader has its own tolerance.
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('child (type ''b'') as x') AS s);
+----
+child	type 'b'	x	NULL
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('  CHILD   (TYPE ''b'')   AS   x  ') AS s);
+----
+child	TYPE 'b'	x	NULL
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD' || chr(9) || '(TYPE ''b'')' || chr(10) || 'AS' || chr(9) || 'x') AS s);
+----
+child	TYPE 'b'	x	NULL
+
+# ==============================================================================================
+# R18: THE ALIAS IS FOUND WITH AN ANCHORED TAIL MATCH, not with a split on ' AS '.
+#
+# tree_treeql_split compares ONE CHARACTER at a time, so `tree_treeql_split(step, ' AS ')` matches
+# nothing and returns the step as one part -- the alias would be ALWAYS NULL and every test
+# without an alias would still pass. Widening the splitter needs variable width, rightmost match
+# and case-insensitivity at once, in a macro fifteen committed assertions rest on, so the alias
+# is found by anchoring to end-of-string instead.
+#
+# THE ANCHOR IS WHAT MAKES IT CORRECT WITH NO DEPTH OR QUOTE SCAN: a quoted or parenthesised `AS`
+# is never followed by a bare identifier at end-of-string. These four cases are the ones that
+# defeat a naive split, and the third is both of the first two in one step.
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('(ATTR t = ''X AS y'')') AS s);
+----
+ATTR t = 'X AS y'	NULL
+
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('(WHERE CAST(n AS INT) = 1)') AS s);
+----
+WHERE CAST(n AS INT) = 1	NULL
+
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('(WHERE CAST(n AS INT) = 1) AS a') AS s);
+----
+WHERE CAST(n AS INT) = 1	a
+
+# THE CAPTURE IS VALIDATED WITH tree_sql_is_ident, the rule tree_steps already applies, rather
+# than restated here -- so the tail match captures a loose token and is_ident decides. A
+# non-identifier is NOT an alias, and is NOT stripped from the step either: it stays in the text
+# for Task 5 to refuse rather than disappearing silently.
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('CHILD AS 9x') AS s);
+----
+AS 9x	NULL
+
+# THE PRINTER'S OWN NESTING, which is the case an unanchored alias search gets wrong: an alias
+# INSIDE a group, and another on the step itself. Only the outer one is the step's.
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('CHILD (TYPE ''f'', HAS ( DESCENDANT (TYPE ''b'') AS y )) AS x') AS s);
+----
+child	TYPE 'f', HAS ( DESCENDANT (TYPE 'b') AS y )	x	NULL
+
+# ==============================================================================================
+# EVERY REGISTERED COMBINATOR KEYWORD RESOLVES TO ITS OP, fed from the PRINTER and matched
+# against the REGISTRY -- so this gains a combinator the day one is registered and there is no
+# list of keywords in this file or in sql/10_treeql.sql. PARENT, ANCESTOR and PRECEDING were
+# added to the engine as rows with no macro changed, and this reader inherits them the same way.
+#
+# NO COUNT IS WRITTEN OUT: the assertion is that every row matched and that there was at least
+# one row, so it cannot go stale on registration and cannot pass vacuously on an empty registry.
+#
+# THE OUTER ALIAS IS `cb`, NOT `c`: tree_treeql_comb's own lookup is written
+# `SELECT c.keyword FROM tree_catalog.combinators c WHERE c.op = want_op`, and macro inlining
+# puts that `c` inside any query whose own scan is also aliased `c` -- the predicate then
+# compares the table to itself and DuckDB raises "More than one row returned by a subquery used
+# as an expression". Measured today; a pre-existing hazard of the printer macro, not of this
+# reader, and avoided here by not reusing the alias.
+query III
+SELECT count(*) > 0,
+       count(*) FILTER (WHERE (tree_treeql_step_parse(tree_treeql_step(cb.op, 'TYPE ''b''', NULL))).op = cb.op) = count(*),
+       count(*) FILTER (WHERE (tree_treeql_step_parse(lower(tree_treeql_step(cb.op, 'TYPE ''b''', NULL)))).op = cb.op) = count(*)
+FROM tree_catalog.combinators cb;
+----
+true	true	true
+
+# the printer's three-part form and its bare form, round-tripped for every registered row
+query II
+SELECT count(*) FILTER (WHERE (tree_treeql_step_parse(tree_treeql_step(cb.op, 'TYPE ''b''', 'al'))).body = 'TYPE ''b'''
+                          AND (tree_treeql_step_parse(tree_treeql_step(cb.op, 'TYPE ''b''', 'al'))).alias = 'al'
+                          AND (tree_treeql_step_parse(tree_treeql_step(cb.op, 'TYPE ''b''', 'al'))).unknown_word IS NULL) = count(*),
+       count(*) FILTER (WHERE (tree_treeql_step_parse(tree_treeql_step(cb.op, NULL, NULL))).op = cb.op
+                          AND (tree_treeql_step_parse(tree_treeql_step(cb.op, NULL, NULL))).body IS NULL) = count(*)
+FROM tree_catalog.combinators cb;
+----
+true	true
+
+# ==============================================================================================
+# REQUIREMENT 6: THE STEP'S CLAUSE-LIST PARENTHESES ARE OPTIONAL ON INPUT (decided 2026-10-18).
+# With bare identifiers from D-N15 this is what makes TREEQL hand-writable, which is the reason
+# it is getting a reader at all. The printer is unchanged; this widens only what is accepted.
+#
+# THIS TOLERANCE DEPENDS ON TASK 5. A parenless step is distinguishable only because a clause
+# keyword never begins a step and a combinator keyword always does -- and that holds because the
+# CONSTRUCTOR emits a combinator for every inner step. That invariant is the constructor's, not
+# the grammar's, and IR built through the host door is not bound by it. Task 5 adds the refusal
+# that puts this tolerance back on the grammar. It is deliberately not added here.
+query II
+SELECT (s).body = (t).body, (s).op IS NOT DISTINCT FROM (t).op
+FROM (SELECT tree_treeql_step_parse('CLASS fn') AS s, tree_treeql_step_parse('(CLASS fn)') AS t);
+----
+true	true
+
+query II
+SELECT (s).body = (t).body, (s).op IS NOT DISTINCT FROM (t).op
+FROM (SELECT tree_treeql_step_parse('CHILD TYPE ''block''') AS s,
+             tree_treeql_step_parse('CHILD (TYPE ''block'')') AS t);
+----
+true	true
+
+# ==============================================================================================
+# AN UNREGISTERED LEADING WORD IS LEFT FOR TASK 5'S REFUSAL (requirement 2), not silently
+# treated as part of the clause list. The parenless and the parenthesised form must be
+# DISTINGUISHABLE from a step with no combinator, which is what the fourth field buys -- and
+# `body` is the clause list either way, never NULL.
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('KID (TYPE ''b'')') AS s);
+----
+NULL	TYPE 'b'	NULL	KID
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('KID TYPE ''b''') AS s);
+----
+NULL	TYPE 'b'	NULL	KID
+
+# A LEADING CLAUSE KEYWORD IS NOT AN UNKNOWN WORD. It is the start of the clause list, so the
+# fourth field stays NULL and the whole text is the body -- the case that would otherwise be
+# confused with `KID TYPE 'b'`.
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('ATTR lang = ''py''') AS s);
+----
+NULL	ATTR lang = 'py'	NULL	NULL
+
+# HAS AND NOT ARE NOT COMBINATORS, so a step beginning with either lands in the fourth field --
+# which is exactly what Task 5 needs in order to refuse a parenless group. No group logic and no
+# refusal message is added here; groups are Task 4's.
+query II
+SELECT (s).unknown_word, (s).body FROM (SELECT tree_treeql_step_parse('HAS ( DESCENDANT (TYPE ''b'') )') AS s);
+----
+HAS	DESCENDANT (TYPE 'b')
+
+query II
+SELECT (s).unknown_word, (s).body FROM (SELECT tree_treeql_step_parse('NOT ( TYPE ''b'' )') AS s);
+----
+NOT	TYPE 'b'
+
+# ==============================================================================================
+# tree_treeql_reserved() IS DERIVED, and is the only place the reserved set appears. Asserted
+# against the REGISTRY and not against a literal list, in three parts, so it cannot go stale when
+# a combinator is registered and cannot pass by returning everything or nothing:
+#   * nothing the registries declare is missing
+#   * the three structural words are present
+#   * nothing else is in it
+#
+# N3: EACH OF THE THREE MUST FAIL ON A NULL RETURN, and two of them did not. The first was
+# `count(*) WHERE NOT list_contains(reserved(), kw) = 0` -- against NULL, list_contains is NULL,
+# WHERE drops every row and the count is 0, which is the expected value. The third was a count
+# over `unnest(reserved())`, and unnest(NULL) yields no rows, so that count was 0 too. Both
+# passed vacuously; only list_has_all failed on NULL, so one assertion was carrying the trio.
+#
+# Both are now stated POSITIVELY -- "every keyword was found", with `count(*) > 0` beside it --
+# so a NULL or an empty list fails the count rather than satisfying an empty WHERE. Measured: all
+# three now fail on a NULL return AND on an empty-list return.
+query II
+SELECT count(*) > 0,
+       count(*) FILTER (WHERE list_contains(tree_treeql_reserved(), x.keyword)) = count(*)
+FROM (SELECT keyword FROM tree_catalog.clause_kinds
+      UNION ALL SELECT keyword FROM tree_catalog.combinators) x;
+----
+true	true
+
+query I
+SELECT list_has_all(tree_treeql_reserved(), ['AS', 'HAS', 'NOT']);
+----
+true
+
+query II
+SELECT count(*) > 0,
+       count(*) FILTER (WHERE w NOT IN (SELECT keyword FROM tree_catalog.clause_kinds)
+                          AND w NOT IN (SELECT keyword FROM tree_catalog.combinators)
+                          AND w NOT IN ('AS', 'HAS', 'NOT'))
+FROM (SELECT unnest(tree_treeql_reserved()) AS w);
+----
+true	0
+
+# ==============================================================================================
+# M1, AND R18'S ANCHOR AMENDED: THE PRINTER EMITS A STEP THAT CARRIES ONLY AN ALIAS, and the
+# anchor has to match at position 0 to read it.
+#
+# tree_treeql_step (sql/06_selector.sql:313-314) is
+# `rtrim(comb? '(' clauses ')'? (' AS ' alias)?)`. With op NULL and clauses NULL the first two
+# parts collapse to '' and rtrim trims only the RIGHT side, so the printed step is ' AS x' -- the
+# AS is the first non-space character. The reader trims that leading space away, and an anchor of
+# `\s+AS\s+` cannot match at position 0. So the alias was missed, `AS` became an unrecognised
+# leading word, and Task 5 would have refused legal printer output by name:
+# measured `{op: NULL, body: 'x', alias: NULL, unknown_word: 'AS'}` where the IR says
+# `{op: NULL, body: NULL, alias: 'x', unknown_word: NULL}`. parse(print(ir)) != ir.
+#
+# THE SHAPE IS REACHABLE THROUGH THE ORDINARY CONSTRUCTOR, not only by calling the printer macro
+# by hand -- measured, `tree_steps([{'as': 'x'}])` builds it and the whole printer emits ' AS x'.
+# `as` is in the step shape's key set, nothing requires a step to carry a clause, and an alias is
+# confined to depth 0 where a written combinator is refused outright -- so an alias-only step is
+# OBLIGED to print with no combinator and no parentheses, which is exactly the shape that broke.
+# Both routes are asserted, because the constructor route is the one an author reaches.
+#
+# WHY NO EXISTING ASSERTION CAUGHT IT: the two registry-driven round trips below feed printer
+# output for every registered combinator, so `op` is never NULL in a printer-fed assertion, and
+# the `op IS NULL` alias cases are all hand-written text carrying the space `\s+` needed.
+#
+# R18's anchor is amended to `(?i)(?:^|\s+)AS\s+(\S+)\s*$`. Measured 18/18 over every alias shape
+# in this file; the old anchor scores 17/18 and the single case that separates them is the
+# trimmed `AS x` below.
+
+# the printer macro's own output, op NULL and clauses NULL
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse(tree_treeql_step(NULL, NULL, 'x')) AS s);
+----
+NULL	NULL	x	NULL
+
+# the same IR through the ORDINARY CONSTRUCTOR and the whole printer
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse(tree_selector_to_treeql(tree_steps([{'as': 'x'}]))) AS s);
+----
+NULL	NULL	x	NULL
+
+# and the trimmed text the reader actually sees: the one case the old anchor missed
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('AS x') AS s);
+----
+NULL	NULL	x	NULL
+
+# WHAT THE WIDENED ANCHOR MUST NOT START MATCHING. Letting AS match at position 0 is how AS stops
+# being a WORD and becomes a PREFIX.
+#
+# These two are GATES, and each falls to its own wrong fix -- both mutants measured:
+#   * `ASx y`, a word merely STARTING with AS: treating AS as a prefix (`AS\S*\s+(\S+)$`) reads
+#     `y` as the alias.
+#   * `ATTR as = x`, an attribute NAMED as with a bare identifier value (D-N15): searching for AS
+#     anywhere and taking the final token (`AS\b.*\s(\S+)$`) reads `x` as the alias.
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('ASx y') AS s);
+----
+NULL	y	NULL	ASx
+
+query IIII
+SELECT (s).op, (s).body, (s).alias, (s).unknown_word
+FROM (SELECT tree_treeql_step_parse('ATTR as = x') AS s);
+----
+NULL	ATTR as = x	NULL	NULL
+
+# These two are REGRESSION PINS, not gates. I could construct no wrong anchor that breaks either:
+# tree_sql_is_ident refuses `'x'` in the first, and leftmost matching settles the second. Recorded
+# as pins so the next person does not go hunting for a mutant that fails them.
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('(ATTR as = ''x'')') AS s);
+----
+ATTR as = 'x'	NULL
+
+query II
+SELECT (s).body, (s).alias FROM (SELECT tree_treeql_step_parse('TYPE ''a'' AS as') AS s);
+----
+TYPE 'a'	as
+
+# ==============================================================================================
+# S1: WHITESPACE HAD TWO DEFINITIONS, and the regex sites used the other one.
+#
+# tree_treeql_ws() declared four characters while five regex sites used RE2's `\s`, which is one
+# character wider. The consequence was the exact failure mode R11 exists to remove, not a new
+# one -- measured before the fix:
+#
+#   TYPE<FF>'fn'          -> value "<FF>'fn'"   a SILENT WRONG VALUE: `\s` accepted the form feed
+#                                               as the keyword separator, then the body trim could
+#                                               not remove it, so tree_treeql_unlit saw a string
+#                                               that does not start with a quote and passed it on
+#   TYPE<FF>              -> a clause whose value is a form feed, not the NULL the no-body guard
+#                                               promises and that this file pins twice for TAB
+#   CHILD<FF>(TYPE 'b')   -> body "<FF>(TYPE 'b')"  the form feed survived at the head of `tail`,
+#                                               so `tail LIKE '('` was false and the step's own
+#                                               parentheses were never stripped
+#
+# THE RULING: tree_treeql_ws() is EXACTLY RE2's `\s` -- space, TAB, LF, FF, CR. R11's "four
+# characters" is superseded. The principle was always ONE definition of whitespace; five is the
+# set that makes the trim and the regexes agree BY CONSTRUCTION rather than by inspection.
+#
+# THE FIRST ASSERTION IS THE ONE THAT MATTERS, and it is DERIVED: for every ASCII character, being
+# in tree_treeql_ws() and matching `\s` must be the same thing. It states the ruling itself, so it
+# cannot go stale and it cannot be satisfied by adding the one character this round happened to
+# find. Measured: 1 disagreement before (chr(12)), 0 after.
+#
+# IT COUNTS AGREEMENTS, NOT DISAGREEMENTS, and that is not a style choice. The first shape of this
+# assertion counted disagreements and expected 0, with no guard that anything was compared. Were
+# tree_treeql_ws() ever to return NULL, every `<>` would be NULL, no row would qualify, the count
+# would be 0 and the assertion would PASS while comparing nothing. Measured, by overriding the
+# macro to NULL in a live session: the old shape returned 0 and passed; this shape returns
+# (true, false) and fails. A gate that incomplete information can satisfy is not a gate -- the
+# same defect this file had just criticised two assertions down.
+query II
+SELECT count(*) > 0,
+       count(*) FILTER (WHERE regexp_matches(chr(i::INTEGER), '\s')
+                            = contains(tree_treeql_ws(), chr(i::INTEGER))) = count(*)
+FROM generate_series(1, 127) t(i);
+----
+true	true
+
+# the form feed, as a concrete case of the silent wrong value
+query I
+SELECT tree_treeql_clause_parse('TYPE' || chr(12) || '''fn''').value;
+----
+fn
+
+# and the no-body guard, which the wider separator had been defeating
+query I
+SELECT tree_treeql_clause_parse('TYPE' || chr(12)) IS NULL;
+----
+true
+
+# the step reader's paren strip, which reads the same set
+query I
+SELECT (tree_treeql_step_parse('CHILD' || chr(12) || '(TYPE ''b'')')).body;
+----
+TYPE 'b'
+
+# THE VERTICAL TAB STAYS OUT. chr(11) is whitespace to a C programmer and is NOT in RE2's `\s`
+# -- measured. This pins the set to RE2's `\s` and not to "every character someone calls
+# whitespace", which is what makes the derived assertion above meaningful rather than circular.
+# It PASSED before the fix, so it is a pin; the break that fells it is recorded in the report.
+query I
+SELECT tree_treeql_clause_parse('TYPE' || chr(11) || '''fn''') IS NULL;
+----
+true
+
+# ==============================================================================================
+# S3: THE MERGED TOKENISATION LOST "OPERATOR PRESENT, ARGUMENT MISSING" -- and invented an
+# operator in the process.
+#
+# The single match's tail was `\s*(?s)(.+)$`, and `(.+)` requires a character. So a body ending at
+# the operator failed the WHOLE match and reported an empty op -- indistinguishable from a body
+# with no operator at all. R13 makes Task 5 refuse an empty op and an empty arg as SEPARATE named
+# refusals, so the collapse makes Task 5 misdiagnose: it would tell an author that `ATTR name =`
+# has no operator when it plainly has one.
+#
+# WORSE THAN A LOST DISTINCTION, and not in the review -- measured: `ATTR name <=` returned
+# op '<' with arg '='. With no argument to consume, the symbol alternation BACKTRACKED from `<=`
+# to `<` so that `=` could serve as the argument. That is R19's own defect class -- an operator
+# the text does not contain -- surviving in the no-argument corner the merge created.
+#
+# THE FIX IS `(.*)` FOR THE ARGUMENT, nothing else: the operator is still required, so a body with
+# no operator still reports an empty op. Measured: no change to any of the eighteen attr cases
+# above, and the backtracking disappears because the argument no longer has to be fed.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name =') AS c);
+----
+name	=	(empty)
+
+# the contrast that makes the first one mean something: no operator at all, still an empty op.
+# This PASSED before the fix -- it is the half of the distinction that was already right.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name') AS c);
+----
+name	(empty)	(empty)
+
+# a WORD operator with no argument, which is the same case on the other branch
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name LIKE') AS c);
+----
+name	LIKE	(empty)
+
+# THE INVENTED OPERATOR: `<=` entire, not `<` with `=` stranded in arg
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name <=') AS c);
+----
+name	<=	(empty)
+
+# ITS TWO ORDER-DEPENDENT SIBLINGS, unpinned until now. `<=` was the only one asserted, and the
+# backtrack that invented `<` from `<=` is not special to `<=`: with no argument to consume it
+# would equally report `>` with `=` stranded, and `<` with `>` stranded. One assertion per
+# alternative, because the alternation's ORDER is what makes each reachable.
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name >=') AS c);
+----
+name	>=	(empty)
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name <>') AS c);
+----
+name	<>	(empty)
+
+query III
+SELECT (c).value, (c).op, (c).arg FROM (SELECT tree_treeql_clause_parse('ATTR name !=') AS c);
+----
+name	!=	(empty)
+
+# ==============================================================================================
+# TASK 4: IR ASSEMBLY, GROUPS AND CANONICAL NUMBERING -- the exact theorem.
+#
+# tree_parse_treeql(tree_selector_to_treeql(sel)) = sel, as a WHOLE VALUE, so the NODE IDS are
+# compared and not merely the shape. The whole design rests on one property: canonical IR is
+# dense, 0-based and depth-first -- a step, then its clauses, then its groups, then each group's
+# inner chain -- and the printer orders both steps and parts by node_id. So TEXTUAL ORDER IS
+# node_id ORDER, and a counter incremented as parts are encountered reproduces the ids.
+#
+# WHY WHOLE-VALUE `=` AND NOT PRINTED TEXT. Comparing print(parse(print(ir))) to print(ir) is the
+# NORMALISING half, and it is at the end of this section where it belongs -- it is the right test
+# for IR that is not canonical. Using it for the EXACT half would delete the theorem this task
+# exists to prove: every node id could be wrong and the text would still match. Measured: plain
+# `=` is TRUE for an identical selector despite its NULL fields and FALSE for a differing one, so
+# `=` is correct here and IS NOT DISTINCT FROM is not needed. row_number() returns BIGINT, so the
+# assembly casts to INTEGER -- without that cast the whole value differs on type alone.
+#
+# WHERE THESE CASES COME FROM. The spread is EVERY row of test/corpus/selectors.tsv, written
+# inline as literals exactly as test/sql/40_corpus.test carries them -- not a hand-picked set. A
+# hand-picked spread of eleven cases is what let the alias-only step ` AS x` through in Task 3:
+# cases drawn from the printer's own reachable space are the correction.
+# ==============================================================================================
+
+# c01  function_definition  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'function_definition'}])))
+     = tree_steps([{type: 'function_definition'}]);
+----
+true
+
+# c02  .fn  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn'}])))
+     = tree_steps([{class: 'fn'}]);
+----
+true
+
+# c03  .fn#greet  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{id: 'greet', class: 'fn'}])))
+     = tree_steps([{id: 'greet', class: 'fn'}]);
+----
+true
+
+# c04  function_definition > block  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'function_definition'}, {comb: 'child', type: 'block'}])))
+     = tree_steps([{type: 'function_definition'}, {comb: 'child', type: 'block'}]);
+----
+true
+
+# c05  function_definition string  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'function_definition'}, {comb: 'desc', type: 'string'}])))
+     = tree_steps([{type: 'function_definition'}, {comb: 'desc', type: 'string'}]);
+----
+true
+
+# c06  .fn:not(:has(string))  [app]  portable sitting_duck_supported nested
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', "not": [{type: 'string'}]}])))
+     = tree_steps([{class: 'fn', "not": [{type: 'string'}]}]);
+----
+true
+
+# c07  .fn:has(string)  [app]  portable sitting_duck_supported nested
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', has: [{type: 'string'}]}])))
+     = tree_steps([{class: 'fn', has: [{type: 'string'}]}]);
+----
+true
+
+# c08  function_definition + function_definition  [app]  portable sitting_duck_supported sibling
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'function_definition'}, {comb: 'next', type: 'function_definition'}])))
+     = tree_steps([{type: 'function_definition'}, {comb: 'next', type: 'function_definition'}]);
+----
+true
+
+# c09  module > function_definition  [scripts]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'module'}, {comb: 'child', type: 'function_definition'}])))
+     = tree_steps([{type: 'module'}, {comb: 'child', type: 'function_definition'}]);
+----
+true
+
+# c10  class_definition > block > function_definition  [scripts]  portable sitting_duck_supported chain3
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'class_definition'}, {comb: 'child', type: 'block'}, {comb: 'child', type: 'function_definition'}])))
+     = tree_steps([{type: 'class_definition'}, {comb: 'child', type: 'block'}, {comb: 'child', type: 'function_definition'}]);
+----
+true
+
+# c11  .fn[name^="generate_"]  [scripts]  portable sitting_duck_supported attr
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', attr: 'name LIKE ''generate\_%'' ESCAPE ''\'''}])))
+     = tree_steps([{class: 'fn', attr: 'name LIKE ''generate\_%'' ESCAPE ''\'''}]);
+----
+true
+
+# c12  identifier + identifier  [py_variety]  portable sibling element
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'identifier'}, {comb: 'next', type: 'identifier'}])))
+     = tree_steps([{type: 'identifier'}, {comb: 'next', type: 'identifier'}]);
+----
+true
+
+# c13  .fn:not(:has(block:has(string)))  [app]  portable nested
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', "not": [{type: 'block', has: [{type: 'string'}]}]}])))
+     = tree_steps([{class: 'fn', "not": [{type: 'block', has: [{type: 'string'}]}]}]);
+----
+true
+
+# c14  block > expression_statement:first-child  [app]  portable sitting_duck_supported
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'block'}, {comb: 'child', type: 'expression_statement', pseudo: 'first-child'}])))
+     = tree_steps([{type: 'block'}, {comb: 'child', type: 'expression_statement', pseudo: 'first-child'}]);
+----
+true
+
+# c15  .def:not(.fn)  [app]  portable nested self
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'def', "not": [{comb: 'self', class: 'fn'}]}])))
+     = tree_steps([{class: 'def', "not": [{comb: 'self', class: 'fn'}]}]);
+----
+true
+
+# c16  .fn[params=2]  [scripts]  portable sitting_duck_supported attr params
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', attr: 'params = 2'}])))
+     = tree_steps([{class: 'fn', attr: 'params = 2'}]);
+----
+true
+
+# c17  .fn:not(:nope)  [app]  portable nested self pseudo unknown_pseudo
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', "not": [{comb: 'self', pseudo: 'nope'}]}])))
+     = tree_steps([{class: 'fn', "not": [{comb: 'self', pseudo: 'nope'}]}]);
+----
+true
+
+# c18  .fn:has(> block[params=0])  [app]  portable nested attr has_attr
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'fn', has: [{comb: 'child', type: 'block', attr: 'params = 0'}]}])))
+     = tree_steps([{class: 'fn', has: [{comb: 'child', type: 'block', attr: 'params = 0'}]}]);
+----
+true
+
+# ----------------------------------------------------------------------------------------------
+# Beyond the corpus: shapes the PRINTER can emit that the corpus does not reach. Each one is
+# reachable through the ordinary constructor, not only by calling the printer by hand.
+# ----------------------------------------------------------------------------------------------
+
+# a step that is NOTHING BUT an alias. tree_treeql_step right-trims only, so with no combinator
+# and no clauses this prints as ' AS x' with the AS first -- the shape R18's original `\s+`
+# anchor could not match, and the one a hand-picked spread missed.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"as": 'x'}])))
+     = tree_steps([{"as": 'x'}]);
+----
+true
+
+# a combinator with NO clause list at all: `CHILD` prints bare.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'a'}, {comb: 'child'}])))
+     = tree_steps([{type: 'a'}, {comb: 'child'}]);
+----
+true
+
+# ...and bare WITH a capture, which prints with TWO spaces (`CHILD  AS m`), because the empty
+# clause-list slot collapses to '' between them. The alias pattern's `\s+` spans both.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'a'}, {comb: 'child', "as": 'm'}])))
+     = tree_steps([{type: 'a'}, {comb: 'child', "as": 'm'}]);
+----
+true
+
+# a second top-level step with NO combinator written: the constructor stamps desc and the
+# printer emits DESCENDANT, so what the reader sees is explicit. The parser defaults every
+# step but the first of the outer chain to desc, which is what makes the two agree.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'a'}, {type: 'b'}])))
+     = tree_steps([{type: 'a'}, {type: 'b'}]);
+----
+true
+
+# depth 1.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b'}]}])))
+     = tree_steps([{class: 'f', has: [{type: 'b'}]}]);
+----
+true
+
+# depth 2 -- tree_group_depth_limit(), where the printer's unrolling stops.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b', has: [{type: 'c'}]}]}])))
+     = tree_steps([{class: 'f', has: [{type: 'b', has: [{type: 'c'}]}]}]);
+----
+true
+
+# HAS and NOT on ONE step. This is the numbering case written out below.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b'}], "not": [{type: 'c'}]}])))
+     = tree_steps([{class: 'f', has: [{type: 'b'}], "not": [{type: 'c'}]}]);
+----
+true
+
+# a multi-step inner chain: every inner step carries an EXPLICIT combinator, space separated.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b'}, {comb: 'child', type: 'c'}]}])))
+     = tree_steps([{class: 'f', has: [{type: 'b'}, {comb: 'child', type: 'c'}]}]);
+----
+true
+
+# a BARE inner step followed by another: `HAS ( CHILD CHILD (TYPE 'b') )`. The chain split is
+# driven by the combinator keywords themselves, so two adjacent ones are two steps.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{comb: 'child'}, {comb: 'child', type: 'b'}]}])))
+     = tree_steps([{class: 'f', has: [{comb: 'child'}, {comb: 'child', type: 'b'}]}]);
+----
+true
+
+# all six clause kinds on one step, which is also the SLOT ORDER gate: the printer emits parts
+# by node_id, and the constructor numbers them by slot.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 't', id: 'i', class: 'c', attr: 'n = 1', pseudo: 'p', "where": 'x = 1'}])))
+     = tree_steps([{type: 't', id: 'i', class: 'c', attr: 'n = 1', pseudo: 'p', "where": 'x = 1'}]);
+----
+true
+
+# the slot order is NOT the constructor's argument order: {type, class, id} prints TYPE, ID,
+# CLASS. Textual order equals node_id order only because both follow slot order, and this is
+# the case that would fail if the parser numbered parts by the order they were WRITTEN in the
+# struct rather than the order they appear in the TEXT.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'f', class: 'c', id: 'i'}])))
+     = tree_steps([{type: 'f', class: 'c', id: 'i'}]);
+----
+true
+
+# a WHERE body emitted unquoted, carrying a depth-0-looking comma inside parentheses.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'name IN (''a'', ''b'')'}])))
+     = tree_steps([{"where": 'name IN (''a'', ''b'')'}]);
+----
+true
+
+# ATTR with a word operator and an argument that keeps its own quotes and ESCAPE clause.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', attr: 'name NOT LIKE ''a\_%'' ESCAPE ''\'''}])))
+     = tree_steps([{class: 'f', attr: 'name NOT LIKE ''a\_%'' ESCAPE ''\'''}]);
+----
+true
+
+# a TYPE value that IS a group keyword. The group test reads the LEADING word of a part, and a
+# quoted value is never that word.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'has'}])))
+     = tree_steps([{type: 'has'}]);
+----
+true
+
+# a value carrying each of the three characters the tokenizer treats as structure: the comma,
+# the quote (doubled by the printer) and the newline. Quote parity is what makes all three free.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{type: 'a, b'}, {comb: 'child', type: 'it''s'}, {comb: 'child', type: 'x' || chr(10) || 'y'}])))
+     = tree_steps([{type: 'a, b'}, {comb: 'child', type: 'it''s'}, {comb: 'child', type: 'x' || chr(10) || 'y'}]);
+----
+true
+
+# SELF, legal only as the first step of a group -- so the eight-combinator scan below has to use
+# this shape for all eight rather than a top-level chain.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{comb: 'self', class: 'g'}]}])))
+     = tree_steps([{class: 'f', has: [{comb: 'self', class: 'g'}]}]);
+----
+true
+
+# a capture on a step that also carries a group, so the alias comes off AFTER a ')'.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b'}], "as": 'cap'}])))
+     = tree_steps([{class: 'f', has: [{type: 'b'}], "as": 'cap'}]);
+----
+true
+
+# ----------------------------------------------------------------------------------------------
+# THE NUMBERING, WRITTEN OUT. Every assertion above compares two values neither of which spells a
+# node id, so all of them would still pass if the assembly and the constructor were wrong in the
+# SAME way. This one writes the ids down. It is also the perturbation target: change one id here
+# and this record must fail, or the exact theorem above is worthless.
+#
+# Depth-first, each group's whole subtree before the next sibling: type 2, has 3, step 4, type 5,
+# not 6, step 7, type 8. A breadth-first numbering would put both group nodes before either
+# inner step.
+# ----------------------------------------------------------------------------------------------
+query IIIII
+SELECT node_id, parent_id, kind, value, op
+FROM (SELECT unnest(tree_parse_treeql(
+       '(TYPE ''f'', HAS ( DESCENDANT (TYPE ''b'') ), NOT ( DESCENDANT (TYPE ''c'') ))'),
+       recursive := true))
+ORDER BY node_id;
+----
+0	NULL	selector	treeql	NULL
+1	0	step	NULL	NULL
+2	1	type	f	NULL
+3	1	has	NULL	NULL
+4	3	step	NULL	desc
+5	4	type	b	NULL
+6	1	not	NULL	NULL
+7	6	step	NULL	desc
+8	7	type	c	NULL
+
+# PROVENANCE (requirement 3): the selector root's value is this front-end's name, which is what
+# tree_selector_language reads back. Canonical IR already carries it, so stamping it is what
+# leaves the exact theorem above undisturbed rather than what disturbs it.
+query I
+SELECT tree_selector_language(tree_parse_treeql('(TYPE ''f'')'));
+----
+treeql
+
+# ----------------------------------------------------------------------------------------------
+# EVERY COMBINATOR, DRIVEN FROM THE REGISTRY. Not a list of eight: a scan, so a ninth row is
+# covered the day it is registered. The scan is aliased `cb` and not `c`, because
+# tree_treeql_comb looks up `FROM tree_catalog.combinators c WHERE c.op = want_op` and inlining
+# puts that `c` in scope -- measured, alias `c` plus a column named `op` makes the predicate
+# self-compare and the scalar subquery return all eight rows.
+#
+# WHY THE TEXT COMES FROM tree_treeql_step AND NOT FROM tree_selector_to_treeql. Measured, the
+# whole printer CANNOT be called with a correlated argument at all -- not even over one row:
+#
+#   SELECT tree_selector_to_treeql(s) FROM (SELECT tree_steps([{type: 'a'}]) AS s) v
+#   INTERNAL Error: Failed to bind column reference "" : inequal types (INTEGER != BIGINT)
+#
+# a PRE-EXISTING limit of sql/06_selector.sql, which this task may not edit. tree_treeql_step is
+# the printer's own per-step renderer and IS correlation-safe, and the row above proves the
+# keyword it emits is cb.keyword, so the text asserted here is the printer's and not a
+# transcription of it.
+#
+# SF-1: BOTH OF THESE WERE WRITTEN IN THE NEGATIVE, which is the shape N3 (earlier in this file)
+# banned after it let two of three assertions pass vacuously. They are restated POSITIVELY here --
+# "the scan saw every known row" beside "every row it examined agreed" -- so an empty scan fails
+# the first column and a NULL comparison fails the second. Neither column pins the count, so a
+# ninth combinator is still covered the day it is registered rather than breaking these records.
+#
+# WHY THIS MATTERED EVEN THOUGH NEITHER WAS VACUOUS TODAY, measured on all four combinations:
+#
+#   old `count(*) FILTER (WHERE NOT same), count(*) >= 8`  -> real (0, true)   PASS
+#                                                             empty (0, false) caught
+#                                                             NULL  (0, true)  PASSED VACUOUSLY
+#   old `count(*) ... WHERE <> ...`                        -> real 0           PASS
+#                                                             empty 0          PASSED VACUOUSLY
+#                                                             NULL  0          PASSED VACUOUSLY
+#
+# So the second record was vacuous in BOTH directions and caught nothing on its own; it was
+# load-bearing only because the FIRST record's `count(*) >= 8` happened to prove the registry was
+# not empty. That cross-record dependency is exactly the fragility N3 exists to remove -- delete
+# or reshape the first record and the second silently stops testing anything.
+#
+#   new form                                               -> real (true, true)  PASS
+#                                                             empty (false, true) caught
+#                                                             NULL  (true, false) caught
+query II
+SELECT count(*) >= 8 AS saw_every_known_row,
+       count(*) FILTER (WHERE same) = count(*) AS every_examined_row_agreed
+FROM (SELECT tree_parse_treeql(
+               tree_treeql_step(NULL, 'TYPE ''a'', HAS ( '
+                 || tree_treeql_step(cb.op, 'TYPE ''b''', NULL) || ' )', NULL))
+             = tree_steps([{type: 'a', has: [{comb: cb.op, type: 'b'}]}]) AS same
+      FROM tree_catalog.combinators cb);
+----
+true	true
+
+# ...and the text that scan asserts on is the text the printer emits, keyword for keyword.
+query II
+SELECT count(*) >= 8 AS saw_every_known_row,
+       count(*) FILTER (WHERE agrees) = count(*) AS every_examined_row_agreed
+FROM (SELECT tree_treeql_step(cb.op, 'TYPE ''b''', NULL) = cb.keyword || ' (TYPE ''b'')' AS agrees
+      FROM tree_catalog.combinators cb);
+----
+true	true
+
+# ----------------------------------------------------------------------------------------------
+# THE REFUSALS (Task 5). Task 4 left ONE provisional message here -- `cannot read <fragment>` --
+# and Task 5 specialises it. The generic arm SURVIVES as the catch-all, so the records that keep
+# it below are keeping it deliberately: each of them fails inside a clause list and carries no
+# offending WORD for a specialised message to name (R37).
+#
+# R39 declared this a coordinated test-and-implementation change: the expectations moved first and
+# were shown red, then the arms landed. No record was relaxed or deleted, and the count grew.
+# ----------------------------------------------------------------------------------------------
+
+# an unknown combinator, in each of the three positions it can occupy. One position passing is
+# not three: the top-level reader, the later-line reader and the group's chain reader are three
+# different call sites in the assembly.
+#
+# R37: the message names the OFFENDING WORD and not the remainder. `tree_treeql_step_parse`
+# already reports the leading word that is in neither registry, and the body here (`TYPE 'b'`)
+# reads as a legal clause list -- which is what separates an unknown COMBINATOR from an unknown
+# CLAUSE KEYWORD.
+statement error
+SELECT tree_parse_treeql('KID (TYPE ''b'')');
+----
+tree_parse_treeql: unknown combinator KID
+
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(10) || 'KID (TYPE ''b'')');
+----
+tree_parse_treeql: unknown combinator KID
+
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', HAS ( KID (TYPE ''b'') ))');
+----
+tree_parse_treeql: unknown combinator KID
+
+# R23's OWN CORNER, pinned as what the ruling does and not as what one might prefer. The chain
+# splits BEFORE each depth-0 combinator keyword, read from the registry case-insensitively, and
+# `child` here is a bare identifier VALUE that D-N15 makes legal input. The rule cannot tell it
+# from a keyword, so the chain splits into `CHILD TYPE` and `child`, and `TYPE` with no operand
+# is refused BY NAME.
+#
+# The alternative -- splitting only before a keyword preceded by ')' or by another keyword -- was
+# measured and REJECTED: it keeps this corner, and it silently returns CLEAN IR for
+# `HAS ( DESCENDANT TYPE x CHILD (TYPE ''b'') )` with the type value `x CHILD (TYPE 'b')`. A loud
+# refusal on a legal-but-ambiguous input beats a wrong answer on it.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', HAS ( CHILD TYPE child ))');
+----
+tree_parse_treeql: cannot read TYPE
+
+# a group keyword with NO parentheses. The parentheses have to be read off the RAW part text:
+# tree_treeql_step_parse strips them, so after it `HAS ( X )` and `HAS X` carry the same body and
+# the group would be built from a chain nobody wrote.
+#
+# R37's first arm: the offending word IS a group kind, so the message says what is missing rather
+# than naming the word. It cannot reject printer output, because the printer emits a group's chain
+# inside `( )` at every level -- tree_selector_to_treeql's grpA pass writes `upper(kind) || ' ( '`.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', HAS TYPE ''b'')');
+----
+tree_parse_treeql: HAS/NOT needs parentheses around its chain
+
+# an EMPTY group tests nothing, which is why tree_steps refuses to build one. The chain split
+# answers no steps for it, so there is nothing to put under the group node.
+#
+# THIS ONE KEEPS THE GENERIC ARM, and R39 predicted it would be specialised. It is not, and the
+# reason is measured rather than preferred: `HAS ( )` HAS its parentheses, so R37's first arm
+# would tell the author to add parentheses that are already there -- a message that is worse than
+# no message. None of the brief's eight wordings describes an empty group, so the generic arm is
+# the honest answer and the gap is reported rather than papered over.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', HAS ( ))');
+----
+tree_parse_treeql: cannot read HAS ( )
+
+# a part that is neither a clause nor a group. NO unknown word is involved -- the failure is
+# inside the clause list -- so R37 leaves this on the generic arm.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', 42)');
+----
+tree_parse_treeql: cannot read 42
+
+# ----------------------------------------------------------------------------------------------
+# NESTING PAST THE LIMIT, refused in the printer's own words (requirement 5). The printer cannot
+# emit this -- it unrolls to tree_group_depth_limit() levels for the same reason the assembly
+# does, because DuckDB macros cannot self-recurse -- so this is hand-written text.
+#
+# WHY THE DEEPEST GROUP STILL GETS A NODE. The assembly emits the too-deep group's own has/not
+# node and does NOT parse inside it. That is what lets tree_selector_group_depth MEASURE 3 and
+# the arm fire. Dropping the node instead would leave a selector measuring 2, the arm would never
+# fire, and the innermost group would be SILENTLY LOST -- which is the failure this refusal
+# exists to prevent.
+# ----------------------------------------------------------------------------------------------
+statement error
+SELECT tree_parse_treeql(
+  '(CLASS ''f'', HAS ( DESCENDANT (TYPE ''b'', HAS ( DESCENDANT (TYPE ''c'', HAS ( DESCENDANT (TYPE ''d'') )) )) ))');
+----
+groups nested deeper than 2 levels are not supported
+
+# ----------------------------------------------------------------------------------------------
+# THE NORMALISING HALF, and the one place printed text is the right comparison. This IR is
+# hand-built with SPARSE node ids -- 0, 10, 25, 40, 55, 70, 99, 120 -- so it is not canonical and
+# `=` against it must NOT hold. What must hold is that the parse renumbers it densely and the two
+# print the same: the parser is the normaliser, and re-reading its own output is a fixed point.
+# ----------------------------------------------------------------------------------------------
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+         [{node_id: 0,   parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 10,  parent_id: 0,    kind: 'step',     value: NULL,     op: NULL,    arg: NULL, alias: 'cap'},
+          {node_id: 25,  parent_id: 10,   kind: 'class',    value: 'f',      op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 40,  parent_id: 10,   kind: 'has',      value: NULL,     op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 55,  parent_id: 40,   kind: 'step',     value: NULL,     op: 'child', arg: NULL, alias: NULL},
+          {node_id: 70,  parent_id: 55,   kind: 'type',     value: 'b',      op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 99,  parent_id: 0,    kind: 'step',     value: NULL,     op: 'next',  arg: NULL, alias: NULL},
+          {node_id: 120, parent_id: 99,   kind: 'pseudo',   value: 'p',      op: NULL,    arg: NULL, alias: NULL}]::TREE_SELECTOR)))
+     = tree_selector_to_treeql(
+         [{node_id: 0,   parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 10,  parent_id: 0,    kind: 'step',     value: NULL,     op: NULL,    arg: NULL, alias: 'cap'},
+          {node_id: 25,  parent_id: 10,   kind: 'class',    value: 'f',      op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 40,  parent_id: 10,   kind: 'has',      value: NULL,     op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 55,  parent_id: 40,   kind: 'step',     value: NULL,     op: 'child', arg: NULL, alias: NULL},
+          {node_id: 70,  parent_id: 55,   kind: 'type',     value: 'b',      op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 99,  parent_id: 0,    kind: 'step',     value: NULL,     op: 'next',  arg: NULL, alias: NULL},
+          {node_id: 120, parent_id: 99,   kind: 'pseudo',   value: 'p',      op: NULL,    arg: NULL, alias: NULL}]::TREE_SELECTOR);
+----
+true
+
+# ...and the renumbering really is dense and 0-based, which the printed comparison above cannot
+# see. This is the half of the normalising claim that needs the ids.
+query I
+SELECT list(node_id ORDER BY node_id) FROM (SELECT unnest(tree_parse_treeql(
+  '(CLASS ''f'', HAS ( CHILD (TYPE ''b'') )) AS cap' || chr(10) || 'SIBLING (PSEUDO ''p'')'),
+  recursive := true));
+----
+[0, 1, 2, 3, 4, 5, 6, 7]
+
+# ==============================================================================================
+# REQUIREMENT 4, GATED AT LAST: THE COMBINATOR DEFAULT, ON TEXT THAT OMITS THE COMBINATOR.
+#
+# Every record above drives the parser with the PRINTER's output, and the printer always emits a
+# combinator keyword explicitly WHENEVER THE IR CARRIES ONE -- `tree_steps` and
+# `tree_steps_group` both COALESCE a non-first step's comb to desc before it is printed, so
+# `DESCENDANT` is in the text even when the constructor was never given one. That makes the whole
+# spread blind to the parser's OWN default: measured at BASE, the `desc` default could be deleted
+# from stp0, from stp1 or from stp2 and all 140 records above still passed.
+#
+# So these two records are the only ones in this file written as HAND-WRITTEN TEXT rather than as
+# printer output, and that is the point rather than a shortcut. Only text the printer did not
+# produce can reach the default at all.
+#
+# R35 SPLIT THE TWO LEVELS APART, and the second record changed with it. The printer emits NO
+# combinator word for an inner step whose op is NULL -- measured,
+# `print(ir with a NULL-op inner step)` is `(TYPE 'a', HAS ( (TYPE 'b') ))` -- so the no-word
+# form inside a group IS printer output, and coalescing it to desc made
+# `print(parse(print(ir)))` differ from `print(ir)`. The printer is the specification, so inside
+# a group the no-word form now reads as op NULL and stp1/stp2 carry NO default at all. At TOP
+# LEVEL the default stays: the first record below is the one that holds it.
+#
+# WHAT EACH RECORD NOW GATES, proved by mutation, and with the MEASURED counts rather than the
+# predicted ones. The first draft of this block said "ONLY the second fails" for both group
+# levels; that was wrong, and wrong in the direction that matters -- the NULL op reaches further
+# than the one record, because the refusals depend on it too:
+#   * delete stp0's default                 -> ONLY the first record below fails;
+#   * re-add `COALESCE(op, 'desc')` at stp1 -> SIX records fail: the second one below, R35's two
+#     theorem records, R36's two-step record, and BOTH depth-1 parenless refusals -- with the
+#     default back, a parenless inner step parses again instead of being refused;
+#   * re-add `COALESCE(op, 'desc')` at stp2 -> TWO: the second record below, and the depth-2
+#     parenless refusal.
+# The second record therefore still carries both group levels, which is why it nests NOT inside
+# HAS with neither chain carrying a keyword.
+# ==============================================================================================
+
+# a SECOND TOP-LEVEL STEP with no combinator in the text. The constructor stamps desc on it, so
+# the parser has to as well, and the first step must still take NULL.
+#
+# R35's SCOPE GAP, recorded where the rule lives rather than argued elsewhere: the printer emits
+# this SAME text for a non-first top-level step whose op is NULL -- measured,
+# `print(ir)` for two NULL-op top-level steps is `(TYPE 'a')<LF>(TYPE 'b')`. So the normalising
+# theorem is false for THAT hand-built IR exactly as it was false inside a group, and R35 is
+# scoped to inner steps only. This record pins the top level as it is; closing the gap would flip
+# it and would interact with R31's leading-blank rule, so it is reported, not changed here.
+query I
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(10) || '(TYPE ''b'')')
+     = tree_steps([{type: 'a'}, {type: 'b'}]);
+----
+true
+
+# a depth-1 and a depth-2 group chain, NEITHER carrying a combinator. The INPUT is byte-identical
+# to what it was before R35; only the expectation moved, because the text's own meaning changed.
+# `tree_steps_group` coalesces a group chain's first step to desc and so cannot build this IR, but
+# the PRINTER emits exactly this text for it, and the printer is the specification. Both inner
+# steps therefore carry op NULL, which is why the right-hand side is hand-built IR rather than a
+# constructor call.
+#
+# THE PRINTER IS NOT AMBIGUOUS HERE, and an earlier reading of mine said it was. It writes
+# `DESCENDANT` whenever the op IS desc and writes nothing only when the op is NULL, so the
+# constructor's IR and this hand-built IR have DIFFERENT text and each round-trips to itself. The
+# record below this one asserts the other half, which this one stopped covering when its
+# right-hand side moved: a record that pins only the NULL-op reading says nothing about the desc
+# one.
+query I
+SELECT tree_parse_treeql('(CLASS ''f'', HAS ( (TYPE ''b'', NOT ( (TYPE ''c'') )) ))')
+     = [{node_id: 0, parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL, arg: NULL, alias: NULL},
+        {node_id: 1, parent_id: 0,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 2, parent_id: 1,    kind: 'class',    value: 'f',      op: NULL, arg: NULL, alias: NULL},
+        {node_id: 3, parent_id: 1,    kind: 'has',      value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 4, parent_id: 3,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 5, parent_id: 4,    kind: 'type',     value: 'b',      op: NULL, arg: NULL, alias: NULL},
+        {node_id: 6, parent_id: 4,    kind: 'not',      value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 7, parent_id: 6,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 8, parent_id: 7,    kind: 'type',     value: 'c',      op: NULL, arg: NULL, alias: NULL}]::TREE_SELECTOR;
+----
+true
+
+# THE OTHER HALF: the SAME constructor IR, against the keyword-carrying text the printer actually
+# emits for it. The two records are one claim in two directions -- no-keyword text means NULL, and
+# `DESCENDANT` means desc -- and together they say the parser distinguishes the two readings
+# rather than merely preferring one.
+query I
+SELECT tree_selector_to_treeql(tree_steps([{class: 'f', has: [{type: 'b', "not": [{type: 'c'}]}]}]));
+----
+(CLASS 'f', HAS ( DESCENDANT (TYPE 'b', NOT ( DESCENDANT (TYPE 'c') )) ))
+
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{class: 'f', has: [{type: 'b', "not": [{type: 'c'}]}]}])))
+     = tree_steps([{class: 'f', has: [{type: 'b', "not": [{type: 'c'}]}]}]);
+----
+true
+
+# ==============================================================================================
+# R26: A BLANK TOP-LEVEL PART IS DROPPED, NOT ASSEMBLED -- EXCEPT THE ONE R31 KEEPS, the
+# empty FIRST step, whose records are further down this file.
+#
+# Before this, a trailing newline produced an INVENTED step: `(TYPE 'a')` plus chr(10) parsed to
+# four nodes, the second step carrying op='desc' and no clauses at all. That is not an inert
+# node -- it compiles to a DESCENDANT with no predicate, so it matches different rows -- and
+# every file and every editor adds that newline unasked. A leading newline and a blank line
+# between two real steps did the same.
+#
+# WHY THIS IS TOLERANCE AND NOT A SYNTAX ERROR, which is the whole of the ruling. R6 makes an
+# empty part in the CLAUSE list an error, and that is right there: the separator is a comma, and
+# a comma is never incidental -- somebody typed it. At STEP level the separator is a NEWLINE,
+# which arrives from the medium rather than from the author. So the two levels are deliberately
+# NOT symmetric, and this is "tolerant input, canonical output" -- the same principle that makes
+# keyword case free and a bare identifier acceptable.
+#
+# THE RENUMBERING IS LOAD-BEARING, and the leading-newline case below is the one that proves it.
+# `i0` decides which step is first, and the first step of the outer chain is the one that keeps a
+# NULL combinator. Drop part 1 and keep the splitter's own ordinals and the surviving step is
+# i0=2, which defaults to desc -- so the selector would gain a combinator the text does not have
+# and still not equal the constructor's IR. The parts are renumbered after the filter, not before.
+#
+# Clause-list behaviour is UNCHANGED: `(TYPE 'x',<TAB><LF>)` still answers an empty second part,
+# which the assertions earlier in this file pin.
+# ==============================================================================================
+
+# a TRAILING newline, which is how text arrives from a file or a table column
+query I
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(10)) = tree_steps([{type: 'a'}]);
+----
+true
+
+# a LEADING newline: the surviving step must still be the FIRST step, so its op stays NULL
+query I
+SELECT tree_parse_treeql(chr(10) || '(TYPE ''a'')') = tree_steps([{type: 'a'}]);
+----
+true
+
+# a BLANK LINE between two real steps, which must not become a third step between them
+query I
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(10) || chr(10) || 'CHILD (TYPE ''b'')')
+     = tree_steps([{type: 'a'}, {comb: 'child', type: 'b'}]);
+----
+true
+
+# a CRLF trailing pair, the form a selector arrives in from a Windows editor. The \r is inside
+# tree_treeql_ws(), so the part trims to empty and is dropped rather than parsed as a step whose
+# text is a carriage return.
+query I
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(13) || chr(10)) = tree_steps([{type: 'a'}]);
+----
+true
+
+# THE EXACT THEOREM, on text that carries a trailing newline. This is the assertion that matters
+# for Task 6: it reads selector text out of a table, where the newline comes with the data.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: 'a'}, {comb: 'child', type: 'b'}])) || chr(10))
+     = tree_steps([{type: 'a'}, {comb: 'child', type: 'b'}]);
+----
+true
+
+# ...and when dropping the blank parts leaves NONE, there is nothing to assemble. That is Task 5's
+# `selector has no steps` row, so this emits the ONE generic refusal rather than wording Task 5
+# owns -- the assertion pins the prefix only, which is what Task 5 will replace.
+#
+# THIS RECORD ALSO COVERS AN IR SHAPE THAT SHOULD NOT BE REPRESENTABLE, so read it twice before
+# trusting it. `tree_steps([{type: NULL}])` builds a selector whose only step is empty, and the
+# printer renders that to the EMPTY STRING -- the exact input below. Refusing it is the best a
+# parser can do, because there is no text to read, but the real defect is upstream: none of
+# `tree_steps`' ten refusals (sql/06_selector.sql:216-234) covers an all-NULL step, so that IR is
+# constructible at all. That file is embedded byte-identically by the extension and this plan may
+# not edit it, so the gap is reported rather than fixed. If it is ever closed, this record stops
+# being a statement about empty text and becomes a statement about an unrepresentable selector --
+# revisit it then, rather than reading its green as confirmation that nothing is wrong.
+statement error
+SELECT tree_parse_treeql('');
+----
+tree_parse_treeql: selector has no steps
+
+# ==============================================================================================
+# R30: THE EMPTY FIRST STEP, which R26 dropped and should not have.
+#
+# R26 drops every blank top-level part, and that is right for all of them but one. A step with no
+# clauses and no combinator prints as NOTHING, and only the FIRST step can be in that position --
+# every later step carries a combinator, which the printer emits as a keyword. Measured, the whole
+# empty-step space:
+#
+#   empty step LAST    -> "(TYPE 'a')\nDESCENDANT"                     round trip TRUE
+#   empty step MIDDLE  -> "(TYPE 'a')\nDESCENDANT\nCHILD (TYPE 'b')"   round trip TRUE
+#   empty step FIRST   -> "\nCHILD (TYPE 'b')"                         round trip FALSE  <- the break
+#
+# So the printer IS injective here and the theorem was achievable; only the leading blank was
+# unrecoverable, because R26 threw it away.
+#
+# THE RULE IS COMPLETE, NOT A PATCH FOR ONE CASE: a leading blank part is an empty first step IFF
+# the NEXT part begins with a combinator keyword. Any other blank part stays dropped, so R26's
+# tolerance survives for the trailing newline, the CRLF pair and the blank line between steps --
+# the four records above still pass.
+#
+# WHY THAT TEST IS SOUND rather than a guess: a legitimate first step can NEVER lead with a
+# combinator. tree_steps refuses it by name -- measured,
+# `tree_steps([{comb: 'child', type: 'b'}])` raises "the first step takes no combinator" -- so the
+# only reading this rule takes away is input the constructor already rejects.
+#
+# THE KEYWORD COMES FROM tree_treeql_step_parse, which resolves the leading word against
+# tree_catalog.combinators (R23). No keyword is written here, and the lexing is not restated: the
+# one macro that already decides "is this leading word a combinator" decides it here too.
+# ==============================================================================================
+
+# the premise, pinned: an empty FIRST step prints as nothing, so the text opens with the separator
+query I
+SELECT tree_selector_to_treeql(tree_steps([{type: NULL}, {comb: 'child', type: 'b'}]))
+     = chr(10) || 'CHILD (TYPE ''b'')';
+----
+true
+
+# ...and the round trip that R26 broke
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: NULL}, {comb: 'child', type: 'b'}])))
+     = tree_steps([{type: NULL}, {comb: 'child', type: 'b'}]);
+----
+true
+
+# BOTH steps empty, the most degenerate form the printer can still emit: it prints as a bare
+# separator plus a keyword, and the keyword is what makes the leading blank recoverable.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: NULL}, {comb: 'child'}])))
+     = tree_steps([{type: NULL}, {comb: 'child'}]);
+----
+true
+
+# A LEADING BLANK WHOSE NEXT PART IS NOT A COMBINATOR IS STILL DROPPED, and this is the case that
+# keeps the rule narrow. The next part's leading word here is a CLAUSE keyword, so the test is
+# exercised on a real word rather than on a '(' -- a rule that merely looked for "any leading
+# word" would keep this blank and invent a first step.
+query I
+SELECT tree_parse_treeql(chr(10) || 'TYPE ''a''') = tree_steps([{type: 'a'}]);
+----
+true
+
+# ==============================================================================================
+# TASK 5: THE REFUSALS, AND THE ONE DOCUMENTED LIMIT.
+#
+# Eight named messages replace one generic one. The generic arm SURVIVES, deliberately: a fault
+# that carries no offending word has nothing for a specialised message to name, and `cannot read
+# <fragment>` is the honest answer there. The three records above that keep it are the proof that
+# it is still reachable.
+#
+# WHY NONE OF THESE ARMS CAN REJECT PRINTER OUTPUT -- the check R34 exists to enforce. Each arm's
+# one-line argument sits with its records below. The five controls at the end of this section are
+# the other half of the same claim, measured rather than argued: every one of them is printer
+# output that a naive quote count or a naive paren count would refuse.
+#
+# THE ARM ORDER IS THE PRIORITY ORDER, because an input can carry more than one fault. The order
+# is: depth, no-steps, unterminated value, unbalanced parentheses, group parentheses, parenless
+# inner step, unknown combinator, unknown clause keyword, generic.
+#
+# ONE PLACE WHERE THE ORDER IS LOAD-BEARING, and one where it is NOT -- both measured by mutation,
+# and the second is recorded as ungated rather than claimed as gated:
+#   * PARENLESS BEFORE GENERIC is GATED. `HAS ( TYPE 'b' TYPE 'c' )` is BOTH a parenless inner step
+#     and a clause whose literal cannot be read, and the generic arm would answer
+#     `cannot read TYPE 'b' TYPE 'c'` -- true, but it names the symptom instead of the mistake.
+#     Silence the parenless arm and three records fail, two of them on exactly that substitution.
+#   * UNTERMINATED BEFORE UNBALANCED is NOT gated, as of the odd-quote stand-down. The reasoning
+#     for the order still holds -- an unterminated quote stops the parentheses after it from being
+#     counted, so a quote fault presents as a paren fault -- but `tree_treeql_balanced` now stands
+#     down whenever the quote count is odd, so the input that needed the order never reaches the
+#     unbalanced arm at all. Measured: swapping the two arms fails ZERO records, where before the
+#     stand-down it failed one. The order is kept because it is the correct order if that
+#     stand-down is ever narrowed, and it is named here as UNGATED so that nobody reads the
+#     swap-is-harmless result as evidence that the arms are interchangeable.
+# ==============================================================================================
+
+# ----------------------------------------------------------------------------------------------
+# AN UNKNOWN CLAUSE KEYWORD. R37's third arm: the leading word is in neither registry AND the
+# remainder does not read as a clause list, so the word was meant to BE a clause keyword.
+#
+# THE MESSAGE NAMES THE WORD, NOT THE REMAINDER. At BASE this input refused with
+# `cannot read 'x'` -- it named the operand and left the author to guess which token was wrong.
+#
+# CANNOT REJECT PRINTER OUTPUT: every keyword the printer writes comes from
+# tree_catalog.clause_kinds or tree_catalog.combinators, and this arm fires only on a word that
+# is in neither registry.
+# ----------------------------------------------------------------------------------------------
+statement error
+SELECT tree_parse_treeql('FROBNICATE ''x''');
+----
+tree_parse_treeql: unknown clause keyword FROBNICATE
+
+# ----------------------------------------------------------------------------------------------
+# AN UNKNOWN COMBINATOR. R37's second arm: the leading word is in neither registry, but what
+# follows it DOES read as a legal clause list, so the word was meant to be a combinator.
+#
+# CANNOT REJECT PRINTER OUTPUT: same argument, and the registry read is case-insensitive, so a
+# front-end that registers a ninth combinator is accepted the day it is registered.
+# ----------------------------------------------------------------------------------------------
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(10) || 'SIDEWAYS (TYPE ''b'')');
+----
+tree_parse_treeql: unknown combinator SIDEWAYS
+
+# ...and the two arms really are separated by the BODY and not by the word. These two inputs carry
+# the same unknown word and differ only in what follows it.
+statement error
+SELECT tree_parse_treeql('SIDEWAYS ''x''');
+----
+tree_parse_treeql: unknown clause keyword SIDEWAYS
+
+statement error
+SELECT tree_parse_treeql('FROBNICATE (TYPE ''b'')');
+----
+tree_parse_treeql: unknown combinator FROBNICATE
+
+# ----------------------------------------------------------------------------------------------
+# AN UNTERMINATED QUOTED VALUE (R38). At BASE neither of these refused: the quoted-value reader
+# took the FIRST quote to the LAST quote, so `TYPE 'a` parsed to the type value `'a` -- quote and
+# all -- and `TYPE 'it''s` to the value `'it''s`. A garbage parse wearing the shape of a clean one.
+#
+# THE TEST IS ON THE SOURCE TEXT, NOT ON THE STORED VALUE, and that distinction is the whole
+# ruling: `it's` legitimately contains a quote once unquoted, so a check on the stored value would
+# refuse the control below. A well-formed quoted value's SOURCE matches `'(?:[^']|'')*'`.
+#
+# CANNOT REJECT PRINTER OUTPUT: tree_treeql_clause emits a literal through tree_sql_lit, which
+# doubles every embedded quote, so printer output matches that pattern by construction -- and the
+# three quote controls at the end of this section measure it rather than asserting it.
+# ----------------------------------------------------------------------------------------------
+statement error
+SELECT tree_parse_treeql('TYPE ''a');
+----
+tree_parse_treeql: unterminated quoted value
+
+# THREE quotes, which is the case a parity check alone gets right and a "starts and ends with a
+# quote" check gets wrong: this text ENDS in `s`, and the greedy reader stored it whole.
+statement error
+SELECT tree_parse_treeql('TYPE ''it''''s');
+----
+tree_parse_treeql: unterminated quoted value
+
+# ...inside a group too, because the clause reader is called at three levels and one level passing
+# is not three.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', HAS ( CHILD (TYPE ''b'') ))' || chr(10) || 'CHILD (TYPE ''c');
+----
+tree_parse_treeql: unterminated quoted value
+
+# ----------------------------------------------------------------------------------------------
+# UNBALANCED PARENTHESES. The count is QUOTE-AWARE: a parenthesis inside a quoted value is not
+# structure, which is what the `(TYPE 'has ) paren')` control at the end of this section pins.
+#
+# CANNOT REJECT PRINTER OUTPUT -- but NOT for the reason this block carried until d4dd0da. The
+# old reason was: the printer emits `(` and `)` only as a matched pair around a clause list or a
+# group chain, and a value's own parenthesis is inside a literal, where this count does not look.
+# That second half was MEASURED FALSE. The count decides "inside a literal" by PARITY, so two
+# WHERE bodies each holding one unpaired apostrophe sum to an EVEN count, the scan trusts itself,
+# and it skips parentheses that are REAL.
+#
+# WHAT MAKES THE ARM SAFE NOW is tree_treeql_balanced standing down unless the text is quote-
+# TRUSTED: an even quote count AND no clause kind with a raw body present.
+# The printed text, the numbers and the four records are in R42 FOR THE PAREN SCAN near the end
+# of this file. Not repeated here, so the two cannot drift apart.
+# ----------------------------------------------------------------------------------------------
+statement error
+SELECT tree_parse_treeql('(TYPE ''a''');
+----
+tree_parse_treeql: unbalanced parentheses
+
+# the other sign, which a `depth = 0` test at the end would miss if it did not also watch for the
+# depth going NEGATIVE on the way
+statement error
+SELECT tree_parse_treeql('TYPE ''a'')');
+----
+tree_parse_treeql: unbalanced parentheses
+
+# ----------------------------------------------------------------------------------------------
+# NO STEPS. The empty-input record further up this file is the first half of this row; these are
+# the rest of the space. A NULL input is included because `tree_err` reports a NULL message as
+# "refusal with a NULL message", which loses the one sentence the caller needed -- this message
+# has no concatenated fragment at all, so it cannot go NULL.
+#
+# CANNOT REJECT PRINTER OUTPUT: the printer emits at least one step for any selector that has
+# one. The single exception is the all-NULL single step, which prints as the EMPTY STRING -- and
+# that is an IR shape `tree_steps` should not be able to build at all (the gap is recorded at the
+# empty-input record above, and sql/06_selector.sql is frozen for this plan).
+# ----------------------------------------------------------------------------------------------
+statement error
+SELECT tree_parse_treeql('   ');
+----
+tree_parse_treeql: selector has no steps
+
+statement error
+SELECT tree_parse_treeql(chr(9) || chr(10) || chr(13) || chr(12));
+----
+tree_parse_treeql: selector has no steps
+
+statement error
+SELECT tree_parse_treeql(NULL);
+----
+tree_parse_treeql: selector has no steps
+
+# ----------------------------------------------------------------------------------------------
+# A PARENLESS INNER STEP WITH NO COMBINATOR -- the row that makes the parenless step form SAFE
+# rather than lucky. Inside a group, steps are space-separated; a parenless step is unambiguous
+# only because every inner step carries a combinator, an invariant `tree_steps_group` maintains by
+# coalescing to desc and which hand-built IR arriving through the host door is under no obligation
+# to honour. At BASE this input did not refuse: it swallowed into ONE type value, `b' TYPE 'c`.
+#
+# ASSERTED ON HAND-WRITTEN TEXT, because the printer cannot emit it -- which is also the
+# CANNOT-REJECT-PRINTER-OUTPUT argument: tree_treeql_step wraps a step's clause list in
+# parentheses whenever the step HAS a clause list, so a printed step with clauses and no
+# combinator word always carries its own parentheses, and this arm requires their absence.
+#
+# R36 NARROWED THIS TO THE PARENLESS FORM ONLY. The parenthesised form is unambiguous however
+# many steps it holds, and it IS printer output; the record below this one accepts it.
+# ----------------------------------------------------------------------------------------------
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( TYPE ''b'' TYPE ''c'' ))');
+----
+tree_parse_treeql: a step inside HAS/NOT needs a combinator or parentheses, so its clauses can be told from the next step's
+
+# a SINGLE parenless inner step with no combinator. It happens to be unambiguous, and it is still
+# refused: the rule is syntactic and uniform, so that an author never has to know how many steps
+# make the form safe.
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( TYPE ''b'' ))');
+----
+tree_parse_treeql: a step inside HAS/NOT needs a combinator or parentheses, so its clauses can be told from the next step's
+
+# ...and at depth 2 as well, because the chain reader runs at two group levels.
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( CHILD (TYPE ''b'', NOT ( TYPE ''c'' TYPE ''d'' )) ))');
+----
+tree_parse_treeql: a step inside HAS/NOT needs a combinator or parentheses, so its clauses can be told from the next step's
+
+# A PARENLESS INNER STEP THAT DOES CARRY A COMBINATOR IS STILL LEGAL (requirement 6), and this
+# record is what keeps the arm above from widening into "a parenless inner step is an error".
+query I
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( CHILD TYPE ''b'' ))')
+     = tree_steps([{type: 'a', has: [{comb: 'child', type: 'b'}]}]);
+----
+true
+
+# ----------------------------------------------------------------------------------------------
+# R35 / R36: THE PARENTHESISED INNER STEP WITH NO COMBINATOR WORD, which is printer output and
+# parses to op NULL. At BASE the parser coalesced the missing word to desc, so
+# `print(parse(print(ir)))` was `(TYPE 'a', HAS ( DESCENDANT (TYPE 'b') ))` where `print(ir)` was
+# `(TYPE 'a', HAS ( (TYPE 'b') ))` -- the normalising theorem was FALSE for this IR, and nothing
+# later in the plan could reach the shape, because Task 7's differential generates its corpus
+# from `tree_steps` IR, which coalesces.
+#
+# BOTH THEOREMS, on the same hand-built IR: exact on the left, normalising on the right.
+# ----------------------------------------------------------------------------------------------
+
+# the premise, pinned first: the printer really does write no combinator word for a NULL op
+query I
+SELECT tree_selector_to_treeql(
+  [{node_id: 0, parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL, arg: NULL, alias: NULL},
+   {node_id: 1, parent_id: 0,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+   {node_id: 2, parent_id: 1,    kind: 'type',     value: 'a',      op: NULL, arg: NULL, alias: NULL},
+   {node_id: 3, parent_id: 1,    kind: 'has',      value: NULL,     op: NULL, arg: NULL, alias: NULL},
+   {node_id: 4, parent_id: 3,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+   {node_id: 5, parent_id: 4,    kind: 'type',     value: 'b',      op: NULL, arg: NULL, alias: NULL}]::TREE_SELECTOR);
+----
+(TYPE 'a', HAS ( (TYPE 'b') ))
+
+# THE EXACT THEOREM: parse(print(ir)) = ir, node ids included
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         [{node_id: 0, parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL, arg: NULL, alias: NULL},
+          {node_id: 1, parent_id: 0,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+          {node_id: 2, parent_id: 1,    kind: 'type',     value: 'a',      op: NULL, arg: NULL, alias: NULL},
+          {node_id: 3, parent_id: 1,    kind: 'has',      value: NULL,     op: NULL, arg: NULL, alias: NULL},
+          {node_id: 4, parent_id: 3,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+          {node_id: 5, parent_id: 4,    kind: 'type',     value: 'b',      op: NULL, arg: NULL, alias: NULL}]::TREE_SELECTOR))
+     = [{node_id: 0, parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL, arg: NULL, alias: NULL},
+        {node_id: 1, parent_id: 0,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 2, parent_id: 1,    kind: 'type',     value: 'a',      op: NULL, arg: NULL, alias: NULL},
+        {node_id: 3, parent_id: 1,    kind: 'has',      value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 4, parent_id: 3,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 5, parent_id: 4,    kind: 'type',     value: 'b',      op: NULL, arg: NULL, alias: NULL}]::TREE_SELECTOR;
+----
+true
+
+# THE NORMALISING THEOREM: print(parse(print(ir))) = print(ir), byte for byte
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql('(TYPE ''a'', HAS ( (TYPE ''b'') ))'))
+     = '(TYPE ''a'', HAS ( (TYPE ''b'') ))';
+----
+true
+
+# R36: TWO parenthesised inner steps, NEITHER carrying a combinator word. This is printer output
+# from hand-built IR too, and at BASE the chain reader could not see the boundary -- it split only
+# before a combinator KEYWORD, so the whole chain arrived as one step and the paren strip produced
+# the type value `b'') (TYPE ''c`. A depth-0 '(' whose previous non-blank character is ')' closes
+# one step's clause list and opens the next, which is a boundary the printer can only emit between
+# steps: inside a clause list every parenthesis is at depth 1 or deeper.
+query I
+SELECT tree_selector_to_treeql(
+  [{node_id: 0, parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL, arg: NULL, alias: NULL},
+   {node_id: 1, parent_id: 0,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+   {node_id: 2, parent_id: 1,    kind: 'has',      value: NULL,     op: NULL, arg: NULL, alias: NULL},
+   {node_id: 3, parent_id: 2,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+   {node_id: 4, parent_id: 3,    kind: 'type',     value: 'b',      op: NULL, arg: NULL, alias: NULL},
+   {node_id: 5, parent_id: 2,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+   {node_id: 6, parent_id: 5,    kind: 'type',     value: 'c',      op: NULL, arg: NULL, alias: NULL}]::TREE_SELECTOR);
+----
+(HAS ( (TYPE 'b') (TYPE 'c') ))
+
+query I
+SELECT tree_parse_treeql('(HAS ( (TYPE ''b'') (TYPE ''c'') ))')
+     = [{node_id: 0, parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL, arg: NULL, alias: NULL},
+        {node_id: 1, parent_id: 0,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 2, parent_id: 1,    kind: 'has',      value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 3, parent_id: 2,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 4, parent_id: 3,    kind: 'type',     value: 'b',      op: NULL, arg: NULL, alias: NULL},
+        {node_id: 5, parent_id: 2,    kind: 'step',     value: NULL,     op: NULL, arg: NULL, alias: NULL},
+        {node_id: 6, parent_id: 5,    kind: 'type',     value: 'c',      op: NULL, arg: NULL, alias: NULL}]::TREE_SELECTOR;
+----
+true
+
+# ...and the boundary does NOT split a step from its own clause list, which is the way that rule
+# could have gone wrong. `CHILD (TYPE 'b')` has a depth-0 '(' whose previous non-blank character
+# is `D`, so it is not a boundary.
+query I
+SELECT tree_parse_treeql('(CLASS ''f'', HAS ( CHILD (TYPE ''b'') ))')
+     = tree_steps([{class: 'f', has: [{comb: 'child', type: 'b'}]}]);
+----
+true
+
+# ----------------------------------------------------------------------------------------------
+# R38: THE FOUR REMAINING GARBAGE PARSES, each of which returned CLEAN IR at BASE. One defect --
+# the greedy first-quote-to-last-quote reader, plus the paren strip that tested only the FIRST and
+# LAST character -- produced all of them, so they are gated together and were fixed once.
+# ----------------------------------------------------------------------------------------------
+
+# an unknown combinator with a PARENLESS clause list on either side of it. At BASE: one type
+# clause whose value was `a' SIDEWAYS TYPE 'b`.
+statement error
+SELECT tree_parse_treeql('TYPE ''a'' SIDEWAYS TYPE ''b''');
+----
+tree_parse_treeql: cannot read TYPE 'a' SIDEWAYS TYPE 'b'
+
+# a group whose tail starts with '(' and ends with ')' but whose parentheses are MISMATCHED --
+# the exact input the `gtail LIKE '(%' AND gtail LIKE '%)'` test let through (SF-3). At BASE: a
+# group built from a chain nobody wrote, holding the type value `b') KID (TYPE 'c`.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', HAS (TYPE ''b'') KID (TYPE ''c''))');
+----
+tree_parse_treeql: HAS/NOT needs parentheses around its chain
+
+# the same mismatch one level in, where the paren strip inside tree_treeql_step_parse was the
+# copy that let it through. At BASE: the type value `b') KID (TYPE 'c`.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', HAS ( (TYPE ''b'') KID (TYPE ''c'') ))');
+----
+tree_parse_treeql: cannot read (TYPE 'b') KID (TYPE 'c')
+
+# the step reader's own documented limit, which the same paren strip created at TOP level: two
+# parenthesised steps on ONE line, where the separator is a newline. At BASE: the type value
+# `a') (TYPE 'b`.
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'') (TYPE ''b'')');
+----
+tree_parse_treeql: cannot read (TYPE 'a') (TYPE 'b')
+
+# ----------------------------------------------------------------------------------------------
+# THE CONTROLS. Every one of these is PRINTER OUTPUT that round-trips exactly, and every one of
+# them is refused by a naive version of one of the arms above: a quote COUNT refuses the first
+# three and both WHERE records, a paren COUNT refuses the second and the second WHERE record, and
+# a refusal on a first-step combinator refuses the last. They are the measurement behind "no arm
+# rejects printer output", and they must stay green.
+#
+# THE TWO WHERE RECORDS ARE HERE BECAUSE THIS TASK BROKE THEM AND THE BREAK WAS MEASURED. A
+# quote-parity rule assumes every `'` is a TREEQL literal delimiter, and a WHERE body is the one
+# place that is false: the printer emits it UNQUOTED AND UNESCAPED, so it never passes through
+# tree_sql_lit and its quote count can be odd. `(WHERE "o'k" = 1)` -- a double-quoted IDENTIFIER
+# holding an apostrophe -- is printer output from the ORDINARY constructor, is legal DuckDB SQL,
+# and round-tripped at BASE; the first cut of the unterminated arm refused it. A refusal that
+# rejects printer output is a defect and not a gate, which is the whole reason these records exist.
+# ----------------------------------------------------------------------------------------------
+
+# an embedded quote, doubled by the printer. The unterminated-value test reads the SOURCE text,
+# which is why this passes while `TYPE 'it''s` does not.
+query I
+SELECT tree_parse_treeql('(TYPE ''it''''s'')') = tree_steps([{type: 'it''s'}]);
+----
+true
+
+# a CLOSING PARENTHESIS inside a quoted value: structure to a naive paren count, data here
+query I
+SELECT tree_parse_treeql('(TYPE ''has ) paren'')') = tree_steps([{type: 'has ) paren'}]);
+----
+true
+
+# two doubled quotes, so the quote count is even for a different reason than being well formed
+query I
+SELECT tree_parse_treeql('(TYPE ''two '''' quotes '''' here'')')
+     = tree_steps([{type: 'two '' quotes '' here'}]);
+----
+true
+
+# A WHERE BODY WITH AN ODD QUOTE COUNT. The printer emits a WHERE body unquoted and unescaped, so
+# a double-quoted identifier holding an apostrophe reaches the text with ONE quote in it. The
+# premise is pinned first, because the control is only a control if the printer really emits this.
+query I
+SELECT tree_selector_to_treeql(tree_steps([{"where": '"o''k" = 1'}]));
+----
+(WHERE "o'k" = 1)
+
+query I
+SELECT tree_parse_treeql('(WHERE "o''k" = 1)') = tree_steps([{"where": '"o''k" = 1'}]);
+----
+true
+
+# ...and the same with PARENTHESES AFTER the stray quote, which is the case that also defeats a
+# quote-aware paren count: the scan thinks it is inside a string from the apostrophe onward, so it
+# stops counting the parentheses of `length(n)` and of the step itself, and the text looks
+# unbalanced when it is not.
+query I
+SELECT tree_parse_treeql('(WHERE "o''k" = length(n))')
+     = tree_steps([{"where": '"o''k" = length(n)'}]);
+----
+true
+
+# EVERY STRUCTURAL POSITION, because the top-level records above pass while a GROUP part fails for
+# a different reason and one position passing is not three. The first cut of the odd-quote
+# stand-down routed the rule through `lit_ok`, which is the PER-CLAUSE answer, and a group part is
+# not a clause: `cl` is NULL for it, the nested WHERE body contributes to the whole part's count,
+# and the rule fired on a part whose own quoting is perfect. Measured, all three round-tripped at
+# BASE 3384ede and all three were refused with `unterminated quoted value` at 5cb9618.
+#
+# The fix is `gkind IS NULL`: a part the assembly reads as a GROUP is judged by the group rules and
+# never by counting characters across its contents.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: 'a', has: [{"where": '"o''k" = 1', type: 'b'}]}])))
+     = tree_steps([{type: 'a', has: [{"where": '"o''k" = 1', type: 'b'}]}]);
+----
+true
+
+# the premise for that one, so its input is pinned as genuine printer output
+query I
+SELECT tree_selector_to_treeql(tree_steps([{type: 'a', has: [{"where": '"o''k" = 1', type: 'b'}]}]));
+----
+(TYPE 'a', HAS ( DESCENDANT (TYPE 'b', WHERE "o'k" = 1) ))
+
+# ...with PARENTHESES after the stray quote, inside the group
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: 'a', has: [{"where": '"o''k" = length(n)', type: 'b'}]}])))
+     = tree_steps([{type: 'a', has: [{"where": '"o''k" = length(n)', type: 'b'}]}]);
+----
+true
+
+# ...and inside a NESTED group, which is the second group level and a third call site
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{type: 'a', has: [{type: 'b', "not": [{"where": '"o''k" = 1', type: 'c'}]}]}])))
+     = tree_steps([{type: 'a', has: [{type: 'b', "not": [{"where": '"o''k" = 1', type: 'c'}]}]}]);
+----
+true
+
+# AN UNTERMINATED VALUE INSIDE A GROUP IS STILL REFUSED, which is what keeps `gkind IS NULL` from
+# being a hole rather than a fix. The group part is not judged by its own character count; the
+# inner part is, at the inner level, by this same rule.
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( DESCENDANT (TYPE ''b) ))');
+----
+tree_parse_treeql: unterminated quoted value
+
+# two top-level steps, which the depth-0 newline split must still find
+query I
+SELECT tree_parse_treeql('(TYPE ''a'')' || chr(10) || 'CHILD (TYPE ''b'')')
+     = tree_steps([{type: 'a'}, {comb: 'child', type: 'b'}]);
+----
+true
+
+# R34: A COMBINATOR ON THE FIRST STEP IS NOT REFUSED. `tree_steps` refuses to BUILD this IR by
+# name -- "the first step takes no combinator" -- but the printer PRINTS it from hand-built IR and
+# the printer is the specification, so a refusal here would reject printer output and would break
+# the exact theorem on that IR. The printer/constructor disagreement is reported, not papered over
+# with a parser refusal.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         [{node_id: 0, parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL,    arg: NULL, alias: NULL},
+          {node_id: 1, parent_id: 0,    kind: 'step',     value: NULL,     op: 'child', arg: NULL, alias: NULL},
+          {node_id: 2, parent_id: 1,    kind: 'type',     value: 'a',      op: NULL,    arg: NULL, alias: NULL}]::TREE_SELECTOR))
+     = [{node_id: 0, parent_id: NULL, kind: 'selector', value: 'treeql', op: NULL,    arg: NULL, alias: NULL},
+        {node_id: 1, parent_id: 0,    kind: 'step',     value: NULL,     op: 'child', arg: NULL, alias: NULL},
+        {node_id: 2, parent_id: 1,    kind: 'type',     value: 'a',      op: NULL,    arg: NULL, alias: NULL}]::TREE_SELECTOR;
+----
+true
+
+# ----------------------------------------------------------------------------------------------
+# THE ONE DOCUMENTED LIMIT, and the reason it is a limit rather than a bug.
+#
+# A `WHERE` body with a TOP-LEVEL comma is cut at the comma when what follows opens a clause, so
+# `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` reads as THREE clauses and not as a WHERE body of
+# `a = 1, PSEUDO 'p'`. The parser takes the three-clause reading, and it reprints byte-identically.
+#
+# "GENUINELY AMBIGUOUS" STOOD IN THAT SENTENCE AND IS MEASURED FALSE -- see WHAT REMAINS A LIMIT
+# below for the measurement. The text has exactly ONE constructor-accepted preimage, so the
+# three-clause reading is a WRONG parse and this is a limit only because its fix is blocked.
+#
+# "UNREACHABLE" WAS MEASURED FALSE IN FIX ROUND 3, and the claim is withdrawn here rather than
+# a thousand lines away. The old claim was: no valid DuckDB boolean predicate carries a bare
+# top-level comma, so no WHERE body the host door can accept is affected. The hole was that the
+# splitter counted ONLY parentheses -- it was blind to `[` `]` and to `{` `}` -- so a comma at
+# paren depth zero INSIDE A BRACKET OR BRACE PAIR was read as a clause separator. Measured, and it
+# was printer output from the ordinary constructor:
+#
+#     tree_steps([{"where": '[1, 2] = [1, 2]'}])  prints  (WHERE [1, 2] = [1, 2])
+#       -> was REFUSED `cannot read 2]`
+#     tree_steps([{"where": '{a: 1, b: 2} = {a: 1, b: 2}'}])  -> was REFUSED `cannot read b: 2}`
+#
+# THAT HALF IS FIXED IN TASK 7 and the two records below F1 now assert the round trip instead of
+# the refusal: tree_treeql_split_parts counts all three enclosure pairs. The PAST TENSE above is
+# the point -- the measurement happened and is kept, because this block is the history of a claim
+# that was argued and then measured, and a reader who meets only the fixed code learns nothing
+# from a sentence that says it was always fine.
+#
+# WHAT REMAINS A LIMIT, narrowed TWICE now, and it is the one thing the record below actually
+# drives: a top-level comma followed by TEXT THAT OPENS ANOTHER CLAUSE.
+# `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` still reads as THREE clauses rather than a WHERE body of
+# `a = 1, PSEUDO 'p'`. The parser takes the three-clause reading and it reprints byte-identically.
+#
+# "THE PRINTER EMITS THIS SAME TEXT FOR BOTH IRs, SO NO READER CAN CHOOSE" stood here, as the
+# reason this is a limit. MEASURED FALSE, duckdb 1.5.5:
+#
+#     tree_steps([{type: 'x', "where": 'a = 1, PSEUDO ''p'''}])
+#       prints  (TYPE 'x', WHERE a = 1, PSEUDO 'p')      <- the text the records below drive
+#     tree_steps([{type: 'x', "where": 'a = 1', pseudo: 'p'}])
+#       prints  (TYPE 'x', PSEUDO 'p', WHERE a = 1)      <- DIFFERENT BYTES
+#
+# `pseudo` is slot 5 and `where` slot 6, so the printer emits PSEUDO FIRST and the three-clause IR
+# CANNOT print this text. Among constructor-accepted IR the text has exactly ONE preimage -- the
+# one-clause WHERE body -- so a reader CAN choose here, and this one chooses wrong. That makes it a
+# FIXABLE DEFECT recorded as an unfixable ambiguity, which is the error k07's declaration already
+# corrected once for its own text.
+#
+# WHAT IT IS BLOCKED ON, which is why it is still a limit: the merge would need the clause kinds'
+# SLOT ORDER to know that nothing but a group can follow a WHERE clause in printer output, and
+# tree_catalog has NO ORDER COLUMN. That is the blocker parking k01-k07, and this text is declared
+# with them as `k13` in test/sweep_treeql.py's KNOWN_EXACT_FAILURES.
+#
+# THE OTHER TWO SHAPES THIS BLOCK ONCE COVERED ARE BOTH FIXED, so "a top-level comma enclosed by
+# NOTHING" is no longer a limit either: that was b55, fixed in fix round 2 by
+# tree_treeql_clause_parts, which gives a RAW body its own separators back. What makes the shape
+# above different from b55 is NOT the number of readings -- measured, each text has exactly ONE
+# constructor-accepted preimage, and "while this one has two, both legal" stood here and is false
+# for the reason above. The difference is that b55's was FIXABLE WITHOUT THE REGISTRY and this one
+# is not: the merge there only had to keep reading, where this one has to know the slot order. The
+# record below that drives
+# `CASE WHEN a = 1, PSEUDO 'p'` is true about a BARE comma and is the gate for exactly this; it was
+# never the gate for the bracket half, and it stayed green through F1 and b55 alike.
+#
+# test/treeql_parser.py, the second reading, takes the SAME three-clause reading here -- and that
+# is WHY THE DIFFERENTIAL COULD NOT SEE THIS, not a second opinion in its favour. The two readings
+# share the raw-body merge rule, so they are wrong TOGETHER and `sql == py` holds; the sentence
+# that stood here read that as "the two front-ends agree on the limit rather than one of them
+# resolving the ambiguity privately", which presents a shared defect as a virtue. Agreement on a
+# SHARED rule is not independent evidence -- test/sweep_treeql.py's SHARED RULES note says so, and
+# the one constructible preimage is now driven there as case `k13` so the EXACT line counts it.
+# ----------------------------------------------------------------------------------------------
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql('(TYPE ''x'', WHERE a = 1, PSEUDO ''p'')'))
+     = '(TYPE ''x'', WHERE a = 1, PSEUDO ''p'')';
+----
+true
+
+# ...and it reads as three clauses. THIS PINS A KNOWN WRONG PARSE, not a chosen reading: the text's
+# one constructor-accepted preimage is the one-clause WHERE body above, so the `pseudo` node this
+# record expects is a node the printed IR never had. It is pinned because a SILENT change to a
+# known wrong answer is worse than a declared one, and it is declared as `k13` in
+# test/sweep_treeql.py's KNOWN_EXACT_FAILURES with the blocker that parks it. The expected value
+# moves when the slot order lands, not before.
+#
+# The ORDER here is TEXTUAL position within the step -- requirement 2 orders clauses before GROUPS,
+# not clauses among themselves -- so `where` sits between `type` and `pseudo`, where the author
+# wrote it. That part is true under either reading.
+query I
+SELECT list(kind ORDER BY node_id) FROM (SELECT unnest(
+  tree_parse_treeql('(TYPE ''x'', WHERE a = 1, PSEUDO ''p'')'), recursive := true));
+----
+[selector, step, type, where, pseudo]
+
+# A BARE top-level comma is not a legal predicate. This is TRUE and it is NOT the gate for the
+# reachability of the limit: it says nothing about a comma inside a bracket or a brace pair, which
+# F1 above shows IS reachable. Read it as the narrow fact it is.
+statement error
+SELECT CASE WHEN a = 1, PSEUDO 'p' THEN 1 END;
+----
+syntax error at or near ","
+
+# ==============================================================================================
+# R42 FOR THE PAREN SCAN (fix round 2). The quote-aware depth scan decides "inside a literal" by
+# PARITY, and parity is evidence only where every quote is a DELIMITER. A WHERE or ATTR body is
+# raw host SQL, so one unpaired apostrophe in it flips the scanner's state and makes it skip
+# parentheses that are REAL.
+#
+# ONE odd body gives an ODD total, the odd-quote stand-down engages, and the scan is not trusted.
+# TWO odd bodies sum to an EVEN total, the stand-down never engages, and the masked quotes hide
+# the parentheses. Measured on 5cb9618's successor f836e29, on text the ORDINARY constructor
+# printed:
+#
+#   (WHERE "o'k" = 1, HAS ( DESCENDANT (TYPE 'b', WHERE "o'k" = 1) ))
+#     quote count 4 -> even -> no stand-down -> depths reach -2 -> REFUSED unbalanced parentheses
+#   one-body control, 5 quotes -> odd -> stand-down -> accepted
+#
+# So the comment this task shipped -- "the printer emits ( and ) only as a matched pair, and a
+# value's own parenthesis is inside a literal, where this count does not look" -- was measured
+# FALSE. It was the THIRD comment in this task that read as measurement and was reasoning, and the
+# SECOND on this arm.
+#
+# WHY A REGRESSION AND NOT A LIMIT: the NORMALISING theorem decides it. Every shape below is
+# reprint-TRUE at BASE 3384ede and was REFUSED on f836e29, so a governing theorem that held on
+# printer output stopped holding. It is not documentable either, because the class is not refused
+# consistently -- step1+step2 and has+not still mis-parse silently.
+#
+# THE RULE: the paren scan is evidence only on text where NO clause kind with a RAW body appears.
+# That set is read from tree_catalog.clause_kinds, so it is not a second copy of the vocabulary.
+#
+# WHY NOT "unbalanced under BOTH a quote-aware AND a quote-blind reading", which is the obvious
+# candidate: measured, it is defeated by a TYPE literal holding an unmatched close paren, because
+# then the quote-BLIND reading is unbalanced too. The fourth record below is that exact shape and
+# is the one that discriminates the two rules.
+#
+# EXACT IS NOT ASSERTED HERE, AND THAT IS NOW A HISTORICAL FACT RATHER THAN A LIMIT. It was FALSE
+# at BASE for these shapes, because the clause-list splitter mis-split on the unpaired apostrophe
+# in `"o'k"`. That is R41. These records pin the REPRINT half only -- and the reason they COULD do
+# so while the parse was wrong is the point: a swallowed body reprints byte-identically, so a
+# reprint record stays green on a wrong IR. That is why R41 needed the three refusal-pins below
+# and why a theorem here would not have caught it.
+#
+# R41 IS FIXED IN TASK 7, fix round 1. EXACT is now TRUE for all four of these shapes -- MEASURED,
+# and the three records below assert it directly. The sentence this block carried, "it predates
+# this task, and Task 7's differential generator CARRIES it", is withdrawn: the coordinator ruled
+# that the dispatch's "you own the clause-list splitter ... it is yours to fix" governs, because
+# four of R41's shapes are refusals of printer output and the printer is the specification. These
+# four records are left asserting the reprint half only, so the contrast above stays legible.
+# ==============================================================================================
+
+# step1+has -- the smallest two-odd-body shape
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', "where": '"o''k" = 1', has: [{type: 'b', "where": '"o''k" = 1'}]}]))))
+     = tree_selector_to_treeql(
+  tree_steps([{type: 'a', "where": '"o''k" = 1', has: [{type: 'b', "where": '"o''k" = 1'}]}]));
+----
+true
+
+# has+nested -- both odd bodies inside groups, at two different depths
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}]}]))))
+     = tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}]}]));
+----
+true
+
+# step1+step2+has+not -- FOUR odd bodies and two top-level steps, so the newline split sees it too
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', "where": '"o''k" = 1', has: [{type: 'b', "where": '"o''k" = 1'}],
+               "not": [{type: 'd', "where": '"o''k" = 1'}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}]))))
+     = tree_selector_to_treeql(
+  tree_steps([{type: 'a', "where": '"o''k" = 1', has: [{type: 'b', "where": '"o''k" = 1'}],
+               "not": [{type: 'd', "where": '"o''k" = 1'}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}]));
+----
+true
+
+# THE DISCRIMINATOR: two odd bodies AND a TYPE literal holding an unmatched close paren. The
+# quote-aware reading is wrong here because of the apostrophes, and the quote-BLIND reading is
+# wrong because of the literal's own ')', so a rule that asks both to agree still refuses this.
+# Only a rule that declines to judge raw-bodied text at all accepts it.
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a ) unmatched', "where": '"o''k" = 1',
+               has: [{type: 'b', "where": '"o''k" = 1'}]}]))))
+     = tree_selector_to_treeql(
+  tree_steps([{type: 'a ) unmatched', "where": '"o''k" = 1',
+               has: [{type: 'b', "where": '"o''k" = 1'}]}]));
+----
+true
+
+# ----------------------------------------------------------------------------------------------
+# THREE REFUSALS OF PRINTER OUTPUT, NOW ACCEPTED -- R41 IS FIXED.
+#
+# WHAT THESE THREE RECORDS WERE. All three were `statement error` records expecting
+# `tree_parse_treeql: cannot read`. Each had first been refused with a cause the text does not
+# have -- `unterminated quoted value` with every literal terminated, `HAS/NOT needs parentheses
+# around its chain` with the parentheses present, `unbalanced parentheses` with the parentheses
+# matched -- and each was moved to the GENERIC arm, on this reasoning: "the real cause is R41's
+# mis-split, which this task may not fix and must not describe".
+#
+# EVERY ONE OF THEM PINNED A REFUSAL OF PRINTER OUTPUT. The constructor is ordinary, the text is
+# what the printer wrote, and the parser refused it -- which the Global Constraint calls a defect
+# and not a gate. The reason they were only generic refusals rather than records of a defect is
+# that R41 was believed unfixable in DuckDB. It was not: see tree_treeql_quote_mask in
+# sql/10_treeql.sql, which carries the closure result that made the old scan impossible and the
+# construct that replaced it.
+#
+# SO THESE ARE NOT TESTS BEING WEAKENED. A refusal-pin became an EXACT assertion because the thing
+# it refused is now read correctly, exactly as F1's two records were converted earlier in this
+# task. The IR is stated at each one, MEASURED under duckdb 1.5.5 rather than inferred from
+# "stopped refusing" -- which is not the same claim as "returns the right IR".
+#
+# AND THE REPRINT RECORDS ABOVE DID NOT MOVE, which is what tells you the fix is a fix: the R42
+# block's four `print(parse(print(ir))) = print(ir)` records were green before and are green now.
+# They were green on the WRONG parse too, because a swallowed body reprints byte-identically --
+# that is precisely why a reprint record could not catch R41 and why these three had to be
+# refusal-pins until it was fixed.
+# ----------------------------------------------------------------------------------------------
+
+# step2+has+nested. MEASURED: 14 nodes, EXACT true for both front-ends.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}])))
+     = tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                      has: [{type: 'c', "where": '"o''k" = 1'}]}]},
+                   {type: 'e', comb: 'child', "where": '"o''k" = 1'}]);
+----
+true
+
+# ...and the node count, so a reader can see WHICH IR without rebuilding it. 14 nodes: the root,
+# two top-level steps, their type and where clauses, the HAS and its inner step and clauses, and
+# the nested HAS with its own.
+query I
+SELECT len(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}]))));
+----
+14
+
+# has+not+nested. MEASURED: 15 nodes, EXACT true for both front-ends. This is the shape that was
+# once refused `HAS/NOT needs parentheses around its chain` with its parentheses present.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}],
+               "not": [{type: 'd', "where": '"o''k" = 1'}]}])))
+     = tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                      has: [{type: 'c', "where": '"o''k" = 1'}]}],
+                    "not": [{type: 'd', "where": '"o''k" = 1'}]}]);
+----
+true
+
+query I
+SELECT len(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1',
+                                 has: [{type: 'c', "where": '"o''k" = 1'}]}],
+               "not": [{type: 'd', "where": '"o''k" = 1'}]}]))));
+----
+15
+
+# step2+has. MEASURED: 10 nodes, EXACT true for both front-ends. This is the shape that was once
+# refused `unbalanced parentheses` with its parentheses matched, and it is the sweep's `a42`.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1'}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}])))
+     = tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1'}]},
+                   {type: 'e', comb: 'child', "where": '"o''k" = 1'}]);
+----
+true
+
+query I
+SELECT len(tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{type: 'b', "where": '"o''k" = 1'}]},
+              {type: 'e', comb: 'child', "where": '"o''k" = 1'}]))));
+----
+10
+
+# ----------------------------------------------------------------------------------------------
+# R41'S OTHER TWO SHAPES, which no record covered because neither family of the differential drove
+# them. Both are printer output from the ordinary constructor, both were refused, and NEITHER
+# carries an apostrophe -- which is what shows the cause was never "reads every `'` as a
+# delimiter" but "knows nothing of `"..."` regions". A comma inside a double-quoted identifier is
+# the other symptom of the same cause.
+# ----------------------------------------------------------------------------------------------
+
+# a comma inside a double-quoted identifier in a WHERE body. Was refused `cannot read b" = 1`.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": '"a,b" = 1'}])))
+     = tree_steps([{"where": '"a,b" = 1'}]);
+----
+true
+
+# ...and in an ATTR body. Was refused `cannot read c"`.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{attr: 'a = "b,c"'}])))
+     = tree_steps([{attr: 'a = "b,c"'}]);
+----
+true
+
+# THE BOUNDARY, and the sentence that stood here was FALSE for want of one qualification. It read:
+# "a LONE double quote is NOT a region ... so an unpaired `"` stays one ordinary character". True of
+# a text holding ONE `"`, which is all this record exercises; FALSE as a property of "an unpaired
+# `"`", because THE PAIRING IS GLOBAL and two unpaired ones in two different raw bodies pair with
+# each other. The claim and its record were the same width, which is why nothing was red: this was
+# the class's only double-quote boundary case. The records below widen it.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'a = "b'}])))
+     = tree_steps([{"where": 'a = "b'}]);
+----
+true
+
+# ==============================================================================================
+# TWO UNPAIRED DOUBLE QUOTES -- A COLLISION CLASS, NOT A FIXABLE MISREAD
+#
+# WHAT HAPPENS. tree_treeql_quote_mask pairs `"` globally, so an unpaired `"` in one raw body pairs
+# with an unpaired `"` in another and the mask blanks everything between them -- the real `, `
+# separator and any group parentheses included. That is the mechanism this file documents for the
+# APOSTROPHE in its R42 block: "TWO odd bodies sum to an EVEN total, the stand-down never engages,
+# and the masked quotes hide the parentheses". The fix for the apostrophe reproduced the
+# apostrophe's own ambiguity in the double quote.
+#
+# WHY IT IS NOT CALLED A MISREAD, and this had to be measured rather than argued: EVERY shape in the
+# class is a COLLISION. Two IRs the ordinary constructor builds print BYTE-IDENTICAL text, so EXACT
+# can hold for at most ONE of them and nothing in the text distinguishes them. MEASURED over five
+# shapes -- attr+where, two top-level steps, step+HAS, step+NOT, three unpaired quotes -- the two
+# preimages print the same text for ALL FIVE:
+#
+#     at 02931a3   EXACT on the 1-part preimage FALSE, on the multi-part preimage TRUE
+#     now          EXACT on the 1-part preimage TRUE,  on the multi-part preimage FALSE
+#
+# EXACT did not disappear. It MOVED between preimages, which is the only thing it can do on a
+# collision -- and the APOSTROPHE already took the 1-part branch for these same five shapes at
+# 02931a3, so what changed is that the double quote stopped DISAGREEING with the apostrophe. The
+# branch taken is F3's own: the one-part reading of printer output.
+#
+# THE RECORDS BELOW PIN BOTH SIDES, which the single boundary record above could not do: the text is
+# EXACT-true for the ONE-part IR and EXACT-FALSE for the multi-part IR that prints the same bytes.
+# If either moves, the branch choice has moved and somebody has to re-decide it on purpose.
+# ==============================================================================================
+
+# the ONE-part preimage: EXACT holds.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{attr: 'a = "b, WHERE c = "d'}])))
+     = tree_steps([{attr: 'a = "b, WHERE c = "d'}]);
+----
+true
+
+# ...and the MULTI-part preimage prints the SAME BYTES, so EXACT cannot also hold for it. Both rows
+# are needed: the first alone reads as "this works", the pair says "this is a collision, and here is
+# the branch".
+query I
+SELECT ok FROM (
+  SELECT 1 AS i, tree_selector_to_treeql(tree_steps([{attr: 'a = "b', "where": 'c = "d'}]))
+                 = tree_selector_to_treeql(tree_steps([{attr: 'a = "b, WHERE c = "d'}])) AS ok
+  UNION ALL
+  SELECT 2, tree_parse_treeql(tree_selector_to_treeql(
+              tree_steps([{attr: 'a = "b', "where": 'c = "d'}])))
+            = tree_steps([{attr: 'a = "b', "where": 'c = "d'}])
+) ORDER BY i;
+----
+true
+false
+
+# THE SAME COLLISION ACROSS TWO TOP-LEVEL STEPS, where the masked span swallows a NEWLINE and a pair
+# of group parentheses rather than a comma. Separate from the record above because the span crosses
+# a different kind of boundary, and a reader should not have to infer that it does.
+query I
+SELECT tree_selector_to_treeql(tree_steps([{"where": 'a = "b'}, {"where": 'c = "d', comb: 'desc'}]))
+     = tree_selector_to_treeql(tree_steps([{"where": 'a = "b)' || chr(10)
+                                                     || 'DESCENDANT (WHERE c = "d'}]));
+----
+true
+
+# AND THE CONTROL THAT KEEPS THE CLASS NARROW: two unpaired `"` in ONE raw body are not a collision
+# and round-trip exactly, because there is no separator between them for the mask to blank.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'a = "b c = "d'}])))
+     = tree_steps([{"where": 'a = "b c = "d'}]);
+----
+true
+
+# ==============================================================================================
+# ROW B -- A REFUSAL THAT HAD BECOME A SILENT WRONG PARSE, RESTORED
+#
+# `(WHERE a = 1, b = 2, TYPE c)` is printer output of ONE IR and only one: the two-clause reading
+# would print `(TYPE 'c', WHERE a = 1, b = 2)`, because the constructor emits clauses in SLOT order
+# with `type` before `where` and a type value through tree_sql_lit. MEASURED -- so unlike the
+# double-quote class above this is NOT a collision, and EXACT is genuinely owed on it.
+#
+# WHAT WENT WRONG. At 02931a3 this REFUSED (`cannot read b = 2`). b55's raw-body merge then absorbed
+# `b = 2` into the where body and stopped at `TYPE c`, producing a two-clause IR the printer would
+# never emit in that order -- a loud refusal turned into a SILENT WRONG PARSE, which this task's own
+# commit calls "the worse of the two failures". Nothing was red, because no record pinned the shape.
+#
+# THE FIX: a raw group absorbs its continuations UNLESS the NEXT group opens a CLAUSE keyword. There
+# the text is ambiguous and the merge would be guessing, so the parts stay separate and `b = 2` is
+# refused by name as it was before. A group keyword after a raw body is fine -- the printer puts
+# groups after clauses -- so `(WHERE a = 1, b = 2, HAS ( ... ))` still merges.
+#
+# EXACT IS STILL FALSE HERE, and the record says refusal rather than EXACT deliberately: making it
+# EXACT needs the merge to know that `where` is the LAST clause slot, and the registry has no order
+# column. That is the keyword-continuation class, declared in test/sweep_treeql.py. A refusal is the
+# honest answer until that is decided.
+# ==============================================================================================
+statement error
+SELECT tree_parse_treeql('(WHERE a = 1, b = 2, TYPE c)');
+----
+tree_parse_treeql: cannot read b = 2
+
+# ...and reached through the PRINTER, so the shape is not a matter of my transcription.
+statement error
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{"where": 'a = 1, b = 2, TYPE c'}])));
+----
+tree_parse_treeql: cannot read b = 2
+
+# THE FOUR NEIGHBOURS THAT MUST NOT MOVE WITH IT. b55 itself still merges; a group keyword after a
+# raw body still merges; the documented comma limit still reads as three clauses; and a raw body
+# preceded by a real clause still merges.
+query I
+SELECT ok FROM (
+  SELECT 1 AS i, len(tree_parse_treeql('(WHERE a = 1, b = 2)')) = 3 AS ok
+  UNION ALL
+  SELECT 2, len(tree_parse_treeql('(WHERE a = 1, b = 2, HAS ( DESCENDANT (TYPE ''c'') ))')) = 6
+  UNION ALL
+  SELECT 3, len(tree_parse_treeql('(TYPE ''x'', WHERE a = 1, PSEUDO ''p'')')) = 5
+  UNION ALL
+  SELECT 4, len(tree_parse_treeql('(TYPE ''t'', WHERE a = 1, b = 2)')) = 4
+) ORDER BY i;
+----
+true
+true
+true
+true
+
+# THE CHAIN READER WAS WRONG TOO, and at its own interface rather than only through the parser.
+# MEASURED on the old parity scan, `tree_treeql_chain_parts('"a CHILD b"')` answered TWO parts --
+# `"a` and `CHILD b"` -- a step boundary taken inside a double-quoted identifier. No printed group
+# chain reaches it, because the printer wraps every inner step's clause list in parentheses and the
+# only text at chain depth 0 is the combinator keyword, so nothing was ever red for it. This record
+# is at the macro's own interface for that reason: a defect hidden behind the printer's shape needs
+# a record that does not depend on the printer's shape.
+query I
+SELECT list_transform(tree_treeql_chain_parts('"a CHILD b"'), x -> x.part);
+----
+["a CHILD b"]
+
+# ...and the shape that hid it: the same keyword inside a region, but inside a printed chain, which
+# round-trips on the old scan AND the new one. Kept so that the record above is read as the narrow
+# fact it is.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+  tree_steps([{type: 'a', has: [{"where": '"a CHILD b" = 1'}]}])))
+     = tree_steps([{type: 'a', has: [{"where": '"a CHILD b" = 1'}]}]);
+----
+true
+
+# THE PAREN SCAN WAS WRONG TOO, and its trust gate did NOT mask it -- which is the thing I expected
+# and measured false. tree_treeql_quotes_trusted gates on an even `'` count AND no raw-bodied
+# keyword; neither says anything about a double quote. MEASURED on the old scan,
+# `tree_treeql_depths('("a ( b")')` returned `[1,1,1,1,2,2,2,2,1]` -- counting a parenthesis inside
+# a quoted identifier -- with `quotes_trusted` TRUE, so `wrapped` and `balanced` both answered
+# FALSE on text whose parentheses match, and this input was refused `unbalanced parentheses`.
+#
+# NOT printer output: the printer writes a TYPE body through tree_sql_lit, so it emits
+# `(TYPE 'a ( b')`. So no theorem quantified over this and nothing was red -- a false cause on
+# hand-written input, which is the class requirement 6 serves.
+query I
+SELECT list_transform(tree_parse_treeql('(TYPE "a ( b")'), x -> x.kind || ':' || COALESCE(x.value, '~'));
+----
+[selector:treeql, step:~, type:"a ( b"]
+
+# THE LENGTH INVARIANT the mask rests on: one character out for one character in, so a position in
+# the mask is the same position in the text and every caller still slices from the text. Asserted
+# over a spread rather than pinned on one input, including a MULTI-BYTE literal -- `repeat` and
+# `length` count characters, not bytes, and a mask that shortened a region would shift every
+# position after it and misread silently.
+query I
+SELECT bool_and(length(tree_treeql_quote_mask(t)) = length(t)) FROM (VALUES
+  ('(WHERE "a,b" = 1)'), ('(TYPE ''it''''s'')'), ('TYPE ''a'), ('(WHERE a = "b)'),
+  ('(ATTR a = 1) (ATTR b = 2)'), ('(TYPE ''say "hi"'')'), (''), ('(TYPE ''a ) b'')'),
+  ('(WHERE [1, 2] = [1, 2])'), ('(TYPE ''two '''''''' quotes '''''''' here'')'),
+  ('(WHERE "o''k" = 1)'), ('(ATTR a = "b,c")'), ('(TYPE ''é'')'), ('(TYPE ''a' || chr(10) || 'b'')')
+) v(t);
+----
+true
+
+# ==============================================================================================
+# FIX ROUND 3 -- THE RECORDS FOR F1, F2 AND F3, AND THE BOUNDARY RECORD BESIDE F1
+#
+# TASK 7 EMPTIED THE "KNOWN WRONG" CLASS. The classification below is fix round 5's, updated where
+# a fix changed what a record pins; the original counts are kept in the sentences that name them,
+# because this block is a record of how the classes were argued, not just of where they ended.
+#
+# NOTHING HERE NOW PINS BEHAVIOUR THAT IS KNOWN WRONG. Fix round 5 counted THREE such records --
+# F1's two refusals of printer output and F2's wrong parse value -- and all three are fixed:
+#   * F1's PAIR now assert EXACT round trips, because the splitter counts brackets and braces. A
+#     third record sits beside them for the residue that fix does not reach.
+#   * F2's RECORD now asserts a refusal, because the `parenless` arm's stand-down is gone. Three
+#     records sit beside it: its ATTR twin, which had no record and does now, and two controls.
+#
+# RECORDS ARE NAMED BY THEIR INPUT BELOW AND NOT BY LINE, which is this block's own rule and the
+# reason it exists: "adding a comment above them moves the line and the citation goes stale --
+# which is exactly what happened to the first draft of this very block." Task 7 made it happen
+# again, to its own first draft of the DIVERGENT table in test/sweep_treeql.py, which cited six
+# records by line and had moved every one of them by its own edits before it was committed.
+#
+# TWO PIN BEHAVIOUR THAT IS CORRECT and guard it. The boundary record below F1 -- a bracket or a
+# brace on its own round-trips EXACTLY, so a "fix" that refuses brackets outright turns it red.
+# And the second F3 record -- the normalising round trip on F3's text passes byte for byte.
+#
+# ONE, F3 ITSELF, IS NEITHER, and calling it "known wrong" was this block's last false sentence.
+# See THE F3 RULING below. All six are here because this task kept writing comments that claimed a
+# completeness the code does not have, and a record is the only thing that cannot drift from code.
+#
+# WHY A RECORD AND NOT A THEOREM IS THE GATE -- a different answer per hole, and not the same
+# question as the cause below. Measured in fix round 5, on this worktree:
+#   F1, both records  THE THEOREMS RAISED. parse(print(ir)) errored `cannot read 2]` and `cannot
+#                     read b: 2}`: the parser refused its own printer's output, loudly. That is
+#                     why a record was the right gate THEN -- a theorem that raises tells you
+#                     something is wrong without telling you what. Task 7 fixed the cause, and the
+#                     two records now assert the round trip the theorems always wanted.
+#   F2                NO THEOREM QUANTIFIES OVER IT. The theorems start from an IR, and this
+#                     text is not a fixed point of the printer: print(parse(text)) != text.
+#   F3                THE THEOREMS PASS, AND EXACT REQUIRES THIS READING. The text IS printer
+#                     output of a constructible IR and EXACT holds on it, so parse MUST return
+#                     the one-step IR -- a two-step reading would turn EXACT red. What no theorem
+#                     covers is the INTENT of a person who writes that text.
+#
+# THE HEADER ABOVE USED TO READ "FOUR HOLES THE THEOREMS CANNOT SEE", and that is withdrawn here
+# rather than a thousand lines away. It is false for F1, which they see by RAISING, and for F3,
+# which they see and PASS. It fits only F2, and the block holds six records, not four.
+#
+# THE F3 RULING, by the coordinator, after fix round 5 declined to make it and was right to --
+# relabelling is a ruling, not a measurement. Requirement 6 and the EXACT theorem disagree about
+# F3, both measured, and the ruling is that EXACT WINS AND F3 IS NOT A PARSER DEFECT.
+#
+# WHAT F3 ACTUALLY IS: a COLLISION IN THE TREEQL SURFACE SYNTAX. The printed form of a ONE-step IR
+# whose attr body happens to contain `) (ATTR` is BYTE-IDENTICAL to the form a person would write
+# by hand for TWO steps. The text carries nothing that separates the two, so no parser can serve
+# both readings. EXACT takes it because the printer is the specification: this text is printer
+# output, and a parser that refused or re-read its own printer's output would break the Global
+# Constraint. Requirement 6 loses on this one input and keeps every other.
+#
+# WHAT FOLLOWS, and it corrects a standing assumption: F3 CANNOT BE "FIXED". Teaching a two-step
+# reading would turn EXACT red on a constructible IR and turn the FIX ROUND 4 record red with it.
+# There is nothing here for a later task to repair -- only a limit to document.
+#
+# ONE CAUSE BEHIND F1 AND F2: the clause-list splitter is not a tokeniser. It counted `(` and `)`,
+# it read every `'` as a delimiter, and it was blind to `[` `]` and `{` `}`.
+#
+# TASK 7 CLOSED ALL THREE, the third in fix round 1:
+#   * BLIND TO BRACKETS AND BRACES -- CLOSED. tree_treeql_split_parts counts all three enclosure
+#     pairs, so F1's two inputs round-trip. The reasoning is at that macro.
+#   * EVERY `'` IS A DELIMITER -- CLOSED, and the bullet that stood here said it was open "because
+#     the scan is a WINDOW SUM over one delimiter; two delimiters that can nest need sequential
+#     state, which is a different piece of work with R22's binder wall in front of it". The first
+#     half was true and stronger than stated -- the two delimiters' state maps generate a
+#     non-abelian group, so NO window in the count family can do it. The second half was FALSE and
+#     had never been tested: RE2 alternation inside one scalar call does the sequential scan and
+#     binds in every shape R22 names. See tree_treeql_quote_mask in sql/10_treeql.sql.
+#
+#     AND THE BULLET NAMED THE WRONG CAUSE. It blamed the apostrophe. MEASURED: `(WHERE "a,b" = 1)`
+#     and `(ATTR a = "b,c")` are both printer output and both failed with NO APOSTROPHE ANYWHERE.
+#     The cause was having no notion of a `"..."` region; the apostrophe and the comma are two
+#     symptoms of it. A fix scoped to the apostrophe would have left the comma shapes failing.
+#   * NOT A TOKENISER AT ALL -- CLOSED for the quoting, which is the part that bit. The splitter
+#     still does not know which clause KIND it is inside, and it does not need to: the mask tells
+#     it where the regions are, which is the only thing the quoting question ever needed. This was
+#     NOT what F2 rested on -- see below.
+#
+# F2'S CAUSE WAS THE GUARD, NOT THE SPLITTER, and the sentence that said otherwise is withdrawn
+# here rather than a thousand lines away. It read: F2 "rests on" the splitter not being a tokeniser,
+# because it "cannot tell a raw body's own comma from a separator". MEASURED FALSE: F2's text is
+# `(TYPE 'a', HAS ( WHERE a = 1 TYPE 'b' ))`, whose one comma IS a separator and is split
+# correctly, and which carries no apostrophe, bracket or brace for the splitter to trip on. The
+# inner chain `WHERE a = 1 TYPE 'b'` holds no combinator keyword, so it arrives as ONE parenless
+# step -- and the `parenless` arm was standing down on it because the text carries a raw body.
+# Removing that stand-down, with no splitter change whatever, is what fixed it: file 48 went to
+# exactly one failure, F2's own record.
+#
+# SO THE HEADER'S "ONE CAUSE BEHIND F1 AND F2" IS ITSELF TOO STRONG. F1's cause was the splitter.
+# F2's was a refusal arm's guard. They are two causes, and the claim that one sat behind both is
+# the shape of error this block keeps recording -- a mechanism asserted across cases that were only
+# ever measured one at a time.
+#
+# WHERE THIS IS MEASURED RATHER THAN REMEMBERED: test/sweep_treeql.py reads printed IR back through
+# BOTH front-ends and compares every field of every row. Its EXACT column is the adjudicator, which
+# is what made each of these a fact rather than a difference of opinion between two parsers. The
+# numbers as the three fixes landed, all measured: the macros went 38 of 44 at BASE, to 40 of 44
+# with F1, to 44 of 44 with R41 -- against 44 of 44 for the second reading throughout. The sweep's
+# own denominator has since been corrected upward; the figure it reports now is the one to read,
+# not these.
+#
+# F3'S CAUSE IS NOT THE SPLITTER, and saying it was is a claim fix round 5 measured false and left
+# for this ruling. MEASURED, with a control: on F3's text, tree_treeql_step_parse returns the
+# damaged body `ATTR a = 1) (ATTR b = 2` and tree_treeql_split_parts returns ONE part for it,
+# while a genuinely two-clause body `TYPE 'a', ATTR b = 2` returns TWO. The damage is already done
+# before the splitter sees anything: tree_treeql_wrapped answers TRUE on mismatched parentheses
+# because tree_treeql_no_raw_body is FALSE and the first-and-last-character fallback takes over.
+# So the splitter does not own F3, and the task that owns the splitter does not inherit F3.
+#
+# ALL OF IT IS IDENTICAL ON BASE 3384ede -- measured, not assumed -- so none of it is a regression
+# this task introduced, and by ruling none of it is fixed here. Task 7's differential generator
+# owns the splitter.
+# ==============================================================================================
+
+# F1. FIXED IN TASK 7, and these two records now assert the fix rather than pin the defect.
+#
+# WHAT THEY SAID BEFORE, so the change is legible and not silent: both were `statement error`
+# records expecting `cannot read 2]` and `cannot read b: 2}`. The constructor is ordinary and the
+# text is what the printer wrote, so the parser was refusing its OWN PRINTER'S OUTPUT -- and those
+# records existed "to make that visible, NOT to say it is correct", with "Task 7 owns the fix".
+#
+# THE FIX: tree_treeql_split_parts' depth scan counts `[ ]` and `{ }` as well as `( )`, so a comma
+# at paren depth zero but inside a list or struct literal is no longer read as a clause separator.
+# The reasoning sits at that macro in sql/10_treeql.sql, with the measured before and after.
+#
+# THESE ARE EXACT ASSERTIONS AND NOT MERELY "no error", for the reason F2's record gives for being
+# a value and not an acceptance: a record that only asserted acceptance would stay green if the
+# accepted IR were the wrong IR. parse(print(ir)) = ir is the whole claim.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": '[1, 2] = [1, 2]'}])))
+     = tree_steps([{"where": '[1, 2] = [1, 2]'}]);
+----
+true
+
+# THE BRACE HALF. Beyond the round-3 brief, whose cause was "a comma at paren depth zero inside a
+# BRACKET pair": measured, a BRACE pair did the same, so the brief's class was too narrow and this
+# record is how that stopped being a matter of memory. One scan now answers both.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(
+         tree_steps([{"where": '{a: 1, b: 2} = {a: 1, b: 2}'}])))
+     = tree_steps([{"where": '{a: 1, b: 2} = {a: 1, b: 2}'}]);
+----
+true
+
+# b55 -- A RAW BODY'S OWN TOP-LEVEL COMMA, WITH NO ENCLOSURE. FIXED, and these two records now
+# assert the round trip instead of pinning the refusal.
+#
+# WHAT THEY SAID BEFORE: both were `statement error` records expecting `cannot read b = 2`, with a
+# comment that had already been corrected once. The FIRST version of it claimed the shape "is NOT
+# reachable from a legal predicate ... so the printer cannot emit it from a WHERE body the host door
+# accepted, AND NO THEOREM OVER PRINTER OUTPUT QUANTIFIES OVER IT". The first half is TRUE -- a bare
+# top-level comma is not valid DuckDB SQL, which the record below the documented comma limit
+# measures -- and the last clause is FALSE and does not follow from it. "Not a legal predicate" is
+# not "not printer output", and tree_steps does not validate a WHERE body.
+#
+# WHAT FOUND IT: the sweep's COMPUTED denominator. Classifying each case by whether the printer can
+# emit it, instead of by which list it sat in, put this text in the EXACT denominator and showed the
+# failure. The instrument found a defect in its own declaration.
+#
+# WHY IT IS A DEFECT AND NOT A SECOND F3, which is the question that decided it. MEASURED:
+#
+#     tree_steps([{"where": 'a = 1, b = 2'}])   BUILDS -- three nodes
+#       prints                                  (WHERE a = 1, b = 2)
+#       parse of that text, before the fix      REFUSED `cannot read b = 2`
+#     the alternative reading, `(b = 2)` alone  REFUSED -- `b = 2` is not a legal clause
+#     control, `(WHERE a = 1, WHERE b = 2)`     ACCEPTED, 4 nodes
+#
+# The third row is the discriminator. F3 cannot be fixed because BOTH of its readings are valid and
+# no parser can choose; here only ONE reading of the text is valid, and it is the one-step IR the
+# printer was handed. A text with a single valid reading that the parser refuses is a plain defect.
+#
+# THE FIX is tree_treeql_clause_parts in sql/10_treeql.sql, which puts a raw body's own separators
+# back by SPAN rather than by re-joining -- see that macro for why re-joining breaks NORMALISING on
+# printer output the no-space form produces.
+statement error
+SELECT tree_parse_treeql('(b = 2)');
+----
+tree_parse_treeql: cannot read b = 2
+
+# THE DISCRIMINATOR, kept as a record so the ruling above cannot drift from it: `b = 2` is not a
+# legal clause on its own, which is why this text has one valid reading and F3 has two. If this
+# record ever goes green, b55's disposition has to be decided again.
+query I
+SELECT tree_parse_treeql('(WHERE a = 1, b = 2)') = tree_steps([{"where": 'a = 1, b = 2'}]);
+----
+true
+
+# ...and the SAME text reached through the PRINTER rather than through hand-written text, so nothing
+# here depends on my having transcribed it correctly. This is the EXACT theorem on the shape that
+# was failing it.
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'a = 1, b = 2'}])))
+     = tree_steps([{"where": 'a = 1, b = 2'}]);
+----
+true
+
+# NORMALISING, BYTE FOR BYTE, ON BOTH SPACINGS -- and this is the theorem the obvious fix breaks.
+# The printer passes a raw body through VERBATIM and inserts `, ` only BETWEEN clauses, so the
+# NO-SPACE form is itself printer output. MEASURED:
+#
+#     tree_selector_to_treeql(tree_steps([{"where": 'a = 1,b = 2'}]))  ->  '(WHERE a = 1,b = 2)'
+#
+# A reader that merged by re-joining trimmed parts with a canonical `, ` would reprint that as
+# `(WHERE a = 1, b = 2)`. Both rows below are byte equality against the printer's own output, so a
+# reader that normalised the spacing of a raw body turns the first one red.
+query I
+SELECT ok FROM (
+  SELECT 1 AS i, tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+           tree_steps([{"where": 'a = 1,b = 2'}]))))
+         = tree_selector_to_treeql(tree_steps([{"where": 'a = 1,b = 2'}])) AS ok
+  UNION ALL
+  SELECT 2, tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+              tree_steps([{"where": 'a = 1, b = 2'}]))))
+            = tree_selector_to_treeql(tree_steps([{"where": 'a = 1, b = 2'}]))
+  UNION ALL
+  -- a spacing no printer would choose, to show the span is the text's own and not a canonical form
+  SELECT 3, tree_selector_to_treeql(tree_parse_treeql(tree_selector_to_treeql(
+              tree_steps([{"where": 'a = 1 ,  b = 2'}]))))
+            = tree_selector_to_treeql(tree_steps([{"where": 'a = 1 ,  b = 2'}]))
+) ORDER BY i;
+----
+true
+true
+true
+
+# ...and the printed text itself, as TEXT, so the no-space claim above is readable rather than
+# inferred from an equality.
+query I
+SELECT tree_selector_to_treeql(tree_steps([{"where": 'a = 1,b = 2'}]));
+----
+(WHERE a = 1,b = 2)
+
+# THE RULE'S BOUNDARY, and the reason it asks whether the group's opener is RAW rather than merely
+# whether a part opens a clause. A LITERAL body ends at its closing quote, so the comma after it IS
+# a separator and the part after it stands alone. The coarser rule -- merge any part that opens
+# nothing -- was measured to move all four of these refusals; with the raw test they are unchanged.
+statement error
+SELECT tree_parse_treeql('(CLASS ''f'', 42)');
+----
+tree_parse_treeql: cannot read 42
+
+statement error
+SELECT tree_parse_treeql('SIDEWAYS (TYPE ''a'', 42)');
+----
+tree_parse_treeql: unknown clause keyword SIDEWAYS
+
+# an EMPTY clause part is still a part (R6), so the trailing comma is still a syntax error rather
+# than being merged into the clause before it
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'',)');
+----
+tree_parse_treeql: cannot read
+
+# and a RAW body's comma followed by something that is no clause at all is now the body's own,
+# because that is what the printer emits for it
+query I
+SELECT tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'a = 1, 42'}])))
+     = tree_steps([{"where": 'a = 1, 42'}]);
+----
+true
+
+# THE REAL BOUNDARY OF THE LIMIT, recorded instead of guessed. A bracket or a brace is NOT by
+# itself a problem -- only a COMMA inside one is. Both of these are printer output and both
+# round-trip EXACTLY. If someone "fixes" F1 by refusing brackets outright, these two go red.
+query I
+SELECT ok FROM (
+  SELECT 1 AS i, tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": 'x[1] = 1'}])))
+                 = tree_steps([{"where": 'x[1] = 1'}]) AS ok
+  UNION ALL
+  SELECT 2, tree_parse_treeql(tree_selector_to_treeql(tree_steps([{"where": '{a: 1} = {a: 1}'}])))
+            = tree_steps([{"where": '{a: 1} = {a: 1}'}])
+) ORDER BY i;
+----
+true
+true
+
+# F2. FIXED IN TASK 7, and this record now asserts the refusal rather than pinning the wrong parse.
+#
+# WHAT IT SAID BEFORE: it was a `query I` record pinning a CLEAN WRONG PARSE --
+# `selector:treeql | step:~ | type:a | has:~ | step:~ | where:a = 1 TYPE 'b'` -- in which the WHERE
+# body SWALLOWED the step that follows it and `TYPE 'b'` ended up inside the where value. The
+# parenless arm (R36) did not fire, because it asked tree_treeql_no_raw_body first and this text
+# carries a raw body.
+#
+# THE FIX: that stand-down is removed from the two `parenless` arms. The reasoning, the measurement
+# that made it safe, and the one wording it costs are at those arms in sql/10_treeql.sql.
+#
+# WHY IT WAS WORTH FIXING rather than documenting: a clean wrong parse is the worse of the two
+# failures, which is R42's counterweight's own words. The guard bought a true message on a shape no
+# case could produce and paid with a wrong answer on this one.
+#
+# THE ROUND-3 CAUTION IS DISCHARGED, not deleted. It read: "I did NOT establish that the stand-down
+# CAUSES this", because f836e29 -- which had the arm but not the guard -- accepted the same input,
+# the splitter having already mis-split the text so that no part ever looked parenless. On THIS
+# HEAD it is established, by removing the guard and nothing else and watching this one record
+# change: measured, file 48 went to exactly ONE failure, this record's, with 221 assertions and
+# every other record green. So on HEAD the guard is the cause.
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( WHERE a = 1 TYPE ''b'' ))');
+----
+tree_parse_treeql: a step inside HAS/NOT needs a combinator or parentheses
+
+# THE ATTR TWIN, which had no record of its own and does now. sql/10_treeql.sql measured both
+# shapes when it documented the gap; only the WHERE one was pinned, so the ATTR one was a matter of
+# memory. It was accepted with attr arg `1 TYPE 'b'`.
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( ATTR a = 1 TYPE ''b'' ))');
+----
+tree_parse_treeql: a step inside HAS/NOT needs a combinator or parentheses
+
+# THE CONTROL, and what it is a control FOR: that the arm still refuses what it always refused, so
+# the two records above are not bought by an arm that now fires on everything. This shape carries
+# NO raw body, so it reached the arm before the fix too.
+statement error
+SELECT tree_parse_treeql('(TYPE ''a'', HAS ( TYPE ''b'' TYPE ''c'' ))');
+----
+tree_parse_treeql: a step inside HAS/NOT needs a combinator or parentheses
+
+# ...AND THE OTHER SIDE OF THE CONTROL: a parenless clause list at TOP level is requirement 6 and
+# stays legal. The arm is scoped to levels 1 and 2, and removing its guard did not widen that scope.
+query I
+SELECT tree_parse_treeql('CLASS fn') = tree_steps([{class: 'fn'}]);
+----
+true
+
+# F3. THE ONE WHOSE ONLY GATE IS A RECORD, and fix round 4 had to correct WHY. Two parenthesised
+# steps side by side collapse into ONE step whose attr `arg` holds the rest of the text.
+# tree_treeql_wrapped's closure is CONDITIONAL: on raw-bodied text it falls back to the SF-3
+# first-and-last-character test, which `(ATTR a = 1) (ATTR b = 2)` satisfies with MISMATCHED
+# parentheses.
+#
+# THE ROUND-3 MECHANISM WAS MEASURED FALSE IN FIX ROUND 4, and the claim is withdrawn here rather
+# than a thousand lines away. The withdrawn mechanism came from the coordinator's fix-round-3 brief
+# (task-5-fix-round-3.md:60 and :111) and was transcribed in good faith; this record's own F3
+# header line used to read "THE ONE NO THEOREM AND NO SWEEP CAN EVER SEE", and the lines here used
+# to say the `arg` below "is IR tree_steps will not build -- so the IR is not constructible".
+# MEASURED in fix round 4, on this worktree's sql and on a BASE 3384ede tree, identical on both:
+# tree_steps([{attr: 'a = 1) (ATTR b = 2'}]) BUILDS (three nodes), prints exactly the text below,
+# and satisfies EXACT and NORMALISING. The IR IS constructible and BOTH theorems are SATISFIED on
+# it, not blind.
+#
+# WHICH RECORD PINS WHICH OF THOSE, so that this sentence cannot outlive them: the FIX ROUND 4
+# block's record pins BUILDS, PRINTS and EXACT, one row each. NORMALISING is pinned
+# by that block's print row together with the record immediately below this one -- print of the
+# parse equals the text -- which compose to print(parse(print(ir))) == print(ir). No single record
+# asserts NORMALISING on its own.
+#
+# WHAT IT ACTUALLY IS: a HAND-WRITTEN-INPUT defect, requirement 6's class. A person who writes this
+# text means two steps, and the printer never writes it for a two-step IR -- measured over
+# tree_catalog.combinators, the seven combinators legal at depth 0 and the `desc` default all print
+# `(ATTR a = 1)` and `<KEYWORD> (ATTR b = 2)` on TWO lines, and `self` refuses. So the parser is
+# not merely free to read the text as the one-step IR -- EXACT REQUIRES it to, since the text is
+# printer output of a constructible IR on which EXACT holds. No theorem over printer output covers
+# that, because the theorems quantify over printer output and this text IS printer output with a
+# correct round trip. Hence a record and not a theorem. Identical on BASE.
+query I
+SELECT string_agg(kind || ':' || COALESCE(value, '~') || '/' || COALESCE(arg, '~'), ' | '
+                  ORDER BY node_id)
+FROM (SELECT unnest(tree_parse_treeql('(ATTR a = 1) (ATTR b = 2)'), recursive := true));
+----
+selector:treeql/~ | step:~/~ | attr:a/1) (ATTR b = 2
+
+# ...and this is the row that shows WHY no theorem over printer output catches it: the normalising
+# theorem RUNS on this text and PASSES, byte for byte. Round 3 read this row as proof that "the
+# theorems cannot see it"; fix round 4 measured that it proves the opposite -- the theorem is
+# satisfied, which is exactly what leaves the misread uncovered. Still BEYOND THE ROUND-3 BRIEF's
+# four records and still load-bearing, for the corrected reason: without it, "no theorem over
+# printer output can cover this" is an argument rather than a measurement.
+query I
+SELECT tree_selector_to_treeql(tree_parse_treeql('(ATTR a = 1) (ATTR b = 2)'))
+     = '(ATTR a = 1) (ATTR b = 2)';
+----
+true
+
+# ==============================================================================================
+# FIX ROUND 4 -- ONE RECORD, SO THE WITHDRAWN SENTENCE CANNOT COME BACK
+#
+# WHY IT EXISTS: fix round 3 wrote, at F3 above and at sql/10_treeql.sql, that the one-step IR
+# behind `(ATTR a = 1) (ATTR b = 2)` is "IR tree_steps will not build" and that "NEITHER theorem
+# ... can ever see it". Both clauses were measured FALSE in fix round 4. Prose can drift back; a
+# record cannot. This record pins the three facts that killed the sentence.
+#
+# THE BAR FOR IT IS NOT "RED BEFORE, GREEN AFTER". It pins behaviour that is IDENTICAL on BASE
+# 3384ede and is not changing in this round. The bar is that it goes RED if someone later makes
+# that IR unbuildable, changes what it prints, or breaks EXACT on it -- which is what would let
+# the withdrawn sentence look true again.
+#
+# Row 1: the constructor BUILDS it -- three nodes, so `tree_steps will not build` is false.
+# Row 2: it prints the F3 text byte for byte, so the F3 text is legitimate printer output.
+# Row 3: EXACT holds, so the exact theorem is SATISFIED on it rather than blind to it.
+#
+# NORMALISING IS NOT A ROW HERE, said plainly rather than left to be assumed from "both theorems".
+# Row 2 and the second F3 record above -- print of the parse equals the text -- compose to
+# print(parse(print(ir))) == print(ir), so the pair pins it and neither one does alone.
+# ==============================================================================================
+query I
+SELECT ok FROM (
+  SELECT 1 AS i, len(tree_steps([{attr: 'a = 1) (ATTR b = 2'}])) = 3 AS ok
+  UNION ALL
+  SELECT 2, tree_selector_to_treeql(tree_steps([{attr: 'a = 1) (ATTR b = 2'}]))
+            = '(ATTR a = 1) (ATTR b = 2)'
+  UNION ALL
+  SELECT 3, tree_parse_treeql(tree_selector_to_treeql(tree_steps([{attr: 'a = 1) (ATTR b = 2'}])))
+            = tree_steps([{attr: 'a = 1) (ATTR b = 2'}])
+) ORDER BY i;
+----
+true
+true
+true
+
+# ==============================================================================================
+# TASK 6 -- REGISTRATION AND DISPATCH: a TREEQL selector given as TEXT reaches tree_match
+#
+# Everything above this line parses text to IR and never matches a row with it. These records
+# are the increment: tree_catalog.selector_languages.parser stops being NULL for the treeql row
+# (sql/10_treeql.sql), and test/run.py resolves a text selector's front-end by READING THAT
+# COLUMN rather than by a branch on the language's name.
+#
+# WHY `language := 'treeql'` IS NAMED ON THESE RECORDS. tree_catalog.settings's default is css
+# (sql/09_css.sql), so a bare text selector goes to the css front-end and is refused in css's
+# own words -- which is what 37_css_parser.test pins. A record that omits the argument therefore
+# measures the css parser and not this one. The default-language path has its own record below,
+# which MOVES the setting rather than assuming it.
+#
+# THE TREE. This file declared none until now: every record above is macro algebra over text.
+# The shape is 31_match.test's, the smallest one carrying a `type` slot -- without the semantic
+# block a TYPE clause has no column to read.
+# ==============================================================================================
+
+statement ok
+CALL tree_ddl_create('main', 'app', tree_spec(tree_shape(
+  root := 'file_path', "order" := 'node_id', level := 'depth', size := 'descendant_count',
+  semantic := tree_semantic(type := 'type', key := 'name')),
+  source := 'read_parquet(''test/data/app.parquet'')'));
+
+# THE ASSERTION THIS INCREMENT EXISTS FOR: a TREEQL selector handed over as TEXT matches rows.
+# The bar is ROWS and not "no error": an empty answer is also what a mis-dispatched selector
+# returns, and absence of signal is not success.
+query I
+FROM tree_match('main', 'app', '(TYPE ''function_definition'')', language := 'treeql') SELECT count(*) > 0;
+----
+true
+
+# THE SAME SELECTOR AS TEXT AND AS IR RETURN THE SAME ROWS. The second conjunct is what makes
+# this a test: `[] = []` is true, so without it two empty answers would pass for agreement.
+query I
+SELECT (SELECT list(node_id ORDER BY node_id)
+          FROM tree_match('main', 'app', '(TYPE ''function_definition'')', language := 'treeql'))
+     = (SELECT list(node_id ORDER BY node_id)
+          FROM tree_match('main', 'app', tree_steps([{type: 'function_definition'}])))
+   AND (SELECT count(*) FROM tree_match('main', 'app', tree_steps([{type: 'function_definition'}]))) > 0;
+----
+true
+
+# THE TEXT WAS READ BY *THIS* FRONT-END, which a row count alone does not show: the IR the
+# dispatch produced prints back to the text it came from. The css parser cannot produce this IR
+# from this text -- it refuses the text outright (37_css_parser.test) -- so the round trip names
+# the parser that ran.
+query I
+SELECT (tree_explain('main', 'app', '(TYPE ''function_definition'')', language := 'treeql')).treeql;
+----
+(TYPE 'function_definition')
+
+# THE REGISTRY'S parser COLUMN IS NON-NULL FOR THE FIRST TIME, read through the catalog view
+# rather than the table. Both languages are listed, because the value this record pins is the
+# whole seam: core registers treeql in sql/01_catalog.sql with no parser, and each front-end's
+# own file names its own.
+query II
+SELECT language, parser FROM tree_catalog_languages() ORDER BY language;
+----
+css	tree_css_lower
+treeql	tree_parse_treeql
+
+# THE DEFAULT-LANGUAGE PATH. ONE thing is measured here, and it is the lookup in
+# tree_catalog.settings picking treeql for text that names no language. A record whose text
+# carries `language := 'treeql'` cannot measure that, because its argument decides the front-end
+# before the setting is ever read.
+#
+# WHAT THIS RECORD CANNOT WITNESS, said here so that nobody re-adds the claim: the PROVENANCE
+# STAMP. An earlier version of this comment said `_match_language` "comes from the stamp
+# tree_parse_treeql wrote on the IR's root row". It cannot tell. `tree_selector_language` is
+# `COALESCE(min((x).value), 'treeql')` (sql/06_selector.sql), and sql/07_match.sql documents the
+# fallback on purpose -- "IR that stamps nothing still reads treeql". **The stamp and the default
+# are the same string**, so this record reads `treeql` whether the stamp is there or not, and a
+# selector that stamped nothing at all would satisfy it. MEASURED in fix round 1: with the stamp
+# blanked, this record still passes.
+#
+# WHERE THE STAMP *IS* COVERED, since it is not here and it is not only in the ROOT-VALUE RECORD
+# at the end of this block -- the last record before the `parser IS NULL` banner, not either of the
+# two records immediately below, which move the setting and read _match_language.
+# MEASURED, same run: blanking the stamp turns 68 of this file's 218 assertions red. That
+# root-value record is the directly-addressed one, and it is here because it sits next to the
+# comment that used to make the false claim. But the coverage already existed before fix round 1 added it --
+# :1189's node-by-node projection wants `selector treeql` explicitly, the two string_agg records
+# near the end carry `selector:treeql`, and every `parse(print(ir)) == ir` theorem compares a
+# parsed selector against `tree_steps` IR whose root value IS `treeql`. So the gap this record
+# closes is one of LEGIBILITY beside a false sentence, not of coverage, and saying otherwise would
+# be the same kind of overclaim the sentence above was.
+#
+# The setting is put back immediately: it is session state, and every record after it would
+# otherwise run under a default this one moved.
+statement ok
+UPDATE tree_catalog.settings SET value = 'treeql' WHERE name = 'tree_default_selector_language';
+
+query I
+SELECT DISTINCT _match_language FROM tree_match('main', 'app', '(TYPE ''function_definition'')');
+----
+treeql
+
+statement ok
+UPDATE tree_catalog.settings SET value = 'css' WHERE name = 'tree_default_selector_language';
+
+# THE STAMP ITSELF, read with no COALESCE anywhere in the path. This reaches the root row's
+# `value` field directly, so a front-end that stops stamping shows up as NULL here instead of
+# being answered by tree_selector_language's default. That is the whole difference between this
+# record and the one above it, and it is why both exist.
+#
+# PROVED RATHER THAN ASSERTED, in fix round 1: with `'treeql'::VARCHAR AS value` at
+# sql/10_treeql.sql's root row temporarily changed to `NULL::VARCHAR`, this record FAILS
+# (`got: ['NULL']`) while the `_match_language` record above it still PASSES. Restoring the line
+# returns both to green. One run, both legs, so the contrast is the evidence.
+#
+# No `::TREE_SELECTOR` cast: tree_parse_treeql already returns that type. The cast in
+# tree_selector_language is there because its parameter is untyped, which is not the case here.
+query I
+SELECT (x).value FROM (SELECT unnest(tree_parse_treeql('(TYPE ''function_definition'')')) AS x)
+WHERE (x).kind = 'selector';
+----
+treeql
+
+# ==============================================================================================
+# F7 -- THE NO-DRIVER REFUSAL, which nothing tested until now
+#
+# WHAT IT GUARDS, and it is a DIFFERENT fault from the `parser IS NULL` one below. test/run.py's
+# PARSER_DRIVERS is keyed on the PARSER's NAME, not on the language's, so the registry's answer to
+# "which front-end reads this text" and the runner's answer to "how do I call it" are two
+# independent pieces of text that must spell one name alike. Nothing joined them: a registry row
+# renamed without the dict key, or the reverse, left the two silently out of step.
+#
+# WHY THIS IS THE ONLY THING THAT REPORTS THE DRIFT AS ITSELF. The three refusals in
+# parse_selector are deliberately distinct -- no such language, a language with no parser, and a
+# parser the runner cannot drive -- because, as its own comment says, one message for all three
+# would send every reader to the wrong fix two times out of three. This record is the third one,
+# and without it a name drift surfaces as whichever downstream error the un-rewritten selector
+# text happens to cause, which names neither the registry nor the dict.
+#
+# THE REFUSAL IS THE RUNNER'S, NOT THE REGISTRY'S, and that is the point of setting a name rather
+# than blanking the column: the row still HAS a parser, so the `parser IS NULL` arm cannot fire
+# and the message below can only have come from the PARSER_DRIVERS lookup. The expected text is
+# matched as a substring; the runner's full sentence goes on to name the language.
+#
+# THE ROW IS PUT BACK IMMEDIATELY, following the precedent of the two settings records above: the
+# UPDATE is session state, and every later record would otherwise run under a registry this one
+# changed. That is also why this block sits BEFORE the `parser IS NULL` banner and not after it --
+# that block is last in the file on purpose, because its own UPDATE is never undone.
+# ==============================================================================================
+
+statement ok
+UPDATE tree_catalog.selector_languages SET parser = 'nope' WHERE language = 'treeql';
+
+statement error
+FROM tree_match('main', 'app', '(TYPE ''function_definition'')', language := 'treeql');
+----
+the test runner cannot drive the parser 'nope'
+
+statement ok
+UPDATE tree_catalog.selector_languages SET parser = 'tree_parse_treeql' WHERE language = 'treeql';
+
+# THE CONTROL, and what it is a control FOR: that the restore above actually restored. Without it
+# a typo in the UPDATE would leave every later record running under a registry this block broke,
+# and the two records in the banner below would still pass -- the first because it blanks the
+# column anyway, the second because it calls the macro directly and never consults the registry.
+# So a silent failure here would be invisible for the rest of the file.
+query I
+SELECT parser FROM tree_catalog.selector_languages WHERE language = 'treeql';
+----
+tree_parse_treeql
+
+# ==============================================================================================
+# THE parser IS NULL PATH -- the refusal is the REGISTRY'S, not a branch's
+#
+# WHY IT MATTERS. A core-only build (the C++ extension's MVP) does not embed sql/10_treeql.sql,
+# so its treeql row still reads parser IS NULL and TREEQL text must still be refused there.
+# Setting the column back to NULL simulates that build inside this session. Nothing else is
+# removed: the parser stays loaded and stays working, which the control record measures, so the
+# refusal can only have come from the lookup.
+#
+# THESE RECORDS ARE LAST IN THE FILE DELIBERATELY. The UPDATE persists for the rest of the
+# session, so any record after it would run against a registry this file broke on purpose.
+# ==============================================================================================
+
+statement ok
+UPDATE tree_catalog.selector_languages SET parser = NULL WHERE language = 'treeql';
+
+statement error
+FROM tree_match('main', 'app', '(TYPE ''function_definition'')', language := 'treeql');
+----
+tree_match: selector language 'treeql' has no parser: tree_catalog.selector_languages.parser IS NULL
+
+# THE CONTROL, and what it is a control FOR. It proves the parser is still LIVE after the registry
+# row is blanked -- that the refusal above was not bought by also breaking the thing being
+# refused for.
+#
+# WHAT IT DOES *NOT* PROVE, corrected in fix round 1: it does not exclude a broken parser. An
+# earlier version of this comment said the refusal above "is also what a BROKEN PARSER would
+# produce". It is not. test/run.py's parse_selector raises on `parser IS NULL` BEFORE it consults
+# PARSER_DRIVERS, so tree_parse_treeql is never called on that path, and the expected text at the
+# record above is the registry's own message, matched as a substring. A broken parser cannot
+# satisfy that record at all. The MESSAGE does that exclusion; this record does not.
+#
+# WHERE THE REGISTRY-DRIVEN EVIDENCE ACTUALLY LIVES, named so that a later tidy-up cannot prune it
+# and leave a passing refusal next to a passing control: it is the SEQUENCE. The records above
+# accept the same text in the same session, the UPDATE blanks the row, and then the identical call
+# is refused. A hardcoded branch on the language's name would have failed those acceptances, and
+# nothing else in this file would have moved. Delete the acceptances and the refusal stops being
+# evidence about the registry.
+#
+# IDENTITY, NOT ARITY. This asserted `len(...) = 3` until fix round 1, and three WRONG nodes
+# satisfy that: `tree_steps([{type: 'class'}])` is also three nodes. MEASURED: the comparison below
+# is False for it and True for the right IR, so the record now pins what the parser produced and
+# not how much of it there was.
+#
+# ONE CONSEQUENCE, so that a later reader is not surprised by it: the comparison includes the root
+# row, so this record is now sensitive to the PROVENANCE STAMP as well. MEASURED in fix round 1 --
+# blanking the stamp in sql/10_treeql.sql turns this record red along with 67 others. That is extra
+# sensitivity and not a defect, but it does mean a red here is not by itself evidence that the
+# parser is dead. Read it with the root-value stamp record in the block ABOVE this banner.
+query I
+SELECT tree_parse_treeql('(TYPE ''function_definition'')')
+     = tree_steps([{type: 'function_definition'}]);
+----
+true

@@ -53,6 +53,26 @@ jobs:
         run: python test/run.py test/sql
       - name: css parser unit tests
         run: python test/test_css_parser.py
+      # The TREEQL pair's binding. The css pair's differential lives inside the suites
+      # (test/sql/44_parsers.test), so the Suites step already covers it; the TREEQL one is a
+      # standalone script because it GENERATES its inputs -- it prints IR through
+      # tree_selector_to_treeql and reads the result back through both front-ends -- and a
+      # generated case list cannot be written out as records.
+      #
+      # IT RUNS HERE BECAUSE A DIFFERENTIAL THAT IS NEVER RUN IS NOT A GATE. It fails five ways: on
+      # a NEW divergence; on a DECLARED divergence that started AGREEING; on a declaration whose
+      # LABEL matches no case; on a declared case that still diverges but about something ELSE than
+      # the entry says; and with exit 4 if it ever compares nothing.
+      #
+      # THE MIDDLE THREE DID NOT EXIST WHEN THIS COMMENT FIRST CLAIMED THE SECOND OF THEM, and that
+      # is why the list is spelled out rather than summarised. MEASURED by planting, in fix round 1:
+      # a DIVERGENT entry for a case that AGREES, and one naming a label no case carries, each left
+      # the sweep at exit 0 with output byte-identical to the unplanted run. The table was consulted
+      # only when a case diverged, so an entry matching nothing was silent -- and on the R41 fix the
+      # sweep printed OK with FIVE entries stale. The sentence described a gate the code did not
+      # have. The checks exist now, and the same plants are what demonstrate them.
+      - name: The two TREEQL readings still agree everywhere they are not declared to differ
+        run: python test/sweep_treeql.py
       - name: Runner and mutant harness unit tests
         run: python test/test_harness.py
       - name: Copy-and-edit mutants match the macros they copy
@@ -73,7 +93,11 @@ jobs:
   mutants:
     name: mutant harness
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 45 was sized when 20 mutants ran 11-19 min on main. This branch adds MN32 and MN33 AND a
+    # 3234-line suite that EVERY mutant now runs, so the job MEASURED 40m09s on PR #69 -- 89% of
+    # the limit, on a runner that was not slow. The next mutant, or a slower runner, times the gate
+    # out. A timeout is a net for a hang, not a budget, so it is set clear of the measurement.
+    timeout-minutes: 75
     env:
       DUCKENT_NO_SKIP: "1"
     steps:

@@ -334,13 +334,28 @@ FROM tree_match('main', 'app', '.fn:not(> block)', language := 'css');
 ----
 :not() takes a compound selector in v0
 
-# TREEQL text is refused until M-LANG. It has to be ASKED for now: the last M2 task flipped
-# tree_catalog.settings.tree_default_selector_language to css, so the runner no longer reaches
-# the TREEQL branch on its own.
-statement error
-FROM tree_match('main', 'app', '(TYPE ''fn'')', language := 'treeql');
+# TREEQL text is PARSED now, and it still has to be ASKED for: the last M2 task flipped
+# tree_catalog.settings.tree_default_selector_language to css, so a selector that names no
+# language is still css's. The record two below, which omits the argument, is what measures that.
+#
+# WHAT THIS RECORD USED TO BE, because the change is not cosmetic: a `statement error` whose
+# expected text was `M-LANG`, matching the runner's hardcoded refusal "tree_match: TREEQL text
+# parsing arrives with M-LANG; pass tree_steps(...)". Task 6 deletes that refusal -- the registry
+# names a parser for treeql and test/run.py dispatches to it -- so the record moves from the
+# refusal to the match the refusal was standing in for. This is the only test-side site that
+# asserted that message, and a grep for the full string does not find it: `M-LANG` was the whole
+# expectation.
+#
+# THE SELECTOR CHANGED TOO, from `(TYPE 'fn')`, because the bar is now ROWS and not an error. In
+# THIS file's declaration `fn` is a TAG and not a type (see the TAGS expression above), so
+# `(TYPE 'fn')` matches nothing here -- and an empty answer is also what a mis-dispatched
+# selector returns. The dispatch itself, the registry row and the parser-IS-NULL refusal are
+# pinned in test/sql/48_treeql_parse.test.
+query I rowsort
+FROM tree_match('main', 'app', '(TYPE ''function_definition'')', language := 'treeql') SELECT name;
 ----
-M-LANG
+greet
+shout
 
 # The flip itself, from the other side: a bare text selector -- no language := -- is parsed by
 # the css front-end and matches exactly what the explicit spelling matches. This record is the

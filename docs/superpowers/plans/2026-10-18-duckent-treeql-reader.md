@@ -1,4 +1,4 @@
-# M-LANG Implementation Plan
+# TREEQL Reader Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** DuckDB 1.5.5 SQL macros; `test/run.py` sqllogictest-style runner; `test/run_mutants.py`; Python 3 for the reference parser.
 
-**Spec:** `docs/superpowers/specs/2026-10-18-duckent-mlang-design.md`
+**Spec:** `docs/superpowers/specs/2026-10-18-duckent-treeql-reader-design.md`
 
 ## Global Constraints
 
@@ -43,7 +43,7 @@ Create `test/sql/48_treeql_parse.test`:
 
 ```
 # name: test/sql/48_treeql_parse.test
-# description: M-LANG -- the reader for TREEQL text. parse(print(ir)) == ir on canonical IR.
+# description: The TREEQL reader -- the text form of TREEQL, read back. parse(print(ir)) == ir on canonical IR.
 
 # THE SEPARATORS OCCUR INSIDE CLAUSE BODIES, which is why this needs a tokenizer and not a split.
 # ATTR and WHERE bodies are emitted unquoted and unescaped by the printer, so a clause list can
@@ -91,7 +91,7 @@ Expected: FAIL — `Catalog Error: Table Function with name tree_treeql_split do
 ```sql
 -- sql/10_treeql.sql
 --
--- M-LANG: the reader for TREEQL text. The printer (sql/06_selector.sql) is the specification --
+-- The TREEQL reader. Reads the text form of TREEQL. The printer (sql/06_selector.sql) is the specification --
 -- everything here accepts is defined by what tree_selector_to_treeql emits, and where the two
 -- could disagree the printer is right.
 --
@@ -395,7 +395,7 @@ One assertion per refusal, each pinning the message by its distinguishing words:
 
 The first of those two new rows is what makes the parenless step form safe rather than lucky. Inside a group, steps are space-separated, and a parenless step is unambiguous only because every inner step carries a combinator — an invariant `tree_steps_group` maintains by coalescing to `desc`, which hand-built IR arriving through the host door is under no obligation to honour. Without this refusal the bare form would be unambiguous only for input the printer happened to produce, which is a property of the producer rather than of the grammar. Assert it against hand-built IR, not against printer output, or the test cannot reach the case.
 
-Plus **the documented limit**, which is the point of this task: a `WHERE` body with a **top-level** comma — `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` — is genuinely ambiguous, because the separator and the body's comma are indistinguishable at depth 0. No valid boolean predicate has a bare top-level comma, so this is unreachable from valid input. Assert what actually happens, with a comment saying it is a limit rather than a bug, so the claim "unreachable" is tested instead of argued.
+Plus **the documented limit**, which is the point of this task: a `WHERE` body with a **top-level** comma — `(TYPE 'x', WHERE a = 1, PSEUDO 'p')` — is read as three clauses, because the separator and the body's comma are indistinguishable at depth 0 ~~and the text is therefore genuinely ambiguous~~. **"GENUINELY AMBIGUOUS" IS FALSE, measured in the final-review fix round under duckdb 1.5.5:** `pseudo` is slot 5 and `where` slot 6, so `tree_steps([{type: 'x', "where": 'a = 1', pseudo: 'p'}])` prints `(TYPE 'x', PSEUDO 'p', WHERE a = 1)` — different bytes — and the text's only constructor-accepted preimage is the one-clause WHERE body. A reader *can* choose here, so the three-clause reading is a wrong parse and not one horn of an ambiguity. It stays a limit because its fix needs the clause kinds' **slot order** and `tree_catalog` has no order column: declared as `k13` beside k01–k07 in `test/sweep_treeql.py`'s `KNOWN_EXACT_FAILURES`. ~~No valid boolean predicate has a bare top-level comma, so this is unreachable from valid input.~~ **THAT PREMISE IS FALSE, measured during Task 5 fix round 3 and confirmed on BASE `3384ede`.** The clause-list splitter counts `(` and `)` and nothing else -- it is blind to `[` `]` and to `{` `}` -- so a comma inside a bracket OR brace pair sits at paren depth 0 and is read as a clause separator. Both of these are printer output from the ordinary constructor and both are REFUSED: `tree_steps([{"where": '[1, 2] = [1, 2]'}])` prints `(WHERE [1, 2] = [1, 2])` and refuses `cannot read 2]`; the brace form refuses `cannot read b: 2}`. The limit is therefore reachable from valid input, and reaching it refuses printer output, which the Global Constraints make a defect rather than a gate. Task 7's differential generator owns the fix; Task 5 pins the behaviour as records. Assert what actually happens, with a comment saying it is a limit rather than a bug, so the claim "unreachable" is tested instead of argued.
 
 - [ ] **Step 2: Run to verify each assertion fails for the right reason**
 
