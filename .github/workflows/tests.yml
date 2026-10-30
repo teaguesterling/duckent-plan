@@ -93,7 +93,11 @@ jobs:
   mutants:
     name: mutant harness
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 45 was sized when 20 mutants ran 11-19 min on main. This branch adds MN32 and MN33 AND a
+    # 3234-line suite that EVERY mutant now runs, so the job MEASURED 40m09s on PR #69 -- 89% of
+    # the limit, on a runner that was not slow. The next mutant, or a slower runner, times the gate
+    # out. A timeout is a net for a hang, not a budget, so it is set clear of the measurement.
+    timeout-minutes: 75
     env:
       DUCKENT_NO_SKIP: "1"
     steps:
