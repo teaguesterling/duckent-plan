@@ -891,10 +891,15 @@ alias __x is reserved for the compiler's own relations
 # They belong with the front-end whose registration they verify.
 # ---------------------------------------------------------------------------
 
-query III
-SELECT language, printer, bare_safe FROM tree_catalog_languages() WHERE language = 'css';
+# The parser column joined this record when 48_treeql_parse.test gave up asserting it. That file
+# read the whole registry in one record -- `css tree_css_lower` and `treeql tree_parse_treeql`
+# together -- which is a css-STATE assertion in a suite the C++ port mirrors, the defect the
+# comment above describes. Narrowing it there would have dropped `css tree_css_lower` from the
+# corpus entirely, so it is pinned here instead, beside the registration it belongs to.
+query IIII
+SELECT language, parser, printer, bare_safe FROM tree_catalog_languages() WHERE language = 'css';
 ----
-css	tree_selector_to_treeql	true
+css	tree_css_lower	tree_selector_to_treeql	true
 
 # The registry's full contents, which 02_catalog.test used to assert and cannot: it is a core
 # suite and `css` arrives only with this front-end. Asserting it HERE is strictly stronger --

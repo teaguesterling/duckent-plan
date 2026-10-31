@@ -3064,13 +3064,20 @@ SELECT (tree_explain('main', 'app', '(TYPE ''function_definition'')', language :
 (TYPE 'function_definition')
 
 # THE REGISTRY'S parser COLUMN IS NON-NULL FOR THE FIRST TIME, read through the catalog view
-# rather than the table. Both languages are listed, because the value this record pins is the
-# whole seam: core registers treeql in sql/01_catalog.sql with no parser, and each front-end's
-# own file names its own.
+# rather than the table. Core registers treeql in sql/01_catalog.sql with no parser, and each
+# front-end's own file names its own, so this record is treeql's half of that seam.
+#
+# TREEQL'S ROW ONLY, and the narrowing is the point rather than a concession. This record read
+# `ORDER BY language` and asserted `css tree_css_lower` as well, until the C++ extension tried to
+# mirror this file and could not: the port's core-only build embeds 00-08 and OMITS
+# sql/09_css.sql, so there is no css row to find and no css default to read. That is the same
+# defect 36_pseudo.test had and 38_css_lower.test's comment describes -- a mirrored core suite
+# asserting css STATE -- and 02_catalog.test's comment had called it "the last of them". It was
+# not; this file re-added it. The css half is asserted where the front-end that registers it
+# lives, in 38_css_lower.test, whose row now carries the parser column for exactly this reason.
 query II
-SELECT language, parser FROM tree_catalog_languages() ORDER BY language;
+SELECT language, parser FROM tree_catalog_languages() WHERE language = 'treeql';
 ----
-css	tree_css_lower
 treeql	tree_parse_treeql
 
 # THE DEFAULT-LANGUAGE PATH. ONE thing is measured here, and it is the lookup in
