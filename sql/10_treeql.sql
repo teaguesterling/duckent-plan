@@ -115,12 +115,22 @@ CREATE OR REPLACE MACRO tree_treeql_ws() AS ' ' || chr(9) || chr(10) || chr(12) 
 -- `Column "t" referenced that exists in the SELECT clause - but this column cannot be referenced
 -- before it is defined`, because the parameter collided with the column the callers below name.
 -- That is the same defect the whole-file note about macro parameters warns of, in a lambda.
+--
+-- `lambda tok:` AND NOT `tok ->`. The single arrow is DEPRECATED: DuckDB 1.5.5 accepts it and
+-- prints `Deprecated lambda arrow (->) detected ... before DuckDB's next release` on every query
+-- that reaches this macro, which is every text selector. It was the only arrow lambda in sql/ --
+-- MEASURED over the whole repo, where the other `->` occurrences are prose inside comments and
+-- 00_types.sql's is `->>`, the JSON operator. The parameter name does not move, for the reason
+-- directly above; only the spelling does. The two forms were measured equal on v1.5.5, CI's pin,
+-- over ten inputs covering a quoted comma, a quoted `)`, an `''` escape, multi-byte text, the
+-- empty string and an embedded newline: identical output on all ten, and `length(mask) =
+-- length(s)` on all ten.
 CREATE OR REPLACE MACRO tree_treeql_quote_mask(s) AS
   array_to_string(
     list_transform(
       regexp_extract_all(s, '(?s)''(?:[^'']|'''')*(?:''|$)|"[^"]*"|.'),
-      tok -> CASE WHEN tok[1:1] = '''' OR (tok[1:1] = '"' AND length(tok) > 1)
-                  THEN repeat(chr(1), length(tok)) ELSE tok END),
+      lambda tok: CASE WHEN tok[1:1] = '''' OR (tok[1:1] = '"' AND length(tok) > 1)
+                       THEN repeat(chr(1), length(tok)) ELSE tok END),
     '');
 
 -- A clause list split on `sep` at BRACKET depth 0 and outside a quoted region, where "bracket"

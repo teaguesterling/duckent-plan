@@ -2550,7 +2550,7 @@ true
 # is at the macro's own interface for that reason: a defect hidden behind the printer's shape needs
 # a record that does not depend on the printer's shape.
 query I
-SELECT list_transform(tree_treeql_chain_parts('"a CHILD b"'), x -> x.part);
+SELECT list_transform(tree_treeql_chain_parts('"a CHILD b"'), lambda x: x.part);
 ----
 ["a CHILD b"]
 
@@ -2575,7 +2575,7 @@ true
 # `(TYPE 'a ( b')`. So no theorem quantified over this and nothing was red -- a false cause on
 # hand-written input, which is the class requirement 6 serves.
 query I
-SELECT list_transform(tree_parse_treeql('(TYPE "a ( b")'), x -> x.kind || ':' || COALESCE(x.value, '~'));
+SELECT list_transform(tree_parse_treeql('(TYPE "a ( b")'), lambda x: x.kind || ':' || COALESCE(x.value, '~'));
 ----
 [selector:treeql, step:~, type:"a ( b"]
 
