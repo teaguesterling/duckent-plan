@@ -22,6 +22,99 @@ generated from a live catalog and CI-gated, so it is the authority for any name.
 *identifier* in an entry below would defeat a grep for live code it carries an inline note; stale
 *prose* vocabulary is left as written, because the entry records what was true then.
 
+## The reader meets the port: four claims corrected, and one cost nobody predicted (2026-11-01)
+
+Mirroring the TREEQL reader into the C++ extension (`teaguesterling/duckent`, merged there as
+`6b7af20`) falsified four claims this repo had written down, two of them in the message of
+`60e9072` itself. Entries here are not rewritten and a commit message cannot be, so the
+corrections live in this entry.
+
+### `60e9072`'s own message is wrong in two places
+
+Its subject says "a css-state assertion in a **mirrored** suite", and its body says the narrowed
+record at `48_treeql_parse.test:3071` "is the ONLY thing in its 3234 lines that cannot mirror".
+Both were true when written and neither survived the attempt.
+
+**`48_treeql_parse.test` is not mirrored at all.** The extension lists it in
+`scripts/check_macro_identity.py`'s `NOT_MIRRORED_TESTS` and carries a 166-line
+`test/sql/49_treeql_dispatch.test` of its own instead. So the narrowing was not, in the end,
+required by the port. It is kept because it is right on this repo's own stated grounds —
+`02_catalog.test`'s comment sets the rule that a core suite does not assert css state and calls
+that defect "the last of them", and the css half of the record duplicated a claim
+`38_css_lower.test` is the proper home for — and not because anything downstream demanded it.
+
+**Four classes of record there cannot mirror, not one.** Measured by running the extension's
+corpus against the copied file:
+
+All four were run there and observed to fail, each in isolation — none is inferred from reading:
+
+| class | why it cannot mirror | observed |
+|---|---|---|
+| `:3071`, the registry record | asserted css's row; `09_css.sql` is not embedded there | expects 2 rows, gets 1 |
+| `:2552` and `:2578`, `list_transform` | expected text is a LIST as `run.py`'s **Python** formats it against what a **SQL cast** renders | `["a CHILD b"]` vs `['"a CHILD b"']`; `:2578` is the same shape and passes by luck |
+| the `parser = 'nope'` record | asserts `run.py`'s own refusal wording | `Catalog Error: Scalar Function with name nope does not exist!` |
+| the NULL-parser record | the same; the extension raises its own message | `... has no parser in tree_catalog.selector_languages ... Registered: treeql (no parser)` |
+
+### A sqllogictest file's summary counts only up to its first failure
+
+Worth its own heading because it nearly produced a false claim here. DuckDB's sqllogictest
+**aborts a file at the first failing record**. Measured: an 8-record probe reported
+`assertions: 3 | 2 passed | 1 failed` and stopped.
+
+So `441 passed, 1 failed` on a file does **not** mean the other records passed — it means they were
+never run. The 218m30s run of `48_treeql_parse.test` below ended at `:2552`, roughly 78% of the
+file by line, and never reached the two tail records above; reading its one reported failure as
+"only one record cannot mirror" is exactly the mistake the numbers invite. The tail records were
+found by running them on their own.
+
+This is the absence-of-signal rule in a new costume: the summary line is a prefix, not a census.
+
+### The design spec was wrong about the plumbing
+
+`docs/superpowers/specs/2026-10-18-duckent-treeql-reader-design.md` §9 says the extension's
+`extension_config.cmake` and embed step "must learn" a new embedded file. **Neither does.**
+Measured there: `CMakeLists.txt:29` is `file(GLOB ${DUCKENT_SQL_DIR}/*.sql)`,
+`scripts/embed_sql_macros.py` globs `--input-dir`, and `src/duckent_macro_loader.cpp` sorts by
+filename at load. Dropping the file in is the whole change. (`file(GLOB)` resolves at configure
+time, so a new file needs a re-configure; CI builds from scratch anyway.) The manifest comment
+beside MN32 asked for exactly this — "treat its extension half as a claim to check too" — and
+this is the answer.
+
+### The cost nobody predicted, and whose cause is still unknown
+
+`48_treeql_parse.test` costs **at least 218m30s** under the extension's sqllogictest binary against
+**657s** under this repo's `run.py`. Same file, same macros, same pinned DuckDB 1.5.5; every other
+suite in that repo totals 224s, and its `make test` is 3m54s without this one. A single
+`parse(print(ir)) == ir` record is 5.00s on the CLI there and ~60s under the test runner.
+
+**At least**, because of the abort rule above: that run stopped at `:2552` and never executed the
+remaining ~22% of the file. The whole file has never been run to completion under that binary, so
+the true figure is unknown and higher.
+
+**The cause is not known.** Five hypotheses were eliminated by measurement, listed so nobody pays
+for them twice: CPU contention (the 218m run was alone on an idle 36-core machine); thread count
+(5.24s at `threads=1` against 4.75s at 36); query verification (`EnableQueryVerification` is gated
+on a flag defaulting to false, and the suite sets no `PRAGMA enable_verification`); the optimizer
+(**76s with it disabled against 64s with it on** — disabling it makes the runner *slower*, while
+on the CLI it is 0.90s against 5.00s); and the memory limit (4.66s at `256MB`).
+
+The standing consequence is a doctrine correction, and it is the real finding here: **"the `.test`
+files carry over unchanged" holds for correctness and not for cost.** The two repositories run one
+corpus through two engines, and one is 20x slower on one file for reasons nobody has found.
+
+### `tree_explain` with a text selector has never worked without the runner
+
+The extension's dispatch is in the bind of the `duckent_match` **table function**; `tree_explain`
+is a scalar **macro** and does not pass through it. Measured there: the IR form returns
+`(TYPE 'function_definition')`, and the text form raises `Binder Error: UNNEST() for correlated
+expressions is not supported yet`.
+
+This is a property of the macro layer, surfaced rather than caused by the port. `test/run.py`'s
+`rewrite_selectors` rewrites the selector argument of `tree_match(` **and** `tree_explain(` before
+either macro sees text, so the macro has never had to read text itself, and nothing here ever
+measured whether it could. `49_treeql_dispatch.test` pins it as a refusal record with the IR form
+beside it, so the limit sits in a corpus instead of waiting to be rediscovered.
+
 ## M4: predicate purity, and a cheatsheet that cannot rot (2026-10-08)
 
 Two merged commits that left no entry here until now: `941e6ba` (predicate purity) and `399ed3c`
