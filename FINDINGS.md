@@ -22,6 +22,137 @@ generated from a live catalog and CI-gated, so it is the authority for any name.
 *identifier* in an entry below would defeat a grep for live code it carries an inline note; stale
 *prose* vocabulary is left as written, because the entry records what was true then.
 
+## The live oracle is version-pinned to DuckDB, and 2.0.0 moves it (2026-11-09)
+
+`41b_live_sitting_duck.test` fails 8 times on 2.0.0 and passes on 1.5.5. It is not the port. The
+community extension serves ONE build per DuckDB version, so moving DuckDB moves the oracle:
+`b8c06a8` on 1.5.5, `v1.17.0` on 2.0.0. The two answer differently on the same fixtures.
+
+Measured with duckent out of the picture entirely -- `read_ast` over the same 17 fixture files,
+then `ast_select_from` directly:
+
+| selector | sd `b8c06a8` (1.5.5) | sd `v1.17.0` (2.0.0) | delta |
+|---|---:|---:|---:|
+| `.import` | 31 | 20 | -11 |
+| `.fn[params=0]` | 29 | 24 | -5 |
+| `.class` | 19 | 19 | 0 |
+
+Both builds read 3272 AST rows, so the corpus is identical and only the selector answers moved.
+
+**The deltas ARE the failures.** 41b reported `got: ['11\t0']` for `.import` and `['5\t0']` for
+`.fn[params=0]`, in the direction "duckent returns rows sitting_duck does not"; the reverse
+direction is 0 in every case. `.class`, where the two builds agree, does not appear among the
+failures. So duckent is a superset of the newer oracle by exactly the amount the oracle shrank.
+
+**What says it is not the port.** `41_differential_sitting_duck.test`, the same selectors against
+the frozen references committed with the corpus, PASSES on 2.0.0. duckent's answers did not
+change; the live oracle's did. The port touches predicate purity and nothing in the selector path.
+
+**Adjudication: OPEN, and deliberately not taken here.** Doctrine 3 says an oracle divergence gets
+an entry with adjudication before any test changes, and the corpus rule is that references are
+never edited -- where we disagree, the row is adjudicated. Three readings are available and none
+is free:
+
+1. sitting_duck v1.17.0 narrowed `.import` and `.fn[params=0]` deliberately, and duckent's
+   superset is now wrong. Then the frozen references are stale too, and 41 passing is a false
+   green.
+2. v1.17.0 regressed, and duckent is right. Then 41b should pin the oracle version it adjudicates
+   against rather than taking whatever the current DuckDB serves.
+3. Both are defensible and the selectors mean something different in the two builds.
+
+Reading 1 cannot be ruled out from here, so this is not a "the oracle regressed" entry.
+
+**The structural finding, whatever the adjudication.** On 2.0.0 the live oracle cannot be held
+constant: there is no `b8c06a8` build for 2.0.0 to compare against, so the gate's input is chosen
+by the platform rather than by the repo. A differential whose oracle moves with the host is a gate
+that can go red without either side changing -- which is what happened here. Pinning what 41b
+compares against is the open question; CI pins DuckDB and inherits the extension.
+
+## The 2.0.0 port: one subquery macro, two different refusals (2026-11-09)
+
+The macro layer stopped registering trees on DuckDB 2.0.0. The symptom was wide and the cause was
+one macro.
+
+**The measurement, with its control.** Same runner, same working tree, same fixtures; only the
+DuckDB version differs.
+
+| | assertions | failures |
+|---|---:|---:|
+| `test/sql/*.test` on 2.0.0, before the fix | 1832 | 1294 |
+| 11_ddl + 32_traversal + 31_match on 2.0.0, before | 189 | 218 |
+| the same three on 1.5.5 | 189 | **0** |
+| the same three on 2.0.0, after the fix | 189 | **0** |
+
+A failure count with no baseline attributes nothing, which is why the 1.5.5 row is here. Without
+it the number says only that something is wrong.
+
+**The root cause.** `tree_sql_purity` was a scalar-subquery macro, and its body read
+`duckdb_functions()` through five CTEs. Every caller passes a value that varies per row, so each
+call inlined to a lateral join inside a correlated subquery. 2.0.0 refuses that, and it refuses it
+in two different ways at the two call sites:
+
+- `tree_sql_check_purity(sem, verb)` with `sem` from an outer column —
+  `Binder Error: Nested lateral joins or lateral joins in correlated subqueries are not (yet)
+  supported`. This is the one that stopped `tree_ddl_create`.
+- `tree_sql_predicate_insert(..., predicate, ...)` with `predicate` from an outer column —
+  `INTERNAL Error: Conflicting or cyclic column binding replacement for #[130.0]`. An INTERNAL
+  error is a DuckDB defect rather than a documented restriction, and it is worth reporting
+  upstream. Not yet filed.
+
+Both pass on 1.5.5. Minimal reproduction, which needs no duckent concept at all:
+`WITH a AS (SELECT <semantic> AS s) SELECT tree_sql_check_purity(a.s, 'v') FROM a`. The same call
+with a literal argument passes on both versions, which is why every macro probed in isolation
+looked healthy and only the composition failed.
+
+**The working example the fix copies.** `tree_sql_check_prefixes` has the same shape and does not
+fail, because its inner `NOT EXISTS` reads a *sibling CTE* rather than calling a subquery macro
+per row. The fix makes purity do the same thing: hoist the catalog reads into zero-argument
+lookups, which are uncorrelated and therefore evaluated once, and make the decision itself a
+relational-free expression so a lambda may call it.
+
+Three changes, all in `sql/00_types.sql` plus one call site in `sql/03_ddl.sql`:
+
+1. `tree_sql_expr_functions` became a list expression. It was
+   `SELECT list(DISTINCT ...) FROM (SELECT unnest(...))`; `list_distinct` over `list_transform`
+   computes the same thing with no relation. Measured equal on 9 bodies, malformed and NULL
+   included.
+2. `tree_sql_volatile_fns()` and `tree_sql_macro_bodies()` are new zero-argument lookups.
+3. `tree_sql_purity_expr(expr, volatile_fns, macro_bodies)` holds the four verdicts as a pure
+   expression. `tree_sql_purity(expr)` is kept as the one-argument surface and binds the lookups
+   itself; a per-row caller must use the three-argument form.
+
+**Equivalence, measured on 1.5.5 where the old code runs.** Old against new: 12 of 12 purity
+verdicts, 4 of 4 on the `unknown` branch, 9 of 9 on call extraction, `true` on a pure predicate
+list, and a byte-identical refusal message on an impure one.
+
+**A regression this port introduced and nearly shipped.** The first version of
+`tree_sql_macro_bodies()` kept `min(macro_definition)` per name, with a comment claiming that was
+what the old `LEFT JOIN` on `function_name` did. It is not. The join fans out to every overload,
+so level 2 saw the calls of all of them. Taking one body loses an overload, and the one it keeps
+is decided by string order, which has nothing to do with volatility. Planted and measured on
+1.5.5, with `CREATE MACRO yy(a) AS random() + a, (a, b) AS a + b`: the shipped form answers
+`impure` and the `min()` form answers `pure`, while the old code answers `impure`. A safety check
+getting quieter during a port is the failure mode this entry exists to record. This DuckDB has
+four built-in macro names whose overloads carry differing bodies, so the case is not hypothetical:
+`json_copy_strftime_if_date`, `json_copy_strftime_if_timestamp`, `pg_get_constraintdef`,
+`assert_true`. The map now holds a LIST of bodies per name.
+
+**1.5.5 is lost, and that is measured rather than assumed.** The new form does not bind on 1.5.5:
+`Binder Error: Referenced table "k" not found`, 206 failures across 11_ddl and 31_match. The
+version support moved rather than widened. The CI pin, the README's running claim and the
+cheatsheet's version line all move to 2.0.0 with this change.
+
+**MN28 moved with the code.** The mutation removes the parse-ability arm, and that arm now lives
+in `tree_sql_purity_expr`, so `regen.py`'s descriptor points there. This was declared before the
+edit, because it is a test artifact changing alongside an implementation change. The mutant still
+dies: it fails `test/sql/36_pseudo.test` on the malformed-body record, 2 failures of 35
+assertions, and its control passes 35 of 35. A re-pointed mutant that survived would have meant
+the port weakened the check instead of moving it.
+
+**Not diagnosed.** Why 2.0.0's binder refuses a composition 1.5.5 accepted, and whether the
+`Nested lateral joins` restriction is scheduled to lift. The fix does not depend on the answer;
+it removes the construct rather than working around the rule.
+
 ## The reader meets the port: four claims corrected, and one cost nobody predicted (2026-11-01)
 
 Mirroring the TREEQL reader into the C++ extension (`teaguesterling/duckent`, merged there as

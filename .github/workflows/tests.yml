@@ -26,8 +26,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install DuckDB 1.5.5 and the harness's dependency
-        run: pip install duckdb==1.5.5 pyyaml
+      - name: Install DuckDB 2.0.0 and the harness's dependency
+        run: pip install duckdb==2.0.0 pyyaml
       - name: Install sitting_duck, which suites 38, 41b and 44 require
         run: python -c "import duckdb; duckdb.connect().execute('INSTALL sitting_duck FROM community')"
       - name: Check out sitting_duck at the py-variety commit
@@ -105,8 +105,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install DuckDB 1.5.5 and the harness's dependency
-        run: pip install duckdb==1.5.5 pyyaml
+      - name: Install DuckDB 2.0.0 and the harness's dependency
+        run: pip install duckdb==2.0.0 pyyaml
       - name: Install sitting_duck, which suites 38, 41b and 44 require
         run: python -c "import duckdb; duckdb.connect().execute('INSTALL sitting_duck FROM community')"
       - name: Check out sitting_duck at the py-variety commit
