@@ -22,51 +22,113 @@ generated from a live catalog and CI-gated, so it is the authority for any name.
 *identifier* in an entry below would defeat a grep for live code it carries an inline note; stale
 *prose* vocabulary is left as written, because the entry records what was true then.
 
-## The live oracle is version-pinned to DuckDB, and 2.0.0 moves it (2026-11-09)
+## The live oracle moved, and the fixtures hold the older classification (2026-11-09)
 
 `41b_live_sitting_duck.test` fails 8 times on 2.0.0 and passes on 1.5.5. It is not the port. The
 community extension serves ONE build per DuckDB version, so moving DuckDB moves the oracle:
-`b8c06a8` on 1.5.5, `v1.17.0` on 2.0.0. The two answer differently on the same fixtures.
+`b8c06a8` on 1.5.5, `v1.17.0` on 2.0.0.
 
-Measured with duckent out of the picture entirely -- `read_ast` over the same 17 fixture files,
-then `ast_select_from` directly:
+**What 41b actually compares.** Only the oracle side is live. duckent's side reads
+`test/data/py_variety.parquet` and `test/data/scripts.parquet`, whose `css_classes`, `is_element`
+and `params` columns `test/gen_fixtures.py` derived from sitting_duck AT FIXTURE TIME. The oracle
+side calls `ast_select_from` on live `read_ast` rows. So the suite compares recorded
+classifications against a later classifier.
 
-| selector | sd `b8c06a8` (1.5.5) | sd `v1.17.0` (2.0.0) | delta |
-|---|---:|---:|---:|
-| `.import` | 31 | 20 | -11 |
-| `.fn[params=0]` | 29 | 24 | -5 |
-| `.class` | 19 | 19 | 0 |
+**All 8 failures.** CI run 42730674847 and the local run agree byte-for-byte: same 8 line numbers,
+same `got` values, 1832 assertions, 0 skipped, 8 failures.
 
-Both builds read 3272 AST rows, so the corpus is identical and only the selector answers moved.
+| line | selector | fixture | got |
+|---|---|---|---:|
+| 79 | `.import` | py_variety | 11 |
+| 170 | `.fn[params=0]` | py_variety | 5 |
+| 212 | `.fn:not(:has(.call))` | py_variety | 5 |
+| 275 | `.fn:not(:has(.jump))` | py_variety | 5 |
+| 296 | `.fn:not(:has(.if))` | scripts | 1 |
+| 310 | `.fn` | scripts | 1 |
+| 485 | `.fn:not(:has(.call#print))` | scripts | 1 |
+| 555 | `.fn:not(:has(.jump))` | scripts | 1 |
 
-**The deltas ARE the failures.** 41b reported `got: ['11\t0']` for `.import` and `['5\t0']` for
-`.fn[params=0]`, in the direction "duckent returns rows sitting_duck does not"; the reverse
-direction is 0 in every case. `.class`, where the two builds agree, does not appear among the
-failures. So duckent is a superset of the newer oracle by exactly the amount the oracle shrank.
+Every one is a `.fn`-family or `.import` selector, and the `:not(:has(...))` rows inherit the
+difference in `.fn` itself. Frozen `css_classes` against live `ast_select_from`:
 
-**What says it is not the port.** `41_differential_sitting_duck.test`, the same selectors against
-the frozen references committed with the corpus, PASSES on 2.0.0. duckent's answers did not
-change; the live oracle's did. The port touches predicate purity and nothing in the selector path.
+| fixture | tag | frozen | live `v1.17.0` | delta |
+|---|---|---:|---:|---:|
+| py_variety | `.fn` | 84 | 79 | -5 |
+| py_variety | `.import` | 31 | 20 | -11 |
+| scripts | `.fn` | 39 | 38 | -1 |
+| py_variety | `.class` / `.loop` | 19 / 11 | 19 / 11 | 0 |
+| scripts | `.import` / `.class` / `.loop` | 47 / 1 / 56 | 47 / 1 / 56 | 0 |
 
-**Adjudication: OPEN, and deliberately not taken here.** Doctrine 3 says an oracle divergence gets
-an entry with adjudication before any test changes, and the corpus rule is that references are
-never edited -- where we disagree, the row is adjudicated. Three readings are available and none
-is free:
+Under `b8c06a8` the frozen columns and the live engine agree on EVERY tag. That control is what
+makes the probe trustworthy: the fixtures match the era they came from, exactly.
 
-1. sitting_duck v1.17.0 narrowed `.import` and `.fn[params=0]` deliberately, and duckent's
-   superset is now wrong. Then the frozen references are stale too, and 41 passing is a false
-   green.
-2. v1.17.0 regressed, and duckent is right. Then 41b should pin the oracle version it adjudicates
-   against rather than taking whatever the current DuckDB serves.
-3. Both are defensible and the selectors mean something different in the two builds.
+**Both changes are upstream corrections. Measured, with the upstream source.**
 
-Reading 1 cannot be ruled out from here, so this is not a "the oracle regressed" entry.
+`.import` loses `import_prefix` (5), `relative_import` (5) and `aliased_import` (1) = 11. The flag
+is why: those nodes carry `flags = 0` on `b8c06a8` and `flags = 32`/`54` on `v1.17.0`, and `0x20`
+is `IS_CONSTITUENT`. `spec/taxonomy/taxonomy.yaml` at `v1.17.0` defines that bit as "a meaningful
+sub-part of a larger construct that already represents the whole (string content/fragment/escape,
+a function declarator, an import specifier/clause)" and states "class selectors skip it and return
+the enclosing construct instead". The narrowing is the documented design.
 
-**The structural finding, whatever the adjudication.** On 2.0.0 the live oracle cannot be held
-constant: there is no `b8c06a8` build for 2.0.0 to compare against, so the gate's input is chosen
-by the platform rather than by the repo. A differential whose oracle moves with the host is a gate
-that can go red without either side changing -- which is what happened here. Pinning what 41b
-compares against is the open question; CI pins DuckDB and inherits the extension.
+`.fn` loses 5 nodes in py_variety and 1 in scripts, all typed `lambda`. They are the bare `lambda`
+KEYWORD tokens, not lambda expressions -- `children_count = 0`, `descendant_count = 0`,
+`peek = 'lambda'`. On `b8c06a8` they carry `flags = 14` (IS_SCOPE plus the 2-bit DEFINITION role);
+on `v1.17.0` they carry `flags = 1`, which is `IS_SYNTAX_ONLY`, "pure syntax token (keyword,
+punctuation)". The real lambda expressions (`children_count = 4`, `peek = 'lambda x: x * x'`) keep
+`flags = 30`/`14` on BOTH builds. This is what `a896d1f fix: classify keyword operators against
+the convention taxonomy.yaml implied (#231)` did.
+
+So `b8c06a8` counted a `lambda` keyword token as a function with a scope, and counted import
+specifiers as import statements. `v1.17.0` does neither. The fixtures carry the older answers.
+
+**duckent's engine is not implicated.** It reproduces whatever `css_classes` the parquet holds,
+faithfully. The divergence is in the fixture data, not the match path, and the port touches
+predicate purity and nothing in the selector path.
+
+**What suite 41 does and does not prove.** `41_differential_sitting_duck.test` passes on 2.0.0. It
+runs on the parquet alone, with no extension, against references copied from
+`~/Projects/astcss-eval/pairs/accepted-b*.jsonl`. Those references were captured with sitting_duck
+build `workspace/engine/sd-20260914-1835` plus the `fix/127-combinator-steps` macros (`28c60f39`),
+NOT with `b8c06a8` -- so "the same build" is the wrong description. What is measured is agreement:
+
+| selector | 41's reference | frozen parquet | live `b8c06a8` | live `v1.17.0` |
+|---|---:|---:|---:|---:|
+| `.import` py_variety | 31 | 31 | 31 | 20 |
+| `.fn` scripts | 39 | 39 | 39 | 38 |
+| `.fn[params=0]` py_variety | 29 | -- | 29 | 24 |
+
+Three independently produced pre-correction sources agree, and only `v1.17.0` differs. 41 is green
+because both of its sides sit inside that agreeing set. So 41 passing is still good evidence that
+the PORT changed nothing -- duckent's answers did not move -- and it is NOT evidence that those
+answers match current sitting_duck.
+
+**The remedy is a decision, NOT taken here.** Re-syncing means regenerating `test/data/*.parquet`
+with `test/gen_fixtures.py` under `v1.17.0`. That alone would leave suite 41 comparing new parquet
+data against pre-correction references, so 41 would go red next. Recapturing those references
+collides with the corpus rule stated in 41's own preamble: "References are copied verbatim ... and
+are never edited. A row we adjudicated against upstream is commented out below with its reason."
+Whether to regenerate the fixtures, re-run the astcss-eval verifier to mint new accepted pairs, or
+adjudicate the affected rows one by one is Teague's call, and it is open.
+
+Whatever is chosen, it is a test-data change. The implementation port is committed on its own
+(`b3c3210`), so the two must not be bundled: with both moved at once, nothing distinguishes "the
+port changed an answer" from "the fixture changed an answer".
+
+**Three corrections to the earlier version of this entry.** It said "the deltas ARE the failures"
+from a three-selector probe covering `.import` and `.fn[params=0]`. That explained 4 of the 8
+failures; the four deltas of 1 were unaccounted for, and "exactly" overstated it. `b3c3210`'s own
+commit message carries that same overstatement. It also offered "v1.17.0 narrowed deliberately"
+only as an unresolved reading; the flags and the taxonomy spec now settle that question. Separately,
+my first node-identity probe reported 37 missing `function_definition` rows in `scripts`. That was
+my own join key: `scripts.parquet` stores `scripts/foo.py` while the live side is basename-only, and
+I applied the `regexp_replace` to one side only. 41b applies it to both.
+
+**The structural finding, which none of the above removes.** On 2.0.0 the live oracle cannot be held
+constant: there is no `b8c06a8` build for 2.0.0, so the gate's input is chosen by the platform
+rather than by the repo. A differential whose oracle moves with the host can go red without either
+side changing. CI pins DuckDB and inherits the extension, so pinning what 41b compares against is
+still open.
 
 ## The 2.0.0 port: one subquery macro, two different refusals (2026-11-09)
 
