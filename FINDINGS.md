@@ -82,6 +82,38 @@ the convention taxonomy.yaml implied (#231)` did.
 So `b8c06a8` counted a `lambda` keyword token as a function with a scope, and counted import
 specifiers as import statements. `v1.17.0` does neither. The fixtures carry the older answers.
 
+**A third correction, found while re-syncing, which the table above omits.** The delta table lists
+tags that agree and tags that moved, and reads as if `.fn` and `.import` were the whole delta. One
+more tag moved: `comment` on py_variety, 50 to 46.
+
+This one is not a flag change. The numeric code is stable -- 36 decodes to `METADATA_ANNOTATION`
+on both builds -- and the 4 rows are `decorated_definition` with `flags = 0`, so they are not
+constituents and `NOT is_constituent(flags)` does not touch them. The classifier function itself
+narrowed:
+
+| call | `b8c06a8` | `v1.17.0` |
+|---|---|---|
+| `is_semantic_type(36, 'METADATA_ANNOTATION')` | true | true |
+| `is_semantic_type(36, 'ANNOTATION')` | false | false |
+| `is_semantic_type(36, 'COMMENT')` | **true** | **false** |
+
+So `b8c06a8` let an annotation answer to the unrelated name `COMMENT`, while refusing its own
+suffix. The implementing commit is NOT identified; only the behaviour is measured.
+
+The narrowing is confined to that one pair. Over all 17 corpus aliases and the 27 semantic types in
+the fixtures that match any alias, `(comment, METADATA_ANNOTATION)` is the only pair whose truth
+value differs between the builds.
+
+It explains none of the 8 reference failures. The one corpus row that selects `.comment` is t3-p37
+`.comment + .class` on py_variety, whose single node is a real `comment`, and it was not among
+suite 41's 16 failures. The two-correction attribution for the 8 therefore stands.
+
+**Why the staleness was invisible, and still partly is.** `test/data/FIXTURES.md` records no
+sitting_duck version for the AST parquets, so nothing in the repo said which era the frozen columns
+came from. `test/corpus/aliases.tsv` now carries v1.17.0's answers for `scripts` and `py_variety`,
+but it unions all three parquets and `app.parquet` is still the b8c06a8-era file, so its `app`
+column keeps the old derivation.
+
 **duckent's engine is not implicated.** It reproduces whatever `css_classes` the parquet holds,
 faithfully. The divergence is in the fixture data, not the match path, and the port touches
 predicate purity and nothing in the selector path.
