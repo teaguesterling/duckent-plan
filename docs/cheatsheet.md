@@ -3,7 +3,7 @@
 <!-- GENERATED FILE. Do not edit: every value below is read out of a live catalog.
      Regenerate with: python3 test/gen_cheatsheet.py   (--check verifies, writes nothing) -->
 
-Measured against DuckDB v1.5.5, from the reference declarations in
+Measured against DuckDB v2.0.0, from the reference declarations in
 `test/gen_cheatsheet.py`. An enumerated domain below is what those declarations
 produce -- not everything the code can produce.
 

@@ -22,6 +22,199 @@ generated from a live catalog and CI-gated, so it is the authority for any name.
 *identifier* in an entry below would defeat a grep for live code it carries an inline note; stale
 *prose* vocabulary is left as written, because the entry records what was true then.
 
+## The live oracle moved, and the fixtures hold the older classification (2026-11-09)
+
+`41b_live_sitting_duck.test` fails 8 times on 2.0.0 and passes on 1.5.5. It is not the port. The
+community extension serves ONE build per DuckDB version, so moving DuckDB moves the oracle:
+`b8c06a8` on 1.5.5, `v1.17.0` on 2.0.0.
+
+**What 41b actually compares.** Only the oracle side is live. duckent's side reads
+`test/data/py_variety.parquet` and `test/data/scripts.parquet`, whose `css_classes`, `is_element`
+and `params` columns `test/gen_fixtures.py` derived from sitting_duck AT FIXTURE TIME. The oracle
+side calls `ast_select_from` on live `read_ast` rows. So the suite compares recorded
+classifications against a later classifier.
+
+**All 8 failures.** CI run 42730674847 and the local run agree byte-for-byte: same 8 line numbers,
+same `got` values, 1832 assertions, 0 skipped, 8 failures.
+
+| line | selector | fixture | got |
+|---|---|---|---:|
+| 79 | `.import` | py_variety | 11 |
+| 170 | `.fn[params=0]` | py_variety | 5 |
+| 212 | `.fn:not(:has(.call))` | py_variety | 5 |
+| 275 | `.fn:not(:has(.jump))` | py_variety | 5 |
+| 296 | `.fn:not(:has(.if))` | scripts | 1 |
+| 310 | `.fn` | scripts | 1 |
+| 485 | `.fn:not(:has(.call#print))` | scripts | 1 |
+| 555 | `.fn:not(:has(.jump))` | scripts | 1 |
+
+Every one is a `.fn`-family or `.import` selector, and the `:not(:has(...))` rows inherit the
+difference in `.fn` itself. Frozen `css_classes` against live `ast_select_from`:
+
+| fixture | tag | frozen | live `v1.17.0` | delta |
+|---|---|---:|---:|---:|
+| py_variety | `.fn` | 84 | 79 | -5 |
+| py_variety | `.import` | 31 | 20 | -11 |
+| scripts | `.fn` | 39 | 38 | -1 |
+| py_variety | `.class` / `.loop` | 19 / 11 | 19 / 11 | 0 |
+| scripts | `.import` / `.class` / `.loop` | 47 / 1 / 56 | 47 / 1 / 56 | 0 |
+
+Under `b8c06a8` the frozen columns and the live engine agree on EVERY tag. That control is what
+makes the probe trustworthy: the fixtures match the era they came from, exactly.
+
+**Both changes are upstream corrections. Measured, with the upstream source.**
+
+`.import` loses `import_prefix` (5), `relative_import` (5) and `aliased_import` (1) = 11. The flag
+is why: those nodes carry `flags = 0` on `b8c06a8` and `flags = 32`/`54` on `v1.17.0`, and `0x20`
+is `IS_CONSTITUENT`. `spec/taxonomy/taxonomy.yaml` at `v1.17.0` defines that bit as "a meaningful
+sub-part of a larger construct that already represents the whole (string content/fragment/escape,
+a function declarator, an import specifier/clause)" and states "class selectors skip it and return
+the enclosing construct instead". The narrowing is the documented design.
+
+`.fn` loses 5 nodes in py_variety and 1 in scripts, all typed `lambda`. They are the bare `lambda`
+KEYWORD tokens, not lambda expressions -- `children_count = 0`, `descendant_count = 0`,
+`peek = 'lambda'`. On `b8c06a8` they carry `flags = 14` (IS_SCOPE plus the 2-bit DEFINITION role);
+on `v1.17.0` they carry `flags = 1`, which is `IS_SYNTAX_ONLY`, "pure syntax token (keyword,
+punctuation)". The real lambda expressions (`children_count = 4`, `peek = 'lambda x: x * x'`) keep
+`flags = 30`/`14` on BOTH builds. This is what `a896d1f fix: classify keyword operators against
+the convention taxonomy.yaml implied (#231)` did.
+
+So `b8c06a8` counted a `lambda` keyword token as a function with a scope, and counted import
+specifiers as import statements. `v1.17.0` does neither. The fixtures carry the older answers.
+
+**duckent's engine is not implicated.** It reproduces whatever `css_classes` the parquet holds,
+faithfully. The divergence is in the fixture data, not the match path, and the port touches
+predicate purity and nothing in the selector path.
+
+**What suite 41 does and does not prove.** `41_differential_sitting_duck.test` passes on 2.0.0. It
+runs on the parquet alone, with no extension, against references copied from
+`~/Projects/astcss-eval/pairs/accepted-b*.jsonl`. Those references were captured with sitting_duck
+build `workspace/engine/sd-20260914-1835` plus the `fix/127-combinator-steps` macros (`28c60f39`),
+NOT with `b8c06a8` -- so "the same build" is the wrong description. What is measured is agreement:
+
+| selector | 41's reference | frozen parquet | live `b8c06a8` | live `v1.17.0` |
+|---|---:|---:|---:|---:|
+| `.import` py_variety | 31 | 31 | 31 | 20 |
+| `.fn` scripts | 39 | 39 | 39 | 38 |
+| `.fn[params=0]` py_variety | 29 | -- | 29 | 24 |
+
+Three independently produced pre-correction sources agree, and only `v1.17.0` differs. 41 is green
+because both of its sides sit inside that agreeing set. So 41 passing is still good evidence that
+the PORT changed nothing -- duckent's answers did not move -- and it is NOT evidence that those
+answers match current sitting_duck.
+
+**The remedy is a decision, NOT taken here.** Re-syncing means regenerating `test/data/*.parquet`
+with `test/gen_fixtures.py` under `v1.17.0`. That alone would leave suite 41 comparing new parquet
+data against pre-correction references, so 41 would go red next. Recapturing those references
+collides with the corpus rule stated in 41's own preamble: "References are copied verbatim ... and
+are never edited. A row we adjudicated against upstream is commented out below with its reason."
+Whether to regenerate the fixtures, re-run the astcss-eval verifier to mint new accepted pairs, or
+adjudicate the affected rows one by one is Teague's call, and it is open.
+
+Whatever is chosen, it is a test-data change. The implementation port is committed on its own
+(`b3c3210`), so the two must not be bundled: with both moved at once, nothing distinguishes "the
+port changed an answer" from "the fixture changed an answer".
+
+**Three corrections to the earlier version of this entry.** It said "the deltas ARE the failures"
+from a three-selector probe covering `.import` and `.fn[params=0]`. That explained 4 of the 8
+failures; the four deltas of 1 were unaccounted for, and "exactly" overstated it. `b3c3210`'s own
+commit message carries that same overstatement. It also offered "v1.17.0 narrowed deliberately"
+only as an unresolved reading; the flags and the taxonomy spec now settle that question. Separately,
+my first node-identity probe reported 37 missing `function_definition` rows in `scripts`. That was
+my own join key: `scripts.parquet` stores `scripts/foo.py` while the live side is basename-only, and
+I applied the `regexp_replace` to one side only. 41b applies it to both.
+
+**The structural finding, which none of the above removes.** On 2.0.0 the live oracle cannot be held
+constant: there is no `b8c06a8` build for 2.0.0, so the gate's input is chosen by the platform
+rather than by the repo. A differential whose oracle moves with the host can go red without either
+side changing. CI pins DuckDB and inherits the extension, so pinning what 41b compares against is
+still open.
+
+## The 2.0.0 port: one subquery macro, two different refusals (2026-11-09)
+
+The macro layer stopped registering trees on DuckDB 2.0.0. The symptom was wide and the cause was
+one macro.
+
+**The measurement, with its control.** Same runner, same working tree, same fixtures; only the
+DuckDB version differs.
+
+| | assertions | failures |
+|---|---:|---:|
+| `test/sql/*.test` on 2.0.0, before the fix | 1832 | 1294 |
+| 11_ddl + 32_traversal + 31_match on 2.0.0, before | 189 | 218 |
+| the same three on 1.5.5 | 189 | **0** |
+| the same three on 2.0.0, after the fix | 189 | **0** |
+
+A failure count with no baseline attributes nothing, which is why the 1.5.5 row is here. Without
+it the number says only that something is wrong.
+
+**The root cause.** `tree_sql_purity` was a scalar-subquery macro, and its body read
+`duckdb_functions()` through five CTEs. Every caller passes a value that varies per row, so each
+call inlined to a lateral join inside a correlated subquery. 2.0.0 refuses that, and it refuses it
+in two different ways at the two call sites:
+
+- `tree_sql_check_purity(sem, verb)` with `sem` from an outer column —
+  `Binder Error: Nested lateral joins or lateral joins in correlated subqueries are not (yet)
+  supported`. This is the one that stopped `tree_ddl_create`.
+- `tree_sql_predicate_insert(..., predicate, ...)` with `predicate` from an outer column —
+  `INTERNAL Error: Conflicting or cyclic column binding replacement for #[130.0]`. An INTERNAL
+  error is a DuckDB defect rather than a documented restriction, and it is worth reporting
+  upstream. Not yet filed.
+
+Both pass on 1.5.5. Minimal reproduction, which needs no duckent concept at all:
+`WITH a AS (SELECT <semantic> AS s) SELECT tree_sql_check_purity(a.s, 'v') FROM a`. The same call
+with a literal argument passes on both versions, which is why every macro probed in isolation
+looked healthy and only the composition failed.
+
+**The working example the fix copies.** `tree_sql_check_prefixes` has the same shape and does not
+fail, because its inner `NOT EXISTS` reads a *sibling CTE* rather than calling a subquery macro
+per row. The fix makes purity do the same thing: hoist the catalog reads into zero-argument
+lookups, which are uncorrelated and therefore evaluated once, and make the decision itself a
+relational-free expression so a lambda may call it.
+
+Three changes, all in `sql/00_types.sql` plus one call site in `sql/03_ddl.sql`:
+
+1. `tree_sql_expr_functions` became a list expression. It was
+   `SELECT list(DISTINCT ...) FROM (SELECT unnest(...))`; `list_distinct` over `list_transform`
+   computes the same thing with no relation. Measured equal on 9 bodies, malformed and NULL
+   included.
+2. `tree_sql_volatile_fns()` and `tree_sql_macro_bodies()` are new zero-argument lookups.
+3. `tree_sql_purity_expr(expr, volatile_fns, macro_bodies)` holds the four verdicts as a pure
+   expression. `tree_sql_purity(expr)` is kept as the one-argument surface and binds the lookups
+   itself; a per-row caller must use the three-argument form.
+
+**Equivalence, measured on 1.5.5 where the old code runs.** Old against new: 12 of 12 purity
+verdicts, 4 of 4 on the `unknown` branch, 9 of 9 on call extraction, `true` on a pure predicate
+list, and a byte-identical refusal message on an impure one.
+
+**A regression this port introduced and nearly shipped.** The first version of
+`tree_sql_macro_bodies()` kept `min(macro_definition)` per name, with a comment claiming that was
+what the old `LEFT JOIN` on `function_name` did. It is not. The join fans out to every overload,
+so level 2 saw the calls of all of them. Taking one body loses an overload, and the one it keeps
+is decided by string order, which has nothing to do with volatility. Planted and measured on
+1.5.5, with `CREATE MACRO yy(a) AS random() + a, (a, b) AS a + b`: the shipped form answers
+`impure` and the `min()` form answers `pure`, while the old code answers `impure`. A safety check
+getting quieter during a port is the failure mode this entry exists to record. This DuckDB has
+four built-in macro names whose overloads carry differing bodies, so the case is not hypothetical:
+`json_copy_strftime_if_date`, `json_copy_strftime_if_timestamp`, `pg_get_constraintdef`,
+`assert_true`. The map now holds a LIST of bodies per name.
+
+**1.5.5 is lost, and that is measured rather than assumed.** The new form does not bind on 1.5.5:
+`Binder Error: Referenced table "k" not found`, 206 failures across 11_ddl and 31_match. The
+version support moved rather than widened. The CI pin, the README's running claim and the
+cheatsheet's version line all move to 2.0.0 with this change.
+
+**MN28 moved with the code.** The mutation removes the parse-ability arm, and that arm now lives
+in `tree_sql_purity_expr`, so `regen.py`'s descriptor points there. This was declared before the
+edit, because it is a test artifact changing alongside an implementation change. The mutant still
+dies: it fails `test/sql/36_pseudo.test` on the malformed-body record, 2 failures of 35
+assertions, and its control passes 35 of 35. A re-pointed mutant that survived would have meant
+the port weakened the check instead of moving it.
+
+**Not diagnosed.** Why 2.0.0's binder refuses a composition 1.5.5 accepted, and whether the
+`Nested lateral joins` restriction is scheduled to lift. The fix does not depend on the answer;
+it removes the construct rather than working around the rule.
+
 ## The reader meets the port: four claims corrected, and one cost nobody predicted (2026-11-01)
 
 Mirroring the TREEQL reader into the C++ extension (`teaguesterling/duckent`, merged there as
