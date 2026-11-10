@@ -102,21 +102,6 @@ FROM (SELECT DISTINCT file_path, node_id
 ----
 52ba338461c270f72464a464cc234494979b778c2fc37913237223aea34055fe
 
-# t1-p06  .import  [py_variety]  31 nodes
-query I
-SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'py_variety', '.import', language := 'css'));
-----
-[import_forms.py:2, import_forms.py:6, import_forms.py:12, import_forms.py:14, import_forms.py:19, import_forms.py:26, import_forms.py:36, import_forms.py:45, import_forms.py:47, import_forms.py:48, import_forms.py:53, import_forms.py:55, import_forms.py:56, import_forms.py:62, import_forms.py:64, import_forms.py:65, import_forms.py:73, import_forms.py:75, import_forms.py:76, imports.py:1, imports.py:5, imports.py:11, imports.py:18, imports.py:27, imports.py:29, imports.py:30, sample_app.py:6, sample_app.py:10, sample_app.py:14, typed_example.py:1, typed_example.py:26]
-
-query I
-SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'py_variety', '.import', language := 'css'));
-----
-a1ede0ef05a9d510c4664967ffdc546aa61337d547444f31dd6400e98b9a1b15
-
 # t1-p07  .loop  [py_variety]  11 nodes
 query I
 SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
@@ -296,21 +281,6 @@ FROM (SELECT DISTINCT file_path, node_id
       FROM tree_match('main', 'py_variety', '.class[name*="Data"]', language := 'css'));
 ----
 9eafd69da929a4a35d0201c4adeda3ce7a32c925853debdd9ca683d232ce9d57
-
-# t2-p10  .fn[params=0]  [py_variety]  29 nodes
-query I
-SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'py_variety', '.fn[params=0]', language := 'css'));
-----
-[comments.py:9, css_selectors_test.py:257, decorators.py:56, decorators.py:73, deep_nesting.py:1, deep_nesting.py:9, deep_nesting.py:17, deep_nesting.py:25, deep_nesting.py:33, deep_nesting.py:41, deep_nesting.py:49, lambdas.py:7, lambdas.py:8, lambdas.py:21, lambdas.py:22, lambdas.py:37, lambdas.py:38, lambdas.py:67, lambdas.py:68, lambdas.py:109, lambdas.py:110, qualified_name_collisions.py:72, qualified_names.py:107, qualified_names.py:115, sample_app.py:1061, simple.py:1, simple.py:70, unicode.py:2, unicode.py:36]
-
-query I
-SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'py_variety', '.fn[params=0]', language := 'css'));
-----
-52267db7542f51f327094ef74c020c9a29f2f57fb72268d3d124c92ca734f320
 
 # t2-p11  .fn[params=2]  [py_variety]  21 nodes
 query I
@@ -567,21 +537,6 @@ FROM (SELECT DISTINCT file_path, node_id
 ----
 cebf6a806707facecacf9bea575467e3fea16905001d69587652037507de5b58
 
-# t4-p01  .fn:not(:has(.call))  [py_variety]  46 nodes
-query I
-SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'py_variety', '.fn:not(:has(.call))', language := 'css'));
-----
-[comments.py:9, css_selectors_test.py:8, css_selectors_test.py:27, css_selectors_test.py:42, css_selectors_test.py:66, css_selectors_test.py:81, css_selectors_test.py:112, css_selectors_test.py:127, deep_nesting.py:49, inheritance.py:16, inheritance.py:35, inheritance.py:60, inheritance.py:89, lambdas.py:7, lambdas.py:8, lambdas.py:21, lambdas.py:22, lambdas.py:37, lambdas.py:38, lambdas.py:67, lambdas.py:68, lambdas.py:109, lambdas.py:110, qualified_name_collisions.py:35, qualified_name_collisions.py:72, qualified_name_collisions.py:96, qualified_name_collisions.py:128, qualified_name_collisions.py:139, qualified_names.py:11, qualified_names.py:58, qualified_names.py:82, qualified_names.py:115, sample_app.py:42, sample_app.py:160, sample_app.py:377, simple.py:34, simple.py:51, test_classes.py:23, typed_example.py:34, typed_example.py:67, typed_example.py:148, typed_example.py:335, typed_example.py:368, typed_example.py:475, unicode.py:2, unicode.py:36]
-
-query I
-SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'py_variety', '.fn:not(:has(.call))', language := 'css'));
-----
-ac256f2e0acdb5fcfb293ecbab8effd41bcf66781d9e6ddbfe9ef07f6189cc38
-
 # t4-p02  .try:not(:has(.catch))  [py_variety]  1 nodes
 query I
 SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
@@ -702,21 +657,6 @@ FROM (SELECT DISTINCT file_path, node_id
 ----
 4022fc03090b4b59ffc431d8a322cebdd53f7cb3588ea943a84415f25b44a9f3
 
-# t4-p10  .fn:not(:has(.jump))  [py_variety]  36 nodes
-query I
-SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'py_variety', '.fn:not(:has(.jump))', language := 'css'));
-----
-[comments.py:9, css_selectors_test.py:8, css_selectors_test.py:127, css_selectors_test.py:202, css_selectors_test.py:257, decorators.py:56, decorators.py:73, inheritance.py:16, inheritance.py:35, inheritance.py:120, lambdas.py:7, lambdas.py:8, lambdas.py:21, lambdas.py:22, lambdas.py:37, lambdas.py:38, lambdas.py:67, lambdas.py:68, lambdas.py:109, lambdas.py:110, qualified_name_collisions.py:96, qualified_name_collisions.py:128, qualified_name_collisions.py:139, qualified_names.py:11, qualified_names.py:58, qualified_names.py:82, sample_app.py:42, sample_app.py:160, sample_app.py:330, sample_app.py:377, sample_app.py:1061, simple.py:1, simple.py:34, simple.py:70, typed_example.py:368, typed_example.py:537]
-
-query I
-SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'py_variety', '.fn:not(:has(.jump))', language := 'css'));
-----
-143d239a43017f593ec7054c1993704f5cc6e7350cfbdc751efb8e5d9be9f808
-
 # t4-p11  .class:has(.if)  [py_variety]  3 nodes
 query I
 SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
@@ -747,21 +687,6 @@ FROM (SELECT DISTINCT file_path, node_id
 ----
 f08dbdec8b780e07fa61866c4a8196abfe768f310190d698246fad061ec8c766
 
-# t4-p13  .fn:not(:has(.if))  [scripts]  14 nodes
-query I
-SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'scripts', '.fn:not(:has(.if))', language := 'css'));
-----
-[analyze_file_functions.py:38, analyze_file_functions.py:263, bootstrap-template.py:25, bootstrap-template.py:72, bootstrap-template.py:413, bootstrap-template.py:630, bootstrap-template.py:720, parquet_index_manager.py:804, parquet_index_manager.py:959, parquet_index_manager.py:1450, parquet_index_manager.py:1600, parquet_index_manager.py:1771, update_test_names.py:245, update_test_names.py:246]
-
-query I
-SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'scripts', '.fn:not(:has(.if))', language := 'css'));
-----
-ffe21d7b714b0ea2b9476e56b8f06aff5367c725b3320dd368b5a8d4dc9073c6
-
 # t4-p14  .loop:has(.call#print)  [py_variety]  3 nodes
 query I
 SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
@@ -776,21 +701,6 @@ FROM (SELECT DISTINCT file_path, node_id
       FROM tree_match('main', 'py_variety', '.loop:has(.call#print)', language := 'css'));
 ----
 ab07044a73984d519c3a2f96ed2ee758e4f5f9f99bbcb4131f9e86fbf04b0f0a
-
-# t1-p15  .fn  [scripts]  39 nodes
-query I
-SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'scripts', '.fn', language := 'css'));
-----
-[add_parsing_context.py:488, analyze_file_functions.py:38, analyze_file_functions.py:181, analyze_file_functions.py:263, analyze_file_functions.py:330, analyze_file_functions.py:655, bootstrap-template.py:25, bootstrap-template.py:72, bootstrap-template.py:136, bootstrap-template.py:413, bootstrap-template.py:630, bootstrap-template.py:720, embed_sql_macros.py:28, embed_sql_macros.py:67, embed_sql_macros.py:229, fix_clean_api_test.py:15, generate_def_file.py:30, generate_def_file.py:355, generate_def_file.py:1407, generate_def_file.py:1751, generate_def_file.py:2194, migrate_tests_to_semantic_types.py:191, migrate_tests_to_semantic_types.py:612, migrate_tests_to_semantic_types.py:935, parquet_index_manager.py:64, parquet_index_manager.py:182, parquet_index_manager.py:410, parquet_index_manager.py:586, parquet_index_manager.py:804, parquet_index_manager.py:959, parquet_index_manager.py:1213, parquet_index_manager.py:1450, parquet_index_manager.py:1600, parquet_index_manager.py:1771, parquet_index_manager.py:1880, update_test_names.py:99, update_test_names.py:245, update_test_names.py:246, update_test_names.py:448]
-
-query I
-SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'scripts', '.fn', language := 'css'));
-----
-e0b511e83f777d8baf631c0b52eda2ed15e33b9cacc09aa532c07cc7103fa3a5
 
 # t1-p16  .try  [scripts]  4 nodes
 query I
@@ -1249,21 +1159,6 @@ FROM (SELECT DISTINCT file_path, node_id
 ----
 5b20510a346e5dd6da5085c530f1a7f1e4b270fed76344a380ec92591097a083
 
-# t4-p21  .fn:not(:has(.call#print))  [scripts]  25 nodes
-query I
-SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'scripts', '.fn:not(:has(.call#print))', language := 'css'));
-----
-[analyze_file_functions.py:263, analyze_file_functions.py:330, bootstrap-template.py:25, bootstrap-template.py:72, bootstrap-template.py:136, bootstrap-template.py:413, bootstrap-template.py:630, bootstrap-template.py:720, embed_sql_macros.py:28, embed_sql_macros.py:67, fix_clean_api_test.py:15, generate_def_file.py:355, generate_def_file.py:1407, migrate_tests_to_semantic_types.py:191, migrate_tests_to_semantic_types.py:612, parquet_index_manager.py:64, parquet_index_manager.py:410, parquet_index_manager.py:804, parquet_index_manager.py:959, parquet_index_manager.py:1213, parquet_index_manager.py:1450, parquet_index_manager.py:1600, parquet_index_manager.py:1771, update_test_names.py:245, update_test_names.py:246]
-
-query I
-SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'scripts', '.fn:not(:has(.call#print))', language := 'css'));
-----
-f28a0bc6d28a1d3e97262c57be9e4b635cd004b131b899e7d86ba79856493e9a
-
 # t4-p22  .loop:has(.if)  [scripts]  24 nodes
 query I
 SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
@@ -1594,21 +1489,6 @@ FROM (SELECT DISTINCT file_path, node_id
 ----
 d70e86c7a8854dc57f7a3c754ff5acc0d69fca9a9062ff52ced8268cdd577557
 
-# t4-p33  .fn:not(:has(.jump))  [scripts]  11 nodes
-query I
-SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'scripts', '.fn:not(:has(.jump))', language := 'css'));
-----
-[analyze_file_functions.py:655, bootstrap-template.py:413, bootstrap-template.py:630, bootstrap-template.py:720, embed_sql_macros.py:229, generate_def_file.py:1751, generate_def_file.py:2194, migrate_tests_to_semantic_types.py:935, parquet_index_manager.py:64, update_test_names.py:245, update_test_names.py:246]
-
-query I
-SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
-FROM (SELECT DISTINCT file_path, node_id
-      FROM tree_match('main', 'scripts', '.fn:not(:has(.jump))', language := 'css'));
-----
-4e0c5d09b0183c703fa6b068bf9c7ee88f43ad88d3c2d275732778734d81bc27
-
 # t4-p34  .fn:has(.loop)  [scripts]  23 nodes
 query I
 SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
@@ -1638,4 +1518,124 @@ FROM (SELECT DISTINCT file_path, node_id
       FROM tree_match('main', 'scripts', 'with_statement:has(.call#read)', language := 'css'));
 ----
 152e40f2adf28f38f13211ca9e227dff24d771086c2e921d653f2b3a273ef1f2
+
+# t1-p26  .import  [py_variety]  20 nodes
+query I
+SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'py_variety', '.import', language := 'css'));
+----
+[import_forms.py:2, import_forms.py:6, import_forms.py:12, import_forms.py:19, import_forms.py:26, import_forms.py:36, import_forms.py:45, import_forms.py:53, import_forms.py:62, import_forms.py:73, imports.py:1, imports.py:5, imports.py:11, imports.py:18, imports.py:27, sample_app.py:6, sample_app.py:10, sample_app.py:14, typed_example.py:1, typed_example.py:26]
+
+query I
+SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'py_variety', '.import', language := 'css'));
+----
+ef0bb475d7333f803a65773cecf0313d85268735a9b0481f0d1bc35f1936ce5a
+
+# t1-p27  .fn  [scripts]  38 nodes
+query I
+SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'scripts', '.fn', language := 'css'));
+----
+[add_parsing_context.py:488, analyze_file_functions.py:38, analyze_file_functions.py:181, analyze_file_functions.py:263, analyze_file_functions.py:330, analyze_file_functions.py:655, bootstrap-template.py:25, bootstrap-template.py:72, bootstrap-template.py:136, bootstrap-template.py:413, bootstrap-template.py:630, bootstrap-template.py:720, embed_sql_macros.py:28, embed_sql_macros.py:67, embed_sql_macros.py:229, fix_clean_api_test.py:15, generate_def_file.py:30, generate_def_file.py:355, generate_def_file.py:1407, generate_def_file.py:1751, generate_def_file.py:2194, migrate_tests_to_semantic_types.py:191, migrate_tests_to_semantic_types.py:612, migrate_tests_to_semantic_types.py:935, parquet_index_manager.py:64, parquet_index_manager.py:182, parquet_index_manager.py:410, parquet_index_manager.py:586, parquet_index_manager.py:804, parquet_index_manager.py:959, parquet_index_manager.py:1213, parquet_index_manager.py:1450, parquet_index_manager.py:1600, parquet_index_manager.py:1771, parquet_index_manager.py:1880, update_test_names.py:99, update_test_names.py:245, update_test_names.py:448]
+
+query I
+SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'scripts', '.fn', language := 'css'));
+----
+a6545b48044a50715da33ee78e98c75ab44dc426c8a4d3a88ca6bf9dc3637f6c
+
+# t2-p29  .fn[params=0]  [py_variety]  24 nodes
+query I
+SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'py_variety', '.fn[params=0]', language := 'css'));
+----
+[comments.py:9, css_selectors_test.py:257, decorators.py:56, decorators.py:73, deep_nesting.py:1, deep_nesting.py:9, deep_nesting.py:17, deep_nesting.py:25, deep_nesting.py:33, deep_nesting.py:41, deep_nesting.py:49, lambdas.py:7, lambdas.py:21, lambdas.py:37, lambdas.py:67, lambdas.py:109, qualified_name_collisions.py:72, qualified_names.py:107, qualified_names.py:115, sample_app.py:1061, simple.py:1, simple.py:70, unicode.py:2, unicode.py:36]
+
+query I
+SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'py_variety', '.fn[params=0]', language := 'css'));
+----
+7dd47a890ab924d547a0be523ef5b2fb8976e4c29a430ab27982123249281c1e
+
+# t4-p36  .fn:not(:has(.call))  [py_variety]  41 nodes
+query I
+SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'py_variety', '.fn:not(:has(.call))', language := 'css'));
+----
+[comments.py:9, css_selectors_test.py:8, css_selectors_test.py:27, css_selectors_test.py:42, css_selectors_test.py:66, css_selectors_test.py:81, css_selectors_test.py:112, css_selectors_test.py:127, deep_nesting.py:49, inheritance.py:16, inheritance.py:35, inheritance.py:60, inheritance.py:89, lambdas.py:7, lambdas.py:21, lambdas.py:37, lambdas.py:67, lambdas.py:109, qualified_name_collisions.py:35, qualified_name_collisions.py:72, qualified_name_collisions.py:96, qualified_name_collisions.py:128, qualified_name_collisions.py:139, qualified_names.py:11, qualified_names.py:58, qualified_names.py:82, qualified_names.py:115, sample_app.py:42, sample_app.py:160, sample_app.py:377, simple.py:34, simple.py:51, test_classes.py:23, typed_example.py:34, typed_example.py:67, typed_example.py:148, typed_example.py:335, typed_example.py:368, typed_example.py:475, unicode.py:2, unicode.py:36]
+
+query I
+SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'py_variety', '.fn:not(:has(.call))', language := 'css'));
+----
+ee0436cb2854b69388bf53d95d6ee0610df46a631be3c346711fd4b2d806bcbb
+
+# t4-p37  .fn:not(:has(.jump))  [py_variety]  31 nodes
+query I
+SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'py_variety', '.fn:not(:has(.jump))', language := 'css'));
+----
+[comments.py:9, css_selectors_test.py:8, css_selectors_test.py:127, css_selectors_test.py:202, css_selectors_test.py:257, decorators.py:56, decorators.py:73, inheritance.py:16, inheritance.py:35, inheritance.py:120, lambdas.py:7, lambdas.py:21, lambdas.py:37, lambdas.py:67, lambdas.py:109, qualified_name_collisions.py:96, qualified_name_collisions.py:128, qualified_name_collisions.py:139, qualified_names.py:11, qualified_names.py:58, qualified_names.py:82, sample_app.py:42, sample_app.py:160, sample_app.py:330, sample_app.py:377, sample_app.py:1061, simple.py:1, simple.py:34, simple.py:70, typed_example.py:368, typed_example.py:537]
+
+query I
+SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'py_variety', '.fn:not(:has(.jump))', language := 'css'));
+----
+d7d10e8bd5409268161bab70f63b93d01a0e84f48b65d5a1fde9a97593dde827
+
+# t4-p38  .fn:not(:has(.if))  [scripts]  13 nodes
+query I
+SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'scripts', '.fn:not(:has(.if))', language := 'css'));
+----
+[analyze_file_functions.py:38, analyze_file_functions.py:263, bootstrap-template.py:25, bootstrap-template.py:72, bootstrap-template.py:413, bootstrap-template.py:630, bootstrap-template.py:720, parquet_index_manager.py:804, parquet_index_manager.py:959, parquet_index_manager.py:1450, parquet_index_manager.py:1600, parquet_index_manager.py:1771, update_test_names.py:245]
+
+query I
+SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'scripts', '.fn:not(:has(.if))', language := 'css'));
+----
+732b135a7a90bfa7fef5d281889bae6ebf724bca04bd8a3b304cdd39685a79f5
+
+# t4-p39  .fn:not(:has(.call#print))  [scripts]  24 nodes
+query I
+SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'scripts', '.fn:not(:has(.call#print))', language := 'css'));
+----
+[analyze_file_functions.py:263, analyze_file_functions.py:330, bootstrap-template.py:25, bootstrap-template.py:72, bootstrap-template.py:136, bootstrap-template.py:413, bootstrap-template.py:630, bootstrap-template.py:720, embed_sql_macros.py:28, embed_sql_macros.py:67, fix_clean_api_test.py:15, generate_def_file.py:355, generate_def_file.py:1407, migrate_tests_to_semantic_types.py:191, migrate_tests_to_semantic_types.py:612, parquet_index_manager.py:64, parquet_index_manager.py:410, parquet_index_manager.py:804, parquet_index_manager.py:959, parquet_index_manager.py:1213, parquet_index_manager.py:1450, parquet_index_manager.py:1600, parquet_index_manager.py:1771, update_test_names.py:245]
+
+query I
+SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'scripts', '.fn:not(:has(.call#print))', language := 'css'));
+----
+1b72141a045b785b389de205c2edecdf93efbfdeebb2aca5dc8c02380b693443
+
+# t4-p40  .fn:not(:has(.jump))  [scripts]  10 nodes
+query I
+SELECT list(regexp_replace(file_path, '.*/', '') || ':' || node_id ORDER BY file_path, node_id)
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'scripts', '.fn:not(:has(.jump))', language := 'css'));
+----
+[analyze_file_functions.py:655, bootstrap-template.py:413, bootstrap-template.py:630, bootstrap-template.py:720, embed_sql_macros.py:229, generate_def_file.py:1751, generate_def_file.py:2194, migrate_tests_to_semantic_types.py:935, parquet_index_manager.py:64, update_test_names.py:245]
+
+query I
+SELECT sha256(string_agg(regexp_replace(file_path, '.*/', '') || ':' || node_id, ',' ORDER BY file_path, node_id))
+FROM (SELECT DISTINCT file_path, node_id
+      FROM tree_match('main', 'scripts', '.fn:not(:has(.jump))', language := 'css'));
+----
+c475e6985592be75f720f5d4dd0b2d9280e32314ecd88268c80a6aaa52ef6edc
 
