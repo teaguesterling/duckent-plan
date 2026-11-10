@@ -53,8 +53,17 @@ ALIAS_LIST = "[" + ", ".join("'%s'" % a for a in ALIASES) + "]"
 
 # `css_classes`  the aliases this row carries;   `is_element`  sitting_duck's ELEMENT predicate;
 # `params`  the arity `[params=N]` compares against (sitting_duck reads `len(parameters)`).
+#
+# A CONSTITUENT is excluded, because a class selector does not return one. sitting_duck's
+# spec/taxonomy/taxonomy.yaml defines the bit as "a meaningful sub-part of a larger construct
+# that already represents the whole (string content/fragment/escape, a function declarator, an
+# import specifier/clause)" and states that "class selectors skip it and return the enclosing
+# construct instead". Without this guard the derivation counts the parts AND the whole: measured
+# on 2026-11-09 against sitting_duck v1.17.0, `.str` came out 176 where the engine says 78
+# (py_variety) and 2128 where it says 921 (scripts), and `.import` 31 where it says 20. With the
+# guard all 17 aliases agree with ast_select_from on both fixtures, 34 of 34.
 DERIVED = f"""*,
-    CASE WHEN is_construct(flags)
+    CASE WHEN is_construct(flags) AND NOT is_constituent(flags)
          THEN list_filter({ALIAS_LIST}, lambda a: is_semantic_type(semantic_type, upper(a)))
          ELSE []::VARCHAR[] END AS css_classes,
     is_construct(flags) AS is_element,
