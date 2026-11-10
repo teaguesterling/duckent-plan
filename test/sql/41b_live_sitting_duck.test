@@ -75,13 +75,6 @@ SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', 
 ----
 0	0
 
-# t1-p06  .import  [py_variety]
-query II
-SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.import', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.import')))),
-       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.import')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.import', language := 'css'))));
-----
-0	0
-
 # t1-p07  .loop  [py_variety]
 query II
 SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.loop', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.loop')))),
@@ -166,13 +159,6 @@ SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', 
 ----
 0	0
 
-# t2-p10  .fn[params=0]  [py_variety]
-query II
-SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn[params=0]', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn[params=0]')))),
-       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn[params=0]')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn[params=0]', language := 'css'))));
-----
-0	0
-
 # t2-p11  .fn[params=2]  [py_variety]
 query II
 SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn[params=2]', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn[params=2]')))),
@@ -205,13 +191,6 @@ SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', 
 query II
 SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn#reset', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn#reset')))),
        (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn#reset')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn#reset', language := 'css'))));
-----
-0	0
-
-# t4-p01  .fn:not(:has(.call))  [py_variety]
-query II
-SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn:not(:has(.call))', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn:not(:has(.call))')))),
-       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn:not(:has(.call))')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn:not(:has(.call))', language := 'css'))));
 ----
 0	0
 
@@ -271,13 +250,6 @@ SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', 
 ----
 0	0
 
-# t4-p10  .fn:not(:has(.jump))  [py_variety]
-query II
-SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn:not(:has(.jump))', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn:not(:has(.jump))')))),
-       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn:not(:has(.jump))')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn:not(:has(.jump))', language := 'css'))));
-----
-0	0
-
 # t4-p11  .class:has(.if)  [py_variety]
 query II
 SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.class:has(.if)', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.class:has(.if)')))),
@@ -292,24 +264,10 @@ SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', 
 ----
 0	0
 
-# t4-p13  .fn:not(:has(.if))  [scripts]
-query II
-SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.if))', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.if))')))),
-       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.if))')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.if))', language := 'css'))));
-----
-0	0
-
 # t4-p14  .loop:has(.call#print)  [py_variety]
 query II
 SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.loop:has(.call#print)', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.loop:has(.call#print)')))),
        (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.loop:has(.call#print)')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.loop:has(.call#print)', language := 'css'))));
-----
-0	0
-
-# t1-p15  .fn  [scripts]
-query II
-SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn')))),
-       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn', language := 'css'))));
 ----
 0	0
 
@@ -481,13 +439,6 @@ SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', 
 ----
 0	0
 
-# t4-p21  .fn:not(:has(.call#print))  [scripts]
-query II
-SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.call#print))', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.call#print))')))),
-       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.call#print))')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.call#print))', language := 'css'))));
-----
-0	0
-
 # t4-p22  .loop:has(.if)  [scripts]
 query II
 SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.loop:has(.if)', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.loop:has(.if)')))),
@@ -551,13 +502,6 @@ SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', 
 ----
 0	0
 
-# t4-p33  .fn:not(:has(.jump))  [scripts]
-query II
-SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.jump))', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.jump))')))),
-       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.jump))')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.jump))', language := 'css'))));
-----
-0	0
-
 # t4-p34  .fn:has(.loop)  [scripts]
 query II
 SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:has(.loop)', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:has(.loop)')))),
@@ -569,6 +513,62 @@ SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', 
 query II
 SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', 'with_statement:has(.call#read)', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', 'with_statement:has(.call#read)')))),
        (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', 'with_statement:has(.call#read)')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', 'with_statement:has(.call#read)', language := 'css'))));
+----
+0	0
+
+# t1-p26  .import  [py_variety]
+query II
+SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.import', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.import')))),
+       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.import')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.import', language := 'css'))));
+----
+0	0
+
+# t1-p27  .fn  [scripts]
+query II
+SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn')))),
+       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn', language := 'css'))));
+----
+0	0
+
+# t2-p29  .fn[params=0]  [py_variety]
+query II
+SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn[params=0]', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn[params=0]')))),
+       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn[params=0]')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn[params=0]', language := 'css'))));
+----
+0	0
+
+# t4-p36  .fn:not(:has(.call))  [py_variety]
+query II
+SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn:not(:has(.call))', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn:not(:has(.call))')))),
+       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn:not(:has(.call))')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn:not(:has(.call))', language := 'css'))));
+----
+0	0
+
+# t4-p37  .fn:not(:has(.jump))  [py_variety]
+query II
+SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn:not(:has(.jump))', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn:not(:has(.jump))')))),
+       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_py_variety', '.fn:not(:has(.jump))')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'py_variety', '.fn:not(:has(.jump))', language := 'css'))));
+----
+0	0
+
+# t4-p38  .fn:not(:has(.if))  [scripts]
+query II
+SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.if))', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.if))')))),
+       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.if))')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.if))', language := 'css'))));
+----
+0	0
+
+# t4-p39  .fn:not(:has(.call#print))  [scripts]
+query II
+SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.call#print))', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.call#print))')))),
+       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.call#print))')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.call#print))', language := 'css'))));
+----
+0	0
+
+# t4-p40  .fn:not(:has(.jump))  [scripts]
+query II
+SELECT (SELECT count(*) FROM ((SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.jump))', language := 'css')) EXCEPT (SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.jump))')))),
+       (SELECT count(*) FROM ((SELECT regexp_replace(file_path, '.*/', '') AS f, node_id FROM ast_select_from('sd_scripts', '.fn:not(:has(.jump))')) EXCEPT (SELECT DISTINCT regexp_replace(file_path, '.*/', '') AS f, node_id FROM tree_match('main', 'scripts', '.fn:not(:has(.jump))', language := 'css'))));
 ----
 0	0
 
